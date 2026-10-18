@@ -2179,9 +2179,7 @@ class DriveArchiveManager:
                                         exists = os.path.exists(item_p)
                                     except Exception:
                                         exists = False
-                                    drive_part = os.path.splitdrive(item_p)[0]
-                                    wib_root = os.path.join(drive_part + "\\", "WindowsImageBackup") if drive_part else ""
-                                    if exists or (auto_discover_wib and wib_root and os.path.exists(wib_root) and "windowsimagebackup" in norm_p):
+                                    if exists:
                                         archives.append(item)
                                         seen_paths.add(norm_p)
                 except Exception:
@@ -2210,8 +2208,11 @@ class DriveArchiveManager:
         if not os.path.exists(norm_path):
             return {"success": False, "error": f"파일을 찾을 수 없습니다: {archive_path}"}
 
-        # 안전장치: 루트 드라이브나 시스템 핵심 폴더 삭제 방지
-        if len(norm_path) < 10 or norm_path.lower().startswith("c:\\windows") or norm_path.lower().startswith("c:\\users"):
+        # 안전장치: 루트 드라이브나 Windows 시스템 핵심 폴더 삭제 방지
+        valid_exts = (".qblk", ".wim", ".vhdx", ".raw.zst")
+        is_archive_file = any(norm_path.lower().endswith(ext) for ext in valid_exts)
+        norm_lower = norm_path.lower()
+        if len(norm_lower) < 10 or norm_lower.startswith("c:\\windows") or (not is_archive_file and (norm_lower.startswith("c:\\users") or "temp" in norm_lower)):
             return {"success": False, "error": "시스템 보호 정책에 의해 지정된 경로는 삭제할 수 없습니다."}
 
         try:
@@ -2245,6 +2246,38 @@ class DriveArchiveManager:
                         freed_bytes += os.path.getsize(mp)
                         os.remove(mp)
                         deleted_files.append(mp)
+                    except Exception:
+                        pass
+
+            # 캐시 파일들(.archives_cache.json, .ai/archives_cache.json, .ai/vhdx_cache.json)에서 삭제된 경로 즉시 제거
+            deleted_norm = norm_path.lower()
+            cache_files = [
+                os.path.join("D:\\MyBackup_Repository\\archives", ".archives_cache.json"),
+                os.path.join(tempfile.gettempdir(), "BackupSystem_Archives", ".archives_cache.json"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".ai", "archives_cache.json"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".ai", "vhdx_cache.json")
+            ]
+            for cf in cache_files:
+                if os.path.exists(cf):
+                    try:
+                        with open(cf, "r", encoding="utf-8") as f_c:
+                            c_data = json.load(f_c)
+                        if isinstance(c_data, dict) and "archives" in c_data:
+                            filtered = [
+                                a for a in c_data["archives"]
+                                if os.path.abspath(a.get("path", "")).lower() != deleted_norm
+                                and os.path.abspath(a.get("vhdx_path", "")).lower() != deleted_norm
+                            ]
+                            c_data["archives"] = filtered
+                            with open(cf, "w", encoding="utf-8") as f_c:
+                                json.dump(c_data, f_c, ensure_ascii=False, indent=2)
+                        elif isinstance(c_data, list):
+                            filtered = [
+                                a for a in c_data
+                                if os.path.abspath(a.get("path", "")).lower() != deleted_norm
+                            ]
+                            with open(cf, "w", encoding="utf-8") as f_c:
+                                json.dump(filtered, f_c, ensure_ascii=False, indent=2)
                     except Exception:
                         pass
 

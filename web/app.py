@@ -322,12 +322,61 @@ def save_profile(profile: Dict[str, Any]):
     append_task_log(f"백업 프로필 '{saved.get('name')}'이 저장되었습니다.")
     return saved
 
+@app.put("/api/profiles/{profile_id}")
+def update_profile(profile_id: str, profile: Dict[str, Any]):
+    profile = dict(profile or {})
+    profile["id"] = profile_id
+    saved = ConfigManager.save_profile(profile)
+    append_task_log(f"백업 프로필 '{saved.get('name')}'이 수정되었습니다.")
+    return saved
+
 @app.delete("/api/profiles/{profile_id}")
 def delete_profile(profile_id: str):
     success = ConfigManager.delete_profile(profile_id)
     if not success:
         raise HTTPException(status_code=404, detail="Profile not found")
     return {"success": True}
+
+# --- Path Validation & Folder Browse API ---
+@app.post("/api/validate-path")
+def validate_path(req: Dict[str, Any]):
+    raw_path = req.get("path", "")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        return {
+            "path": "",
+            "exists": False,
+            "is_dir": False,
+            "readable": False,
+            "writable": False,
+            "free_bytes": 0
+        }
+
+    path = os.path.abspath(raw_path.strip())
+    exists = os.path.exists(path)
+    is_dir = os.path.isdir(path) if exists else False
+    readable = os.access(path, os.R_OK) if exists else False
+    writable = os.access(path, os.W_OK) if exists else False
+
+    free_bytes = 0
+    try:
+        check_target = path if exists else os.path.dirname(path)
+        if os.path.exists(check_target):
+            _, _, free_bytes = shutil.disk_usage(check_target)
+    except Exception:
+        free_bytes = 0
+
+    return {
+        "path": path,
+        "exists": exists,
+        "is_dir": is_dir,
+        "readable": readable,
+        "writable": writable,
+        "free_bytes": free_bytes
+    }
+
+@app.get("/api/browse-folder")
+def browse_folder(path: Optional[str] = None):
+    return browse_directory(BrowseDirRequest(current_path=path))
 
 # --- Installed Applications & Projects Discovery API ---
 @app.get("/api/apps/installed")
@@ -421,6 +470,17 @@ def dismount_system_image_vhdx(req: VhdxDismountRequest):
     except Exception as e:
         logger.error(f"VHDX 마운트 해제 중 예외 발생: {e}")
         return {"success": False, "error": f"VHDX 마운트 해제 처리 실패: {e}"}
+
+class VhdxDeleteRequest(BaseModel):
+    vhdx_path: str
+
+@app.delete("/api/system-image/delete")
+def delete_system_image_vhdx(req: VhdxDeleteRequest):
+    try:
+        return SystemImageManager.delete_vhdx(req.vhdx_path)
+    except Exception as e:
+        logger.error(f"VHDX 삭제 중 예외 발생: {e}")
+        return {"success": False, "error": f"VHDX 삭제 처리 실패: {e}"}
 
 
 # --- 3-2-1 Offsite Remote Replication API ---

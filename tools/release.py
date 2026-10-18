@@ -66,6 +66,37 @@ def run_preflight_lint_gate():
     print("      [OK] pyflakes 무결성 검증 통과 (린트 오류 0건)")
 
 
+def run_preflight_lifecycle_gate():
+    """
+    릴리즈 전 스마트 게이트키퍼 및 수명주기/계약 감사(Lifecycle & Contract Audit).
+    외부 삭제 시 캐시 잔여, UI-API 액션 누락 등이 감지되면 릴리즈를 즉시 차단(Fail-Closed)한다.
+    """
+    print("[0/5] Pre-flight Smart Gatekeeper & Lifecycle Audit...")
+    gatekeeper_script = os.path.join(BASE_DIR, 'tools', 'smart_gatekeeper.py')
+    if os.path.exists(gatekeeper_script):
+        try:
+            res = subprocess.run(
+                [sys.executable, gatekeeper_script, '--all'],
+                cwd=BASE_DIR,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            if res.returncode != 0:
+                print("      " + "!" * 50)
+                print("      [BLOCKED] 스마트 게이트키퍼(수명주기/계약 감사) 검증 실패! 릴리즈가 즉시 중단됩니다.")
+                print("      " + "!" * 50)
+                if res.stdout:
+                    for line in res.stdout.strip().splitlines():
+                        print(f"        -> {line}")
+                sys.exit(1)
+            print("      [OK] 스마트 게이트키퍼 전 관문(CRLF/린트/수명주기/UI계약) 100% 통과")
+        except Exception as e:
+            print(f"      [FATAL] smart_gatekeeper 실행 실패: {e}")
+            sys.exit(1)
+
+
 def run_preflight_security_gate():
     """
     릴리즈 전 비밀정보/인증토큰 유출 방지 사전 검증 (scan_secrets CI gate).
@@ -632,9 +663,10 @@ def main():
     print("   Backup System Release & Versioning Pipeline")
     print("=" * 60)
 
-    # 릴리즈 착수 전 보안 감사(scan_secrets) 및 정적 분석(pyflakes) 사전 검증
+    # 릴리즈 착수 전 보안 감사(scan_secrets), 정적 분석(pyflakes), 스마트 게이트키퍼(수명주기/UI계약) 사전 검증
     run_preflight_security_gate()
     run_preflight_lint_gate()
+    run_preflight_lifecycle_gate()
 
     cur_ver = get_current_version()
     if args.version:

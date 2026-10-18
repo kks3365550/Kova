@@ -240,23 +240,6 @@ async function stopSystemImageBackup() {
     }
 }
 
-async function verifySnapshot(snapshotId) {
-    if (!confirm(`스냅샷 [${snapshotId}]의 zstandard 압축 블롭 및 SHA-256 해시 무결성을 정밀 검증하시겠습니까?`)) return;
-    try {
-        const res = await fetchAPI('/api/verify/run', {
-            method: 'POST',
-            body: JSON.stringify({ snapshot_id: snapshotId })
-        });
-        if (res.success) {
-            alert(`✅ 무결성 검증 완료: 100% 정상!\n- 검사된 블롭: ${res.verified_count || 0}개`);
-        } else {
-            alert('검증 실패: ' + res.error);
-        }
-    } catch (e) {
-        alert('검증 요청 오류: ' + e.message);
-    }
-}
-
 async function loadVhdxList(drive = null) {
     const driveSelect = document.getElementById('sysimg-drive-select');
     let targetDrive = drive || (driveSelect ? driveSelect.value : '');
@@ -285,6 +268,10 @@ async function loadVhdxList(drive = null) {
                     <i data-lucide="folder-check" class="w-3.5 h-3.5"></i> 읽기전용 마운트
                    </button>`;
 
+            const deleteBtn = `<button onclick="deleteVhdx('${encodeURIComponent(item.path)}', '${encodeURIComponent(item.filename)}', ${item.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-xl text-xs font-medium border border-rose-800/80 transition flex items-center gap-1" title="이 VHDX 이미지 완전 삭제">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400"></i> 삭제
+               </button>`;
+
             return `
                 <div class="p-3 bg-slate-950/70 hover:bg-slate-900/90 rounded-xl border border-slate-800/90 flex flex-col md:flex-row md:items-center justify-between gap-3 transition">
                     <div class="flex items-center gap-3 overflow-hidden">
@@ -304,6 +291,7 @@ async function loadVhdxList(drive = null) {
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
                         ${actionBtn}
+                        ${deleteBtn}
                     </div>
                 </div>
             `;
@@ -351,6 +339,36 @@ async function dismountVhdx(encodedPath) {
         }
     } catch (e) {
         alert('언마운트 요청 오류: ' + e.message);
+    }
+}
+
+async function deleteVhdx(encodedPath, encodedFilename, sizeGb) {
+    const vhdxPath = decodeURIComponent(encodedPath);
+    const filename = decodeURIComponent(encodedFilename);
+    const msg = `이 VHDX 시스템 이미지를 완전히 삭제하시겠습니까?\n\n` +
+        `• 파일명: ${filename}\n` +
+        `• 용량: 약 ${sizeGb} GB\n` +
+        `• 경로: ${vhdxPath}\n\n` +
+        `※ 마운트되어 있는 경우 자동으로 언마운트 후 안전하게 삭제됩니다. 삭제된 이미지는 복구할 수 없습니다.`;
+
+    if (!confirm(msg)) return;
+
+    try {
+        const res = await fetchAPI('/api/system-image/delete', {
+            method: 'DELETE',
+            body: JSON.stringify({ vhdx_path: vhdxPath })
+        });
+        if (res && res.success) {
+            alert(res.message || 'VHDX 이미지가 성공적으로 삭제되었습니다.');
+            loadVhdxList();
+            if (typeof loadArchiveList === 'function') loadArchiveList();
+            if (typeof loadSystemImageStatus === 'function') loadSystemImageStatus();
+            if (typeof loadDashboard === 'function') loadDashboard();
+        } else {
+            alert('VHDX 삭제 실패: ' + (res ? res.error : '알 수 없는 오류'));
+        }
+    } catch (e) {
+        alert('VHDX 삭제 요청 오류: ' + e.message);
     }
 }
 

@@ -421,7 +421,7 @@ class SystemImageManager:
                     if isinstance(cached_list, list):
                         for c_item in cached_list:
                             cp = c_item.get("path")
-                            if cp:
+                            if cp and os.path.exists(cp):
                                 norm_p = os.path.normpath(cp).lower()
                                 drive_prefix = search_drive.lower()
                                 if norm_p.startswith(drive_prefix) and norm_p not in seen_vhdx:
@@ -434,13 +434,14 @@ class SystemImageManager:
             except Exception:
                 pass
 
-        if results:
-            try:
-                os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-                with open(cache_path, "w", encoding="utf-8") as f_c:
-                    json.dump(results, f_c, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
+        try:
+            os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+            # 물리 파일이 존재하는 항목만 캐시에 보관
+            valid_cached = [r for r in results if os.path.exists(r.get("path", ""))]
+            with open(cache_path, "w", encoding="utf-8") as f_c:
+                json.dump(valid_cached, f_c, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
         # 최신 파일 순으로 정렬
         results.sort(key=lambda x: x["modified_at"], reverse=True)
@@ -494,6 +495,87 @@ class SystemImageManager:
         except Exception as e:
             cls.append_log(f"마운트된 디스크 이미지 조회 예외: {e}", level="WARNING")
             return {}
+
+    @classmethod
+    def delete_vhdx(cls, vhdx_path: str) -> Dict[str, Any]:
+        """
+        VHDX 이미지를 안전하게 삭제: 마운트 여부 확인 및 자동 언마운트 후 파일 삭제, 캐시 즉시 제거
+        """
+        if not vhdx_path or not isinstance(vhdx_path, str):
+            return {"success": False, "error": "VHDX 경로가 유효하지 않습니다."}
+
+        norm_path = os.path.normpath(vhdx_path)
+        if not norm_path.lower().endswith(".vhdx"):
+            return {"success": False, "error": "VHDX(.vhdx) 파일만 삭제할 수 있습니다."}
+
+        if not os.path.exists(norm_path):
+            return {"success": False, "error": f"VHDX 파일을 찾을 수 없습니다: {norm_path}"}
+
+        if os.path.isdir(norm_path):
+            return {"success": False, "error": f"디렉토리는 삭제할 수 없습니다: {norm_path}"}
+
+        parent = os.path.dirname(norm_path)
+        if parent in ("", ".", "..") or parent.lower() in ("c:\\", "c:", "d:\\", "d:", "e:\\", "e:"):
+            return {"success": False, "error": "시스템 루트 폴더의 파일은 삭제할 수 없습니다."}
+
+        # 1. 마운트된 경우 선제적 언마운트
+        try:
+            mounted_map = cls._get_all_mounted_images()
+            if mounted_map.get(norm_path.lower(), {}).get("attached"):
+                cls.append_log(f"삭제 전 VHDX 마운트 자동 해제 시도: {norm_path}")
+                dismount_result = cls.dismount_vhdx(norm_path)
+                if not dismount_result.get("success"):
+                    return {"success": False, "error": f"삭제 전 언마운트 실패: {dismount_result.get('error')}"}
+        except Exception as e:
+            cls.append_log(f"마운트 상태 확인 중 예외 (계속 진행): {e}", level="WARNING")
+
+        # 2. 물리 파일 크기 계측 및 삭제
+        try:
+            sz = os.path.getsize(norm_path)
+            os.remove(norm_path)
+            cls.append_log(f"VHDX 파일 물리 삭제 완료: {norm_path} ({round(sz / (1024**3), 2)} GB 확보)", level="SUCCESS")
+        except Exception as e:
+            return {"success": False, "error": f"VHDX 파일 삭제 실패: {e}"}
+
+        # 3. 캐시 파일들에서 즉시 Purge
+        try:
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            cache_paths = [
+                os.path.join(project_root, ".ai", "vhdx_cache.json"),
+                os.path.join(project_root, ".ai", "archives_cache.json"),
+                os.path.join("D:\\", "MyBackup_Repository", "archives", ".archives_cache.json"),
+            ]
+            removed_norm = norm_path.lower()
+
+            for cp in cache_paths:
+                if not os.path.exists(cp):
+                    continue
+                try:
+                    with open(cp, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+
+                    if isinstance(data, list):
+                        data = [item for item in data if os.path.normpath(str(item.get("path", ""))).lower() != removed_norm]
+                    elif isinstance(data, dict) and "archives" in data:
+                        data["archives"] = [
+                            item for item in data["archives"]
+                            if os.path.normpath(str(item.get("path", ""))).lower() != removed_norm
+                            and os.path.normpath(str(item.get("vhdx_path", ""))).lower() != removed_norm
+                        ]
+
+                    with open(cp, "w", encoding="utf-8") as f:
+                        json.dump(data, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "message": f"VHDX 이미지가 성공적으로 삭제되었습니다. ({round(sz / (1024 ** 3), 2)} GB 확보)",
+            "freed_bytes": sz,
+            "freed_gb": round(sz / (1024 ** 3), 2)
+        }
 
     @classmethod
     def mount_vhdx(cls, vhdx_path: str, read_only: bool = True) -> Dict[str, Any]:

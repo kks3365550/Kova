@@ -184,7 +184,7 @@ class TestRotateTool(unittest.TestCase):
         r = subprocess.run(
             [sys.executable, os.path.join(BASE_DIR, "tools", "rotate_release_key.py"),
              "--keys-dir", tmpkeys],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding='utf-8', errors='replace',
         )
         self.assertEqual(r.returncode, 0, r.stderr or r.stdout)
         left = os.listdir(tmpkeys)
@@ -197,7 +197,7 @@ class TestRotateTool(unittest.TestCase):
             r = subprocess.run(
                 [sys.executable, os.path.join(BASE_DIR, "tools", "rotate_release_key.py"),
                  "--apply", "--key-id", "v9test", "--keys-dir", tmpkeys],
-                capture_output=True, text=True,
+                capture_output=True, text=True, encoding='utf-8', errors='replace',
             )
             self.assertEqual(r.returncode, 0, r.stderr or r.stdout)
             priv = os.path.join(tmpkeys, "release_ed25519_v9test.key")

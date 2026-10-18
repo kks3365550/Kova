@@ -785,6 +785,76 @@ function editProfile(profileId) {
     openModal('profile-modal');
 }
 
+let _valSourcesTimer = null;
+function debounceValidateModalSources() {
+    clearTimeout(_valSourcesTimer);
+    _valSourcesTimer = setTimeout(validateModalSources, 400);
+}
+
+async function validateModalSources() {
+    const feedback = document.getElementById('prof-sources-validation-feedback');
+    if (!feedback) return;
+    const sourcesStr = document.getElementById('prof-sources').value.trim();
+    if (!sourcesStr) {
+        feedback.innerHTML = '';
+        return;
+    }
+    const lines = sourcesStr.split('\n').map(s => s.trim()).filter(s => s.length > 0);
+    if (lines.length === 0) {
+        feedback.innerHTML = '';
+        return;
+    }
+
+    feedback.innerHTML = '<span class="text-zinc-400">경로 유효성 확인 중...</span>';
+    const results = await Promise.all(lines.map(p => fetchAPI('/api/validate-path', {
+        method: 'POST',
+        body: JSON.stringify({ path: p })
+    }).catch(() => ({ path: p, exists: false, is_dir: false, readable: false }))));
+
+    feedback.innerHTML = results.map(r => {
+        if (!r.exists) {
+            return `<div class="text-rose-400 flex items-center gap-1.5"><i data-lucide="alert-circle" class="w-3 h-3"></i><span>${r.path || '경로'} - 존재하지 않음</span></div>`;
+        }
+        if (!r.readable) {
+            return `<div class="text-amber-400 flex items-center gap-1.5"><i data-lucide="shield-alert" class="w-3 h-3"></i><span>${r.path} - 읽기 권한 없음</span></div>`;
+        }
+        return `<div class="text-emerald-400 flex items-center gap-1.5"><i data-lucide="check" class="w-3 h-3"></i><span>${r.path} - 정상 (${r.is_dir ? '폴더' : '파일'})</span></div>`;
+    }).join('');
+    lucide.createIcons();
+}
+
+let _valRepoTimer = null;
+function debounceValidateModalRepo() {
+    clearTimeout(_valRepoTimer);
+    _valRepoTimer = setTimeout(validateModalRepo, 400);
+}
+
+async function validateModalRepo() {
+    const feedback = document.getElementById('prof-repo-validation-feedback');
+    if (!feedback) return;
+    const repo = document.getElementById('prof-repo').value.trim();
+    if (!repo) {
+        feedback.innerHTML = '';
+        return;
+    }
+
+    try {
+        const res = await fetchAPI('/api/validate-path', {
+            method: 'POST',
+            body: JSON.stringify({ path: repo })
+        });
+        const freeGb = (res.free_bytes / (1024 * 1024 * 1024)).toFixed(1);
+        if (res.exists) {
+            feedback.innerHTML = `<span class="text-emerald-400 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i>저장소 확인 완료 (여유 공간: ${freeGb} GB)</span>`;
+        } else {
+            feedback.innerHTML = `<span class="text-blue-400 flex items-center gap-1"><i data-lucide="info" class="w-3 h-3"></i>새 저장소 폴더 생성 예정 (여유 공간: ${freeGb} GB)</span>`;
+        }
+        lucide.createIcons();
+    } catch (e) {
+        feedback.innerHTML = `<span class="text-zinc-500">경로 상태 확인 불가</span>`;
+    }
+}
+
 async function saveProfileFromModal() {
     const id = document.getElementById('prof-id').value.trim();
     const name = document.getElementById('prof-name').value.trim();
@@ -821,8 +891,10 @@ async function saveProfileFromModal() {
     };
 
     try {
-        await fetchAPI('/api/profiles', {
-            method: 'POST',
+        const method = id ? 'PUT' : 'POST';
+        const url = id ? `/api/profiles/${id}` : '/api/profiles';
+        await fetchAPI(url, {
+            method: method,
             body: JSON.stringify(profileData)
         });
         closeModal('profile-modal');
