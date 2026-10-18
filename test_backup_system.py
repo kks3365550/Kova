@@ -1,14 +1,10 @@
 import os
-import sys
 import time
 import shutil
-import tempfile
 import stat
 from core.snapshot import SnapshotEngine
 from core.restore import RestoreEngine
 from core.storage import BlobStorage
-from core.hasher import calculate_sha256
-from core.config import ConfigManager
 
 def safe_rmtree(path):
     if not os.path.exists(path):
@@ -188,19 +184,24 @@ def test_full_system_flow():
     assert snap_tamper_failed, "Tampering with snapshot JSON should have been blocked!"
     print(" -> WORM lock successfully prevented unauthorized modification of blobs and snapshot manifests!")
 
-    # 11. Test Smart Low-Disk Safeguard (Auto-pruning under low disk space)
-    print("\n[Step 11] Testing Smart Low-Disk Safeguard...")
+    # 11. Test Fail-Closed Low-Disk Safeguard (Abort backup under low disk space without pruning)
+    print("\n[Step 11] Testing Fail-Closed Low-Disk Safeguard...")
     initial_snaps = SnapshotEngine.list_snapshots(repo_dir)
     assert len(initial_snaps) >= 3
 
-    # Simulate trigger by requesting more free GB than exists
-    pruned_count, freed_gb = SnapshotEngine.ensure_disk_space(repo_dir, min_free_gb=999999.0)
-    print(f" -> Safeguard pruned {pruned_count} old snapshot(s)")
+    # Under Fail-Closed policy, requesting more free GB than exists must raise InsufficientDiskSpaceError
+    # and NEVER delete/prune historical snapshots.
+    from core.storage import InsufficientDiskSpaceError
+    fail_closed_triggered = False
+    try:
+        SnapshotEngine.ensure_disk_space(repo_dir, min_free_gb=999999.0)
+    except InsufficientDiskSpaceError:
+        fail_closed_triggered = True
+
+    assert fail_closed_triggered, "Low disk safeguard should have raised InsufficientDiskSpaceError (Fail-Closed)!"
     remaining_snaps = SnapshotEngine.list_snapshots(repo_dir)
-    # The newest snapshot MUST always be preserved (never pruned)
-    assert len(remaining_snaps) == 1, f"Expected exactly 1 snapshot remaining (newest preserved), got {len(remaining_snaps)}"
-    assert remaining_snaps[0]['id'] == initial_snaps[0]['id'], "Newest snapshot was unexpectedly deleted!"
-    print(" -> Smart Low-Disk Safeguard correctly pruned oldest snapshots and preserved newest snapshot intact!")
+    assert len(remaining_snaps) == len(initial_snaps), "Fail-Closed policy violated: historical snapshots were unexpectedly pruned!"
+    print(" -> Fail-Closed Low-Disk Safeguard correctly preserved 100% of historical snapshots and safely aborted!")
 
     # Cleanup test sandbox
     safe_rmtree(test_root)
