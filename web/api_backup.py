@@ -298,9 +298,6 @@ def _background_custom_backup_task(params: Dict[str, Any]):
                 cancel_event=cancel_evt
             )
 
-        pruned = SnapshotEngine.prune_snapshots(repo_dir, effective_retention_count, effective_retention_days, authorized=True)
-        append_task_log(f"[보존 정책] 만료된 스냅샷 {len(pruned)}개 정리 완료")
-
         # Update profile
         prof = ConfigManager.get_profile(profile_id)
         if prof:
@@ -314,49 +311,10 @@ def _background_custom_backup_task(params: Dict[str, Any]):
         append_task_log(
             f"선택 백업 완료! ID: {manifest['id']} | [{vss_mode}] | 파일: {summary.get('total_files')}개 "
             f"({round(summary.get('total_bytes', 0)/(1024*1024), 2)}MB) | "
-            f"신규/수정: {summary.get('new_files', 0) + summary.get('modified_files', 0)}개 | "
+            f"신규: {summary.get('new_files', 0)}개, 수정: {summary.get('modified_files', 0)}개, 동일: {summary.get('unmodified_files', 0)}개 | "
             f"중복제거 절감: {round(summary.get('dedup_saved_bytes', 0)/(1024*1024), 2)}MB | "
             f"소요: {summary.get('duration_seconds')}초"
         )
-
-        # 3-2-1 오프사이트 원격 복제 자동 실행
-        try:
-            offsite_cfg = ConfigManager.get_offsite_config()
-            if offsite_cfg.get("enabled") and offsite_cfg.get("auto_sync"):
-                provider = offsite_cfg.get("provider", "local")
-                from core.offsite import replicate_offsite
-
-                if provider == "gdrive":
-                    creds = offsite_cfg.get("gdrive_credentials_file")
-                    folder = offsite_cfg.get("gdrive_folder_id") or "BackupSystem_Offsite"
-                    if creds:
-                        append_task_log(f"[3-2-1 오프사이트] 구글 드라이브(Google Drive/{folder})로 자동 복제 시작...")
-                        off_res = replicate_offsite(
-                            local_repo_dir=repo_dir,
-                            provider="gdrive",
-                            gdrive_credentials_file=creds,
-                            gdrive_folder_id=folder,
-                            log_callback=append_task_log
-                        )
-                        if off_res.get("success"):
-                            append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: 복제 {off_res.get('files_copied', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
-                        else:
-                            append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
-                else:
-                    remote_path = offsite_cfg.get("remote_path")
-                    if remote_path:
-                        append_task_log(f"[3-2-1 오프사이트] 원격 저장소({remote_path})로 자동 복제 시작...")
-                        off_res = replicate_offsite(
-                            local_repo_dir=repo_dir,
-                            remote_repo_dir=remote_path,
-                            provider="local"
-                        )
-                        if off_res.get("success"):
-                            append_task_log(f"[3-2-1 오프사이트] 동기화 성공: 복사 {off_res.get('files_copied', 0)}개 / 스킵 {off_res.get('files_skipped', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
-                        elif not off_res.get("skipped"):
-                            append_task_log(f"[3-2-1 오프사이트] 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
-        except Exception as e_off:
-            append_task_log(f"[3-2-1 오프사이트] 동기화 오류: {e_off}", level="WARNING")
 
         manifest_summary = {
             "id": manifest.get("id"),
@@ -368,16 +326,68 @@ def _background_custom_backup_task(params: Dict[str, Any]):
             "vss_enabled": manifest.get("vss_enabled", False),
             "summary": manifest.get("summary")
         }
-        del manifest
-        import gc
-        gc.collect()
 
+        # 즉시 UI 완료 처리 (프리징 방지)
         with task_lock:
             current_task["result"] = manifest_summary
             current_task["error"] = None
             if current_task.get("progress"):
                 current_task["progress"]["percent"] = 100.0
                 current_task["progress"]["current_file"] = "선택 백업 작업 완료"
+
+        # 보존 정책(Pruning) 및 3-2-1 오프사이트 복제는 백그라운드 데몬 스레드로 비동기 위임
+        def _post_backup_maintenance(target_repo, ret_count, ret_days):
+            try:
+                pruned = SnapshotEngine.prune_snapshots(target_repo, ret_count, ret_days, authorized=True)
+                if pruned:
+                    append_task_log(f"[보존 정책] 만료된 스냅샷 {len(pruned)}개 정리 완료")
+            except Exception as e_prune:
+                append_task_log(f"[보존 정책] 스냅샷 정리 중 예외 발생: {e_prune}", level="WARNING")
+
+            try:
+                offsite_cfg = ConfigManager.get_offsite_config()
+                if offsite_cfg.get("enabled") and offsite_cfg.get("auto_sync"):
+                    provider = offsite_cfg.get("provider", "local")
+                    from core.offsite import replicate_offsite
+
+                    if provider == "gdrive":
+                        creds = offsite_cfg.get("gdrive_credentials_file")
+                        folder = offsite_cfg.get("gdrive_folder_id") or "BackupSystem_Offsite"
+                        if creds:
+                            append_task_log(f"[3-2-1 오프사이트] 구글 드라이브(Google Drive/{folder})로 자동 복제 시작...")
+                            off_res = replicate_offsite(
+                                local_repo_dir=target_repo,
+                                provider="gdrive",
+                                gdrive_credentials_file=creds,
+                                gdrive_folder_id=folder,
+                                log_callback=append_task_log
+                            )
+                            if off_res.get("success"):
+                                append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: 복제 {off_res.get('files_copied', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
+                            else:
+                                append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
+                    else:
+                        remote_path = offsite_cfg.get("remote_path")
+                        if remote_path:
+                            append_task_log(f"[3-2-1 오프사이트] 원격 저장소({remote_path})로 자동 복제 시작...")
+                            off_res = replicate_offsite(
+                                local_repo_dir=target_repo,
+                                remote_repo_dir=remote_path,
+                                provider="local"
+                            )
+                            if off_res.get("success"):
+                                append_task_log(f"[3-2-1 오프사이트] 동기화 성공: 복사 {off_res.get('files_copied', 0)}개 / 스킵 {off_res.get('files_skipped', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
+                            elif not off_res.get("skipped"):
+                                append_task_log(f"[3-2-1 오프사이트] 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
+            except Exception as e_off:
+                append_task_log(f"[3-2-1 오프사이트] 동기화 오류: {e_off}", level="WARNING")
+
+        threading.Thread(
+            target=_post_backup_maintenance,
+            args=(repo_dir, effective_retention_count, effective_retention_days),
+            daemon=True,
+            name="PostBackupMaintenanceThread"
+        ).start()
 
     except InterruptedError:
         append_task_log("사용자에 의해 백업 작업이 취소되었습니다.", level="WARNING")
@@ -520,8 +530,20 @@ def _background_backup_task(params: Dict[str, Any]):
                         cancel_event=cancel_evt
                     )
 
-                    with open(res.manifest_path, "r", encoding="utf-8") as fp:
-                        manifest = json.load(fp)
+                    raw_sum = res.raw_summary or {}
+                    manifest = {
+                        "id": res.session_id,
+                        "vss_enabled": True,
+                        "summary": {
+                            "total_files": res.total_files,
+                            "total_bytes": res.total_bytes,
+                            "new_files": raw_sum.get("new_files", res.total_files),
+                            "modified_files": raw_sum.get("modified_files", 0),
+                            "unmodified_files": raw_sum.get("unmodified_files", 0),
+                            "dedup_saved_bytes": res.dedup_bytes,
+                            "duration_seconds": round(res.elapsed_seconds, 2)
+                        }
+                    }
             except Exception as e_rust:
                 append_task_log(f"[경고] Rust 엔진 실행 실패 ({e_rust}), Python 레거시 엔진으로 자동 폴백합니다.", level="WARNING")
 
@@ -538,10 +560,9 @@ def _background_backup_task(params: Dict[str, Any]):
                 cancel_event=cancel_evt
             )
 
-        # Retention check
+        # Retention check & profile update
         retention_count = profile.get("retention_count", 30)
         retention_days = profile.get("retention_days", 60)
-        pruned = SnapshotEngine.prune_snapshots(repo_dir, retention_count, retention_days, authorized=True)
 
         if profile_id:
             profile["last_run"] = time.time()
@@ -554,51 +575,10 @@ def _background_backup_task(params: Dict[str, Any]):
         append_task_log(
             f"백업 성공 완료! ID: {manifest['id']} | [{vss_mode}] | 파일: {summary.get('total_files')}개 "
             f"({round(summary.get('total_bytes', 0)/(1024*1024), 2)}MB) | "
-            f"신규/수정: {summary.get('new_files', 0) + summary.get('modified_files', 0)}개 | "
+            f"신규: {summary.get('new_files', 0)}개, 수정: {summary.get('modified_files', 0)}개, 동일: {summary.get('unmodified_files', 0)}개 | "
             f"중복제거 절감: {round(summary.get('dedup_saved_bytes', 0)/(1024*1024), 2)}MB | "
             f"소요시간: {summary.get('duration_seconds')}초"
         )
-        if pruned:
-            append_task_log(f"오래된 백업 스냅샷 {len(pruned)}개를 보관 정책에 따라 자동 정리했습니다.")
-
-        # 3-2-1 오프사이트 원격 복제 자동 실행
-        try:
-            offsite_cfg = ConfigManager.get_offsite_config()
-            if offsite_cfg.get("enabled") and offsite_cfg.get("auto_sync"):
-                provider = offsite_cfg.get("provider", "local")
-                from core.offsite import replicate_offsite
-
-                if provider == "gdrive":
-                    creds = offsite_cfg.get("gdrive_credentials_file")
-                    folder = offsite_cfg.get("gdrive_folder_id") or "BackupSystem_Offsite"
-                    if creds:
-                        append_task_log(f"[3-2-1 오프사이트] 구글 드라이브(Google Drive/{folder})로 자동 복제 시작...")
-                        off_res = replicate_offsite(
-                            local_repo_dir=repo_dir,
-                            provider="gdrive",
-                            gdrive_credentials_file=creds,
-                            gdrive_folder_id=folder,
-                            log_callback=append_task_log
-                        )
-                        if off_res.get("success"):
-                            append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: 복제 {off_res.get('files_copied', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
-                        else:
-                            append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
-                else:
-                    remote_path = offsite_cfg.get("remote_path")
-                    if remote_path:
-                        append_task_log(f"[3-2-1 오프사이트] 원격 저장소({remote_path})로 자동 복제 시작...")
-                        off_res = replicate_offsite(
-                            local_repo_dir=repo_dir,
-                            remote_repo_dir=remote_path,
-                            provider="local"
-                        )
-                        if off_res.get("success"):
-                            append_task_log(f"[3-2-1 오프사이트] 동기화 성공: 복사 {off_res.get('files_copied', 0)}개 / 스킵 {off_res.get('files_skipped', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
-                        elif not off_res.get("skipped"):
-                            append_task_log(f"[3-2-1 오프사이트] 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
-        except Exception as e_off:
-            append_task_log(f"[3-2-1 오프사이트] 동기화 오류: {e_off}", level="WARNING")
 
         manifest_summary = {
             "id": manifest.get("id"),
@@ -610,13 +590,67 @@ def _background_backup_task(params: Dict[str, Any]):
             "vss_enabled": manifest.get("vss_enabled", False),
             "summary": manifest.get("summary")
         }
-        del manifest
-        import gc
-        gc.collect()
 
         with task_lock:
             current_task["result"] = manifest_summary
             current_task["error"] = None
+            if current_task.get("progress"):
+                current_task["progress"]["percent"] = 100.0
+                current_task["progress"]["current_file"] = "백업 작업 완료"
+
+        # 보존 정책(Pruning) 및 3-2-1 오프사이트 복제는 백그라운드 데몬 스레드로 비동기 위임
+        def _post_backup_general_maintenance(target_repo, ret_count, ret_days):
+            try:
+                pruned = SnapshotEngine.prune_snapshots(target_repo, ret_count, ret_days, authorized=True)
+                if pruned:
+                    append_task_log(f"[보존 정책] 만료된 스냅샷 {len(pruned)}개 정리 완료")
+            except Exception as e_prune:
+                append_task_log(f"[보존 정책] 스냅샷 정리 중 예외 발생: {e_prune}", level="WARNING")
+
+            try:
+                offsite_cfg = ConfigManager.get_offsite_config()
+                if offsite_cfg.get("enabled") and offsite_cfg.get("auto_sync"):
+                    provider = offsite_cfg.get("provider", "local")
+                    from core.offsite import replicate_offsite
+
+                    if provider == "gdrive":
+                        creds = offsite_cfg.get("gdrive_credentials_file")
+                        folder = offsite_cfg.get("gdrive_folder_id") or "BackupSystem_Offsite"
+                        if creds:
+                            append_task_log(f"[3-2-1 오프사이트] 구글 드라이브(Google Drive/{folder})로 자동 복제 시작...")
+                            off_res = replicate_offsite(
+                                local_repo_dir=target_repo,
+                                provider="gdrive",
+                                gdrive_credentials_file=creds,
+                                gdrive_folder_id=folder,
+                                log_callback=append_task_log
+                            )
+                            if off_res.get("success"):
+                                append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: 복제 {off_res.get('files_copied', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
+                            else:
+                                append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
+                    else:
+                        remote_path = offsite_cfg.get("remote_path")
+                        if remote_path:
+                            append_task_log(f"[3-2-1 오프사이트] 원격 저장소({remote_path})로 자동 복제 시작...")
+                            off_res = replicate_offsite(
+                                local_repo_dir=target_repo,
+                                remote_repo_dir=remote_path,
+                                provider="local"
+                            )
+                            if off_res.get("success"):
+                                append_task_log(f"[3-2-1 오프사이트] 동기화 성공: 복사 {off_res.get('files_copied', 0)}개 / 스킵 {off_res.get('files_skipped', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
+                            elif not off_res.get("skipped"):
+                                append_task_log(f"[3-2-1 오프사이트] 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
+            except Exception as e_off:
+                append_task_log(f"[3-2-1 오프사이트] 동기화 오류: {e_off}", level="WARNING")
+
+        threading.Thread(
+            target=_post_backup_general_maintenance,
+            args=(repo_dir, retention_count, retention_days),
+            daemon=True,
+            name="PostBackupGeneralMaintenanceThread"
+        ).start()
 
     except InterruptedError:
         append_task_log("사용자에 의해 백업 작업이 취소되었습니다.", level="WARNING")

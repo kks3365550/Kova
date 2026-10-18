@@ -183,9 +183,21 @@ fn run_backup(
                 prev_manifest.files.len()
             );
         }
-        for entry in prev_manifest.files {
+        for mut entry in prev_manifest.files {
             if !entry.is_dir {
-                prev_files_map.insert(entry.path.clone(), entry);
+                if entry.chunks.is_empty() {
+                    let hash_opt = entry.blob_id.as_ref().or(entry.sha256.as_ref());
+                    if let Some(bid) = hash_opt {
+                        entry.chunks.push(FileChunkInfo {
+                            hash: bid.clone(),
+                            offset: 0,
+                            length: entry.size as usize,
+                            compressed_length: 0,
+                        });
+                    }
+                }
+                let norm_path = entry.path.replace('\\', "/");
+                prev_files_map.insert(norm_path, entry);
             }
         }
     }
@@ -201,8 +213,17 @@ fn run_backup(
             // Incremental Fast-Path Check:
             // If file path, size, and modified time match previous snapshot,
             // skip reading from disk completely and reuse existing chunk metadata!
-            if let Some(prev) = prev_files_map.get(&item.rel_path) {
-                if prev.size == item.size && prev.modified == item.modified && !prev.chunks.is_empty() {
+            let norm_rel = item.rel_path.replace('\\', "/");
+            if let Some(prev) = prev_files_map.get(&norm_rel) {
+                let mtime_match = if prev.modified == item.modified {
+                    true
+                } else if prev.modified % 1000 == 0 && (item.modified / 1000) == (prev.modified / 1000) {
+                    true
+                } else {
+                    false
+                };
+
+                if prev.size == item.size && mtime_match && !prev.chunks.is_empty() {
                     total_bytes.fetch_add(prev.size, Ordering::Relaxed);
                     dedup_bytes.fetch_add(prev.size, Ordering::Relaxed);
                     unmodified_files.fetch_add(1, Ordering::Relaxed);
@@ -241,6 +262,8 @@ fn run_backup(
                         modified: item.modified,
                         is_dir: false,
                         chunks: prev.chunks.clone(),
+                        blob_id: prev.blob_id.clone(),
+                        sha256: prev.sha256.clone(),
                     });
                 } else {
                     modified_files.fetch_add(1, Ordering::Relaxed);
@@ -340,6 +363,8 @@ fn run_backup(
                 modified: item.modified,
                 is_dir: false,
                 chunks: file_chunks,
+                blob_id: None,
+                sha256: None,
             })
         })
         .collect();
@@ -353,6 +378,8 @@ fn run_backup(
             modified: dir.modified,
             is_dir: true,
             chunks: Vec::new(),
+            blob_id: None,
+            sha256: None,
         });
     }
 

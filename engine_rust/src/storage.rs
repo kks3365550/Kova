@@ -1,34 +1,103 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+fn deserialize_mtime<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(deserializer)?;
+    match v {
+        serde_json::Value::Number(n) => {
+            if let Some(u) = n.as_u64() {
+                if u >= 100_000_000_000 {
+                    Ok(u)
+                } else {
+                    Ok(u * 1000)
+                }
+            } else if let Some(f) = n.as_f64() {
+                if f >= 100_000_000_000.0 {
+                    Ok(f.round() as u64)
+                } else {
+                    Ok((f * 1000.0).round() as u64)
+                }
+            } else {
+                Ok(0)
+            }
+        }
+        _ => Ok(0),
+    }
+}
+
+fn deserialize_source_root<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let v = serde_json::Value::deserialize(deserializer)?;
+    match v {
+        serde_json::Value::String(s) => Ok(s),
+        serde_json::Value::Array(arr) => {
+            let strs: Vec<String> = arr
+                .into_iter()
+                .filter_map(|x| match x {
+                    serde_json::Value::String(s) => Some(s),
+                    _ => None,
+                })
+                .collect();
+            Ok(strs.join(";"))
+        }
+        _ => Ok(String::new()),
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileChunkInfo {
+    #[serde(default)]
     pub hash: String,
+    #[serde(default)]
     pub offset: u64,
+    #[serde(default)]
     pub length: usize,
+    #[serde(default)]
     pub compressed_length: usize,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileEntry {
+    #[serde(alias = "rel_path", default)]
     pub path: String, // Relative path from source root
+    #[serde(default)]
     pub size: u64,
-    pub modified: u64, // Unix timestamp in seconds
+    #[serde(alias = "mtime", deserialize_with = "deserialize_mtime", default)]
+    pub modified: u64, // Unix timestamp (ms or sec)
+    #[serde(default)]
     pub is_dir: bool,
+    #[serde(default)]
     pub chunks: Vec<FileChunkInfo>,
+    #[serde(default)]
+    pub blob_id: Option<String>,
+    #[serde(default)]
+    pub sha256: Option<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SnapshotManifest {
+    #[serde(alias = "id", default)]
     pub session_id: String,
+    #[serde(default)]
     pub created_at: String,
+    #[serde(alias = "sources", deserialize_with = "deserialize_source_root", default)]
     pub source_root: String,
+    #[serde(default)]
     pub total_files: usize,
+    #[serde(default)]
     pub total_bytes: u64,
+    #[serde(default)]
     pub dedup_bytes: u64,
+    #[serde(default)]
     pub compressed_bytes: u64,
+    #[serde(alias = "entries", default)]
     pub files: Vec<FileEntry>,
 }
 
@@ -99,8 +168,9 @@ impl CasStorage {
 
     pub fn load_manifest(&self, session_id: &str) -> io::Result<SnapshotManifest> {
         let target_path = self.repo_root.join("snapshots").join(format!("{}.json", session_id));
-        let data = fs::read_to_string(target_path)?;
-        let manifest: SnapshotManifest = serde_json::from_str(&data)
+        let file = File::open(target_path)?;
+        let reader = BufReader::new(file);
+        let manifest: SnapshotManifest = serde_json::from_reader(reader)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         Ok(manifest)
     }
@@ -128,9 +198,12 @@ impl CasStorage {
         entries.sort_by(|a, b| b.0.cmp(&a.0));
 
         for (_mtime, path) in entries {
-            if let Ok(data) = fs::read_to_string(&path) {
-                if let Ok(manifest) = serde_json::from_str::<SnapshotManifest>(&data) {
-                    return Some(manifest);
+            if let Ok(file) = File::open(&path) {
+                let reader = BufReader::new(file);
+                if let Ok(manifest) = serde_json::from_reader::<_, SnapshotManifest>(reader) {
+                    if !manifest.files.is_empty() {
+                        return Some(manifest);
+                    }
                 }
             }
         }
