@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 web/api_backup.py
 
@@ -242,16 +242,22 @@ def _background_custom_backup_task(params: Dict[str, Any]):
                         tot = ev.get("total_files", 0)
                         spd = ev.get("speed", 0.0)
                         cur_f = ev.get("current_file", "")
+                        n_files = ev.get("new_files", 0)
+                        m_files = ev.get("modified_files", 0)
+                        u_files = ev.get("unmodified_files", 0)
                         with task_lock:
                             current_task["progress"] = {
                                 "percent": pct,
                                 "processed_files": done,
                                 "total_files": tot,
                                 "speed": f"{spd:.1f} MB/s",
-                                "current_file": cur_f
+                                "current_file": cur_f,
+                                "new_files": n_files,
+                                "modified_files": m_files,
+                                "unmodified_files": u_files
                             }
                         if done % 100 == 0 or done == tot:
-                            append_task_log(f"선택 백업 진행: {pct}% ({done}/{tot} 파일 | {spd:.1f} MB/s)")
+                            append_task_log(f"선택 백업 진행: {pct}% ({done}/{tot} 파일 | {spd:.1f} MB/s | 신규: {n_files}, 수정: {m_files}, 동일: {u_files})")
 
                     res = run_rust_backup(
                         sources=all_sources,
@@ -262,8 +268,20 @@ def _background_custom_backup_task(params: Dict[str, Any]):
                         cancel_event=current_task.get("cancel_event")
                     )
 
-                    with open(res.manifest_path, "r", encoding="utf-8") as fp:
-                        manifest = json.load(fp)
+                    raw_sum = res.raw_summary or {}
+                    manifest = {
+                        "id": res.session_id,
+                        "vss_enabled": True,
+                        "summary": {
+                            "total_files": res.total_files,
+                            "total_bytes": res.total_bytes,
+                            "new_files": raw_sum.get("new_files", res.total_files),
+                            "modified_files": raw_sum.get("modified_files", 0),
+                            "unmodified_files": raw_sum.get("unmodified_files", 0),
+                            "dedup_saved_bytes": res.dedup_bytes,
+                            "duration_seconds": round(res.elapsed_seconds, 2)
+                        }
+                    }
             except Exception as e_rust:
                 append_task_log(f"[경고] Rust 엔진 실행 실패 ({e_rust}), Python 레거시 엔진으로 자동 폴백합니다.", level="WARNING")
 

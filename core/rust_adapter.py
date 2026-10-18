@@ -1,4 +1,4 @@
-﻿# core/rust_adapter.py
+# core/rust_adapter.py
 # Python 3.11 compatible, Windows CRLF, pyflakes-clean
 """
 Rust Fast Engine Bridge Adapter (kova_fast_engine.exe)
@@ -97,56 +97,28 @@ def sync_rust_manifest_to_sqlite(repo_dir: str, session_id: str, profile_name: s
         with open(rust_manifest_file, "r", encoding="utf-8") as f:
             rust_data = json.load(f)
 
-        # Map Rust FileEntry into Python snapshot entries
-        entries: List[Dict[str, Any]] = []
-        for fe in rust_data.get("files", []):
-            if fe.get("is_dir"):
-                continue
-
-            chunks = fe.get("chunks", [])
-            # If multiple chunks exist, record primary chunk or aggregate hash
-            primary_hash = chunks[0]["hash"] if chunks else ""
-
-            chunk_list = []
-            for c in chunks:
-                chunk_list.append({
-                    "hash": c.get("hash"),
-                    "offset": c.get("offset"),
-                    "length": c.get("length"),
-                    "compressed_length": c.get("compressed_length", 0)
-                })
-
-            entries.append({
-                "source_root": rust_data.get("source_root", ""),
-                "rel_path": fe.get("path", ""),
-                "size": fe.get("size", 0),
-                "mtime": fe.get("modified", 0),
-                "sha256": primary_hash,
-                "blob_id": primary_hash,
-                "chunks": chunk_list if len(chunk_list) > 1 else None,
-                "status": "new"
-            })
-
-        # Calculate standard summary statistics
+        # Adapt summary and metadata directly from Rust manifest
+        # If standard schema is already present or to avoid duplicate arrays, adapt cleanly
         tot_bytes = rust_data.get("total_bytes", 0)
         ded_bytes = rust_data.get("dedup_bytes", 0)
         cmp_bytes = rust_data.get("compressed_bytes", 0)
         new_stored = max(0, tot_bytes - ded_bytes)
+        files_list = rust_data.get("files", [])
+        total_count = len(files_list)
 
         iso_str = datetime.now(timezone.utc).isoformat()
-        # Standard Python Snapshot Schema compatible with Web UI, MetadataDB, and Rust CLI
         standard_manifest = {
             "id": session_id,
-            "session_id": session_id,  # Rust Manifest compatibility
-            "created_at": iso_str,     # ISO string for Rust deserialize
+            "session_id": session_id,
+            "created_at": iso_str,
             "created_at_ts": time.time(),
             "iso_time": iso_str,
-            "source_root": rust_data.get("source_root", ""),  # Rust Manifest compatibility
-            "total_files": len(rust_data.get("files", [])),   # Rust Manifest compatibility
+            "source_root": rust_data.get("source_root", ""),
+            "total_files": total_count,
             "total_bytes": tot_bytes,
             "dedup_bytes": ded_bytes,
             "compressed_bytes": cmp_bytes,
-            "files": rust_data.get("files", []),              # Keep original files for Rust restore
+            "files": files_list,
             "profile_id": "rust_fast_engine",
             "profile_name": profile_name,
             "backup_type": "full",
@@ -163,9 +135,9 @@ def sync_rust_manifest_to_sqlite(repo_dir: str, session_id: str, profile_name: s
             },
             "sources": [rust_data.get("source_root", "")],
             "summary": {
-                "total_files": len(entries),
+                "total_files": total_count,
                 "total_bytes": tot_bytes,
-                "new_files": len(entries),
+                "new_files": total_count,
                 "modified_files": 0,
                 "unmodified_files": 0,
                 "deleted_files": 0,
@@ -174,14 +146,13 @@ def sync_rust_manifest_to_sqlite(repo_dir: str, session_id: str, profile_name: s
                 "compressed_bytes": cmp_bytes,
                 "duration_seconds": round(duration_seconds, 2)
             },
-            "entries": entries,
             "engine": "rust_fast_engine_v1"
         }
 
-        # Atomically overwrite manifest with rich unified schema
+        # Atomically overwrite manifest with compact json (never indent=2 for big manifests)
         tmp_target = rust_manifest_file.with_suffix(".tmp_unified")
         with open(tmp_target, "w", encoding="utf-8") as f:
-            json.dump(standard_manifest, f, ensure_ascii=False, indent=2)
+            json.dump(standard_manifest, f, ensure_ascii=False)
         os.replace(tmp_target, rust_manifest_file)
 
         # Commit to MetadataDB (SQLite)
@@ -189,9 +160,9 @@ def sync_rust_manifest_to_sqlite(repo_dir: str, session_id: str, profile_name: s
         db = MetadataDB(str(repo_path))
         db.sync_snapshots()
         if new_stored > 0:
-            db.record_new_blob(stored_size=new_stored, count=len(entries))
+            db.record_new_blob(stored_size=new_stored, count=total_count)
 
-        log.info(f"[RustAdapter] SQLite 메타데이터 동기화 완료: {session_id} (파일: {len(entries)}개)")
+        log.info(f"[RustAdapter] SQLite 메타데이터 동기화 완료: {session_id} (파일: {total_count}개)")
         return True
 
     except Exception as e:

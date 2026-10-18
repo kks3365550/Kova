@@ -30,7 +30,7 @@ pub fn scan_directory(source_root: &Path) -> Vec<ScannedItem> {
                 .modified()
                 .ok()
                 .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_secs())
+                .map(|d| d.as_millis() as u64)
                 .unwrap_or(0);
 
             let rel_path = path

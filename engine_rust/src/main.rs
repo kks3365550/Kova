@@ -168,6 +168,27 @@ fn run_backup(
     let dedup_bytes = AtomicU64::new(0);
     let compressed_bytes = AtomicU64::new(0);
     let processed_files = AtomicUsize::new(0);
+    let new_files = AtomicUsize::new(0);
+    let modified_files = AtomicUsize::new(0);
+    let unmodified_files = AtomicUsize::new(0);
+
+    // Load latest snapshot manifest to build incremental fast-path map
+    use std::collections::HashMap;
+    let mut prev_files_map: HashMap<String, FileEntry> = HashMap::new();
+    if let Some(prev_manifest) = cas.get_latest_manifest() {
+        if !json_mode {
+            println!(
+                "[KOVA-FAST] Loaded base snapshot for incremental fast-path: {} ({} files)",
+                prev_manifest.session_id,
+                prev_manifest.files.len()
+            );
+        }
+        for entry in prev_manifest.files {
+            if !entry.is_dir {
+                prev_files_map.insert(entry.path.clone(), entry);
+            }
+        }
+    }
 
     // Filter directories and files
     let (dirs, files): (Vec<_>, Vec<_>) = items.into_iter().partition(|i| i.is_dir);
@@ -177,6 +198,57 @@ fn run_backup(
     let file_entries: Vec<FileEntry> = files
         .into_par_iter()
         .filter_map(|item| {
+            // Incremental Fast-Path Check:
+            // If file path, size, and modified time match previous snapshot,
+            // skip reading from disk completely and reuse existing chunk metadata!
+            if let Some(prev) = prev_files_map.get(&item.rel_path) {
+                if prev.size == item.size && prev.modified == item.modified && !prev.chunks.is_empty() {
+                    total_bytes.fetch_add(prev.size, Ordering::Relaxed);
+                    dedup_bytes.fetch_add(prev.size, Ordering::Relaxed);
+                    unmodified_files.fetch_add(1, Ordering::Relaxed);
+
+                    let done = processed_files.fetch_add(1, Ordering::Relaxed) + 1;
+                    if json_mode && (done % 100 == 0 || done == total_file_count) {
+                        let cur_bytes = total_bytes.load(Ordering::Relaxed);
+                        let pct = if total_file_count > 0 {
+                            (done as f64 / total_file_count as f64) * 100.0
+                        } else {
+                            100.0
+                        };
+                        let elapsed = start_time.elapsed().as_secs_f64();
+                        let cur_speed = (cur_bytes as f64 / (1024.0 * 1024.0)) / elapsed.max(0.001);
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "type": "progress",
+                                "status": "running",
+                                "percent": pct.round() as u64,
+                                "processed_files": done,
+                                "total_files": total_file_count,
+                                "processed_size": cur_bytes,
+                                "speed": cur_speed,
+                                "current_file": item.rel_path,
+                                "new_files": new_files.load(Ordering::Relaxed),
+                                "modified_files": modified_files.load(Ordering::Relaxed),
+                                "unmodified_files": unmodified_files.load(Ordering::Relaxed)
+                            })
+                        );
+                    }
+
+                    return Some(FileEntry {
+                        path: item.rel_path,
+                        size: prev.size,
+                        modified: item.modified,
+                        is_dir: false,
+                        chunks: prev.chunks.clone(),
+                    });
+                } else {
+                    modified_files.fetch_add(1, Ordering::Relaxed);
+                }
+            } else {
+                new_files.fetch_add(1, Ordering::Relaxed);
+            }
+
             let chunks_raw = match chunker::chunk_file(&item.path) {
                 Ok(c) => c,
                 Err(e) => {
@@ -254,7 +326,10 @@ fn run_backup(
                         "total_files": total_file_count,
                         "processed_size": cur_bytes,
                         "speed": cur_speed,
-                        "current_file": item.rel_path
+                        "current_file": item.rel_path,
+                        "new_files": new_files.load(Ordering::Relaxed),
+                        "modified_files": modified_files.load(Ordering::Relaxed),
+                        "unmodified_files": unmodified_files.load(Ordering::Relaxed)
                     })
                 );
             }
@@ -317,7 +392,10 @@ fn run_backup(
                 "dedup_bytes": ded_b,
                 "compressed_bytes": cmp_b,
                 "elapsed_seconds": total_elapsed,
-                "throughput_mb": throughput_mb
+                "throughput_mb": throughput_mb,
+                "new_files": new_files.load(Ordering::Relaxed),
+                "modified_files": modified_files.load(Ordering::Relaxed),
+                "unmodified_files": unmodified_files.load(Ordering::Relaxed)
             })
         );
     } else {

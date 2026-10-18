@@ -89,7 +89,7 @@ impl CasStorage {
         let target_path = snapshots_dir.join(format!("{}.json", manifest.session_id));
         let tmp_path = target_path.with_extension("tmp");
 
-        let json = serde_json::to_string_pretty(manifest)
+        let json = serde_json::to_string(manifest)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
         fs::write(&tmp_path, json.as_bytes())?;
@@ -104,4 +104,38 @@ impl CasStorage {
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         Ok(manifest)
     }
+
+    pub fn get_latest_manifest(&self) -> Option<SnapshotManifest> {
+        let snapshots_dir = self.repo_root.join("snapshots");
+        if !snapshots_dir.is_dir() {
+            return None;
+        }
+
+        let mut entries: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+        if let Ok(dir_entries) = fs::read_dir(snapshots_dir) {
+            for entry in dir_entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                    if let Ok(meta) = entry.metadata() {
+                        if let Ok(mtime) = meta.modified() {
+                            entries.push((mtime, path));
+                        }
+                    }
+                }
+            }
+        }
+
+        entries.sort_by(|a, b| b.0.cmp(&a.0));
+
+        for (_mtime, path) in entries {
+            if let Ok(data) = fs::read_to_string(&path) {
+                if let Ok(manifest) = serde_json::from_str::<SnapshotManifest>(&data) {
+                    return Some(manifest);
+                }
+            }
+        }
+
+        None
+    }
 }
+
