@@ -14,16 +14,14 @@ ElseIf fso.FileExists(currentDir & "\.venv\Scripts\pythonw.exe") Then
     pyExe = """" & currentDir & "\.venv\Scripts\pythonw.exe"""
 ElseIf fso.FileExists(currentDir & "\.venv\Scripts\python.exe") Then
     pyExe = """" & currentDir & "\.venv\Scripts\python.exe"""
+ElseIf fso.FileExists(userProfile & "\.gemini\antigravity\venv\Scripts\pythonw.exe") Then
+    pyExe = """" & userProfile & "\.gemini\antigravity\venv\Scripts\pythonw.exe"""
+ElseIf fso.FileExists(userProfile & "\.gemini\antigravity\venv\Scripts\python.exe") Then
+    pyExe = """" & userProfile & "\.gemini\antigravity\venv\Scripts\python.exe"""
 ElseIf fso.FileExists(userProfile & "\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe") Then
     pyExe = """" & userProfile & "\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe"""
-ElseIf fso.FileExists(userProfile & "\AppData\Local\Python\pythoncore-3.14-64\python.exe") Then
-    pyExe = """" & userProfile & "\AppData\Local\Python\pythoncore-3.14-64\python.exe"""
-ElseIf fso.FileExists(userProfile & "\AppData\Local\hermes\hermes-agent\venv\Scripts\pythonw.exe") Then
-    pyExe = """" & userProfile & "\AppData\Local\hermes\hermes-agent\venv\Scripts\pythonw.exe"""
-ElseIf fso.FileExists(userProfile & "\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe") Then
-    pyExe = """" & userProfile & "\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe"""
 Else
-    pyExe = "python"
+    pyExe = "pythonw"
 End If
 
 WshShell.Run pyExe & " run.py --silent", 0, False
