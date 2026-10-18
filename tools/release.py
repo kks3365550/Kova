@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Automated Git Versioning, Release Builder and Remote Deploy Tool
 """
@@ -125,6 +125,41 @@ def run_preflight_security_gate():
             print("      [OK] Git 추적 대상 비밀정보 0건 확인 (보안 감사 통과)")
         except Exception as e:
             print(f"      [FATAL] scan_secrets 실행 실패: {e}")
+            sys.exit(1)
+
+
+def run_preflight_verification_gate():
+    """
+    릴리즈 전 전역 4대 회귀 스위트 & 실데이터 Latency SLA 사전 검증 (Full Verification Gate).
+    Rust 엔진(18/18), 파이프라인 처리량(900MB/s+), 베어메탈 비트맵 스킵,
+    FastAPI E2E 및 대시보드 저장소 통계 응답 속도(<500ms)가 100% 통과해야만 릴리즈를 승인한다.
+    """
+    print("[0/5] Pre-flight Full Verification & Latency SLA Gate (test_verification_all.py)...")
+    verif_script = os.path.join(BASE_DIR, 'test_verification_all.py')
+    if os.path.exists(verif_script):
+        try:
+            res = subprocess.run(
+                [sys.executable, verif_script],
+                cwd=BASE_DIR,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            if res.returncode != 0:
+                print("      " + "!" * 50)
+                print("      [BLOCKED] 전역 회귀 검증/레이턴시 SLA 실패! 불완전한 코드 릴리즈 차단.")
+                print("      " + "!" * 50)
+                if res.stdout:
+                    for line in res.stdout.strip().splitlines()[-20:]:
+                        print(f"        -> {line}")
+                if res.stderr:
+                    for line in res.stderr.strip().splitlines()[-10:]:
+                        print(f"        [ERR] {line}")
+                sys.exit(1)
+            print("      [OK] 전역 4대 검증 및 저장소 레이턴시 SLA (<500ms) 100% 통과")
+        except Exception as e:
+            print(f"      [FATAL] test_verification_all 실행 실패: {e}")
             sys.exit(1)
 
 
@@ -667,10 +702,11 @@ def main():
     print("   Backup System Release & Versioning Pipeline")
     print("=" * 60)
 
-    # 릴리즈 착수 전 보안 감사(scan_secrets), 정적 분석(pyflakes), 스마트 게이트키퍼(수명주기/UI계약) 사전 검증
+    # 릴리즈 착수 전 보안 감사(scan_secrets), 정적 분석(pyflakes), 스마트 게이트키퍼(수명주기/UI계약), 4대 회귀 및 레이턴시 SLA 사전 검증
     run_preflight_security_gate()
     run_preflight_lint_gate()
     run_preflight_lifecycle_gate()
+    run_preflight_verification_gate()
 
     cur_ver = get_current_version()
     if args.version:

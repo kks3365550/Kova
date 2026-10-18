@@ -10,7 +10,6 @@ test_verification_all.py - Kova 전역 4대 검증 자동화 스크립트 (Auto-
 import os
 import sys
 import time
-import json
 import subprocess
 
 PROJECT_ROOT = r"C:\Users\kksjmj\Desktop\ai\백업시스템"
@@ -77,14 +76,36 @@ def run_method_4():
 
     client = TestClient(app)
 
-    # 1. Test baremetal layout endpoint
+    # Warm-up request to eliminate TestClient cold-start overhead (module import, router compilation)
+    _ = client.get("/api/storage-stats")
+
+    # 1. Test core dashboard endpoints & real storage latency SLA (< 500ms)
+    t0 = time.time()
+    resp_stats = client.get("/api/storage-stats")
+    latency_stats_ms = (time.time() - t0) * 1000.0
+    assert resp_stats.status_code == 200, f"/api/storage-stats failed: {resp_stats.text}"
+    print(f"  -> GET /api/storage-stats : OK (200, {latency_stats_ms:.1f}ms)")
+    assert latency_stats_ms < 500.0, f"SLA VIOLATION: /api/storage-stats took {latency_stats_ms:.1f}ms (threshold: 500ms)"
+
+    t0 = time.time()
+    resp_snaps = client.get("/api/snapshots")
+    latency_snaps_ms = (time.time() - t0) * 1000.0
+    assert resp_snaps.status_code == 200, f"/api/snapshots failed: {resp_snaps.text}"
+    print(f"  -> GET /api/snapshots : OK (200, {latency_snaps_ms:.1f}ms, count={len(resp_snaps.json())})")
+    assert latency_snaps_ms < 500.0, f"SLA VIOLATION: /api/snapshots took {latency_snaps_ms:.1f}ms (threshold: 500ms)"
+
+    resp_sys = client.get("/api/system-info")
+    assert resp_sys.status_code == 200, f"/api/system-info failed: {resp_sys.text}"
+    print("  -> GET /api/system-info : OK (200)")
+
+    # 2. Test baremetal layout endpoint
     resp_bm = client.get("/api/migration/baremetal/layout?disk_number=0&volume=C:")
     assert resp_bm.status_code == 200, f"Baremetal layout endpoint failed: {resp_bm.text}"
     bm_json = resp_bm.json()
     assert bm_json.get("success") is True
     print("  -> GET /api/migration/baremetal/layout : OK (200)")
 
-    # 2. Test live backup execution with Rust engine
+    # 3. Test live backup execution with Rust engine
     test_src = os.path.join(PROJECT_ROOT, "engine_rust", "src")
     test_repo = os.path.join(PROJECT_ROOT, "test_e2e_repo")
     

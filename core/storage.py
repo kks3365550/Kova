@@ -132,15 +132,27 @@ class BlobStorage:
             with open(self.meta_file, "w", encoding="utf-8") as f:
                 json.dump(meta, f, indent=2)
 
-    def cleanup_orphaned_tmp_files(self, min_age_seconds: float = 60.0) -> int:
+    # Class-level throttle for orphan cleanup so repo scans don't occur on every BlobStorage instantiation
+    _last_cleanup_times: Dict[str, float] = {}
+
+    def cleanup_orphaned_tmp_files(self, min_age_seconds: float = 60.0, force: bool = False) -> int:
         """
         Self-Healing: Detects and removes orphaned temporary files (.tmp_*, _temp/*)
         left behind by power loss, SIGKILL, or system crash.
+        Throttled to run at most once every 300 seconds per repository unless force=True.
         Returns the count of cleaned up files.
         """
         import glob
         import time
         now = time.time()
+
+        if not force:
+            with BlobStorage._class_cache_lock:
+                last_time = BlobStorage._last_cleanup_times.get(self.repo_dir, 0.0)
+                if (now - last_time) < 300.0:
+                    return 0
+                BlobStorage._last_cleanup_times[self.repo_dir] = now
+
         cleaned_count = 0
 
         # 1. Clean up _temp directory
