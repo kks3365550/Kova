@@ -99,7 +99,7 @@ class NOTIFYICONDATAW(ctypes.Structure):
 
 # Window Procedure 함수 포인터 타입
 WNDPROC = ctypes.WINFUNCTYPE(
-    ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long,
+    wintypes.LPARAM,
     wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
 )
 
@@ -131,7 +131,7 @@ shell32 = ctypes.windll.shell32
 kernel32 = ctypes.windll.kernel32
 
 user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-user32.DefWindowProcW.restype = ctypes.c_longlong if ctypes.sizeof(ctypes.c_void_p) == 8 else ctypes.c_long
+user32.DefWindowProcW.restype = wintypes.LPARAM
 
 
 class BackupTrayApp:
@@ -144,7 +144,19 @@ class BackupTrayApp:
         self._notif_lock = threading.Lock()
         self._wndproc = WNDPROC(self.wnd_proc)
 
+    def _switch_to_default_desktop(self):
+        """대화형 사용자 데스크톱(Default)으로 현재 스레드 데스크톱 전환"""
+        try:
+            h_desk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+            if h_desk:
+                user32.SetThreadDesktop(h_desk)
+        except Exception:
+            pass
+
     def run(self):
+        # 대화형 데스크톱(작업 표시줄/트레이 영역)으로 스레드 연결 보장
+        self._switch_to_default_desktop()
+
         # 윈도우 클래스 등록
         hinstance = kernel32.GetModuleHandleW(None)
         wc = WNDCLASSEXW()
