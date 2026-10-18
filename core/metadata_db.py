@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 import json
 import sqlite3
@@ -17,6 +17,8 @@ class MetadataDB:
         self.db_path = os.path.join(self.repo_dir, "metadata.db")
         self.snapshots_dir = os.path.join(self.repo_dir, "snapshots")
         self.blobs_dir = os.path.join(self.repo_dir, "blobs")
+        self._stats_cache = None
+        self._stats_cache_time = 0.0
         self._init_db()
 
     @contextlib.contextmanager
@@ -376,7 +378,11 @@ class MetadataDB:
         return snapshots
 
     def get_storage_stats(self, force_refresh: bool = False) -> Dict[str, Any]:
-        """Calculates storage stats in 0.001s using SQLite cache."""
+        """Calculates storage stats in 0.001s using SQLite cache & in-memory TTL."""
+        now = time.time()
+        if not force_refresh and self._stats_cache is not None and (now - self._stats_cache_time) < 60.0:
+            return dict(self._stats_cache)
+
         total_blobs = 0
         stored_bytes = 0
 
@@ -400,32 +406,31 @@ class MetadataDB:
         saved_bytes = max(0, total_logical_bytes - stored_bytes)
         ratio = round((saved_bytes / total_logical_bytes * 100), 1) if total_logical_bytes > 0 else 0.0
 
-        # 청킹 통계 계산 (최근 50개 스냅샷 샘플링으로 I/O 최소화)
+        # 청킹 통계 계산 (최신 1개 스냅샷만 확인하여 90MB JSON 반복 파싱으로 인한 수초 블로킹 원천 차단)
         total_chunks = 0
         chunked_files_count = 0
         chunk_strategies = {}
 
-        sample_snapshots = snapshots[:50]
-        for snap in sample_snapshots:
+        if snapshots:
+            snap = snapshots[0]
             snap_id = snap.get("id")
-            if not snap_id:
-                continue
-            snap_path = os.path.join(self.snapshots_dir, f"{snap_id}.json")
-            try:
-                with open(snap_path, "r", encoding="utf-8") as fp:
-                    data = json.load(fp)
-                    entries = data.get("entries") or data.get("files", [])
-                    for entry in entries:
-                        chunk_ids = entry.get("chunk_ids")
-                        if chunk_ids and len(chunk_ids) > 1:
-                            total_chunks += len(chunk_ids)
-                            chunked_files_count += 1
-                            strategy = entry.get("chunk_strategy", "unknown")
-                            chunk_strategies[strategy] = chunk_strategies.get(strategy, 0) + 1
-            except Exception:
-                continue
+            if snap_id:
+                snap_path = os.path.join(self.snapshots_dir, f"{snap_id}.json")
+                try:
+                    with open(snap_path, "r", encoding="utf-8") as fp:
+                        data = json.load(fp)
+                        entries = data.get("entries") or data.get("files", [])
+                        for entry in entries:
+                            chunk_ids = entry.get("chunk_ids")
+                            if chunk_ids and len(chunk_ids) > 1:
+                                total_chunks += len(chunk_ids)
+                                chunked_files_count += 1
+                                strategy = entry.get("chunk_strategy", "unknown")
+                                chunk_strategies[strategy] = chunk_strategies.get(strategy, 0) + 1
+                except Exception:
+                    pass
 
-        return {
+        res = {
             "total_blobs": total_blobs,
             "stored_bytes": stored_bytes,
             "logical_bytes": total_logical_bytes,
@@ -436,6 +441,9 @@ class MetadataDB:
             "chunked_files_count": chunked_files_count,
             "chunk_strategies": chunk_strategies
         }
+        self._stats_cache = res
+        self._stats_cache_time = now
+        return res
 
     def delete_snapshot_record(self, snapshot_id: str):
         try:
