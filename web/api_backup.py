@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 web/api_backup.py
 
@@ -226,76 +226,46 @@ def _background_custom_backup_task(params: Dict[str, Any]):
             if p_data.get("processed_files", 0) % 50 == 0:
                 append_task_log(f"진행 중: {p_data.get('percent')}% ({p_data.get('processed_files')}/{p_data.get('total_files')} 파일)")
 
-        engine_exe = os.path.join(BASE_DIR, "engine_rust", "kova_fast_engine.exe")
         manifest = None
-        if os.path.exists(engine_exe):
-            session_id = f"snap_custom_{time.strftime('%Y%m%d_%H%M%S')}_{os.urandom(2).hex()}"
-            append_task_log(f"[초고속 네이티브 Rust 엔진 가동 - 선택 백업] 세션: {session_id}")
-            cmd = [engine_exe, "backup", "--repo", repo_dir, "--session-id", session_id, "--json"]
-            for s in all_sources:
-                cmd.extend(["--source", s])
+        use_rust = (ConfigManager.get_settings().get("backup_engine", "rust") == "rust")
 
-            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                creationflags=creationflags
-            )
+        if use_rust:
+            try:
+                from core.rust_adapter import run_rust_backup, find_rust_engine_binary
+                if find_rust_engine_binary():
+                    session_id = f"snap_custom_{time.strftime('%Y%m%d_%H%M%S')}_{os.urandom(2).hex()}"
+                    append_task_log(f"[초고속 네이티브 Rust 엔진 가동 - 선택 백업] 세션: {session_id}")
 
-            last_summary = None
-            if proc.stdout:
-                for line in proc.stdout:
-                    line_str = line.strip()
-                    if not line_str:
-                        continue
-                    try:
-                        event = json.loads(line_str)
-                        etype = event.get("type")
-                        if etype == "progress":
-                            pct = event.get("percent", 0)
-                            done = event.get("processed_files", 0)
-                            tot = event.get("total_files", 0)
-                            spd = event.get("speed", 0.0)
-                            cur_f = event.get("current_file", "")
-                            with task_lock:
-                                current_task["progress"] = {
-                                    "percent": pct,
-                                    "processed_files": done,
-                                    "total_files": tot,
-                                    "speed": f"{spd:.1f} MB/s",
-                                    "current_file": cur_f
-                                }
-                            if done % 100 == 0 or done == tot:
-                                append_task_log(f"선택 백업 진행: {pct}% ({done}/{tot} 파일 | {spd:.1f} MB/s)")
-                        elif etype == "summary":
-                            last_summary = event
-                    except Exception:
-                        pass
+                    def _rust_progress(ev):
+                        pct = ev.get("percent", 0)
+                        done = ev.get("processed_files", 0)
+                        tot = ev.get("total_files", 0)
+                        spd = ev.get("speed", 0.0)
+                        cur_f = ev.get("current_file", "")
+                        with task_lock:
+                            current_task["progress"] = {
+                                "percent": pct,
+                                "processed_files": done,
+                                "total_files": tot,
+                                "speed": f"{spd:.1f} MB/s",
+                                "current_file": cur_f
+                            }
+                        if done % 100 == 0 or done == tot:
+                            append_task_log(f"선택 백업 진행: {pct}% ({done}/{tot} 파일 | {spd:.1f} MB/s)")
 
-            proc.wait()
-            if proc.returncode != 0:
-                err_msg = proc.stderr.read() if proc.stderr else "Unknown error"
-                append_task_log(f"[경고] Rust 엔진 오류(Code {proc.returncode}): {err_msg}, 레거시 엔진으로 폴백합니다.", level="WARNING")
-            elif last_summary:
-                duration = last_summary.get("elapsed_seconds", 0.0)
-                manifest = {
-                    "id": session_id,
-                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "vss_enabled": False,
-                    "summary": {
-                        "total_files": last_summary.get("total_files", 0),
-                        "total_bytes": last_summary.get("total_bytes", 0),
-                        "dedup_saved_bytes": last_summary.get("dedup_bytes", 0),
-                        "compressed_bytes": last_summary.get("compressed_bytes", 0),
-                        "new_files": last_summary.get("total_files", 0),
-                        "modified_files": 0,
-                        "duration_seconds": round(duration, 3)
-                    }
-                }
+                    res = run_rust_backup(
+                        sources=all_sources,
+                        repo_dir=repo_dir,
+                        session_id=session_id,
+                        zstd_level=effective_compress,
+                        progress_callback=_rust_progress,
+                        cancel_event=current_task.get("cancel_event")
+                    )
+
+                    with open(res.manifest_path, "r", encoding="utf-8") as fp:
+                        manifest = json.load(fp)
+            except Exception as e_rust:
+                append_task_log(f"[경고] Rust 엔진 실행 실패 ({e_rust}), Python 레거시 엔진으로 자동 폴백합니다.", level="WARNING")
 
         if not manifest:
             # Fallback to legacy Python SnapshotEngine
@@ -496,76 +466,46 @@ def _background_backup_task(params: Dict[str, Any]):
             if p_data.get("processed_files", 0) % 50 == 0:
                 append_task_log(f"진행 중: {p_data.get('percent')}% ({p_data.get('processed_files')}/{p_data.get('total_files')} 파일)")
 
-        engine_exe = os.path.join(BASE_DIR, "engine_rust", "kova_fast_engine.exe")
         manifest = None
-        if os.path.exists(engine_exe):
-            session_id = f"snap_{time.strftime('%Y%m%d_%H%M%S')}_{os.urandom(2).hex()}"
-            append_task_log(f"[초고속 네이티브 Rust 엔진 가동] 세션: {session_id}")
-            cmd = [engine_exe, "backup", "--repo", repo_dir, "--session-id", session_id, "--json"]
-            for s in sources:
-                cmd.extend(["--source", s])
+        use_rust = (ConfigManager.get_settings().get("backup_engine", "rust") == "rust")
 
-            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                creationflags=creationflags
-            )
+        if use_rust:
+            try:
+                from core.rust_adapter import run_rust_backup, find_rust_engine_binary
+                if find_rust_engine_binary():
+                    session_id = f"snap_{time.strftime('%Y%m%d_%H%M%S')}_{os.urandom(2).hex()}"
+                    append_task_log(f"[초고속 네이티브 Rust 엔진 가동] 세션: {session_id}")
 
-            last_summary = None
-            if proc.stdout:
-                for line in proc.stdout:
-                    line_str = line.strip()
-                    if not line_str:
-                        continue
-                    try:
-                        event = json.loads(line_str)
-                        etype = event.get("type")
-                        if etype == "progress":
-                            pct = event.get("percent", 0)
-                            done = event.get("processed_files", 0)
-                            tot = event.get("total_files", 0)
-                            spd = event.get("speed", 0.0)
-                            cur_f = event.get("current_file", "")
-                            with task_lock:
-                                current_task["progress"] = {
-                                    "percent": pct,
-                                    "processed_files": done,
-                                    "total_files": tot,
-                                    "speed": f"{spd:.1f} MB/s",
-                                    "current_file": cur_f
-                                }
-                            if done % 100 == 0 or done == tot:
-                                append_task_log(f"진행 중: {pct}% ({done}/{tot} 파일 | {spd:.1f} MB/s)")
-                        elif etype == "summary":
-                            last_summary = event
-                    except Exception:
-                        pass
+                    def _rust_progress(ev):
+                        pct = ev.get("percent", 0)
+                        done = ev.get("processed_files", 0)
+                        tot = ev.get("total_files", 0)
+                        spd = ev.get("speed", 0.0)
+                        cur_f = ev.get("current_file", "")
+                        with task_lock:
+                            current_task["progress"] = {
+                                "percent": pct,
+                                "processed_files": done,
+                                "total_files": tot,
+                                "speed": f"{spd:.1f} MB/s",
+                                "current_file": cur_f
+                            }
+                        if done % 100 == 0 or done == tot:
+                            append_task_log(f"진행 중: {pct}% ({done}/{tot} 파일 | {spd:.1f} MB/s)")
 
-            proc.wait()
-            if proc.returncode != 0:
-                err_msg = proc.stderr.read() if proc.stderr else "Unknown error"
-                append_task_log(f"[경고] Rust 엔진 오류(Code {proc.returncode}): {err_msg}, 레거시 엔진으로 폴백합니다.", level="WARNING")
-            elif last_summary:
-                duration = last_summary.get("elapsed_seconds", 0.0)
-                manifest = {
-                    "id": session_id,
-                    "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-                    "vss_enabled": False,
-                    "summary": {
-                        "total_files": last_summary.get("total_files", 0),
-                        "total_bytes": last_summary.get("total_bytes", 0),
-                        "dedup_saved_bytes": last_summary.get("dedup_bytes", 0),
-                        "compressed_bytes": last_summary.get("compressed_bytes", 0),
-                        "new_files": last_summary.get("total_files", 0),
-                        "modified_files": 0,
-                        "duration_seconds": round(duration, 3)
-                    }
-                }
+                    res = run_rust_backup(
+                        sources=sources,
+                        repo_dir=repo_dir,
+                        session_id=session_id,
+                        zstd_level=compress,
+                        progress_callback=_rust_progress,
+                        cancel_event=cancel_evt
+                    )
+
+                    with open(res.manifest_path, "r", encoding="utf-8") as fp:
+                        manifest = json.load(fp)
+            except Exception as e_rust:
+                append_task_log(f"[경고] Rust 엔진 실행 실패 ({e_rust}), Python 레거시 엔진으로 자동 폴백합니다.", level="WARNING")
 
         if not manifest:
             # Fallback to legacy Python SnapshotEngine

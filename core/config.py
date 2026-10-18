@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import uuid
 from typing import Dict, List, Any, Optional
@@ -48,7 +48,8 @@ DEFAULT_SETTINGS = {
     "offsite_remote_path": "",
     "offsite_auto_sync": True,
     "offsite_gdrive_credentials_file": "",
-    "offsite_gdrive_folder_id": ""
+    "offsite_gdrive_folder_id": "",
+    "backup_engine": "rust"  # "rust" (ultra-fast native) or "python" (legacy)
 }
 
 class ConfigManager:

@@ -1,4 +1,4 @@
-import os
+﻿import os
 import time
 import json
 import sqlite3
@@ -257,6 +257,14 @@ class MetadataDB:
                             is_ver = 1 if data.get("is_verified") else 0
                             ver_ts = data.get("verify_timestamp", 0.0)
                             ver_err = data.get("verify_error_count", 0)
+                            created_at_val = data.get("created_at_ts") or data.get("created_at", 0)
+                            if isinstance(created_at_val, str):
+                                try:
+                                    import datetime
+                                    dt = datetime.datetime.fromisoformat(created_at_val.replace("Z", "+00:00"))
+                                    created_at_val = dt.timestamp()
+                                except Exception:
+                                    created_at_val = mtime
                             conn.execute("""
                                 INSERT OR REPLACE INTO snapshots_meta (
                                     id, created_at, iso_time, profile_id, profile_name,
@@ -267,7 +275,7 @@ class MetadataDB:
                                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
                             """, (
                                 sid,
-                                data.get("created_at", 0),
+                                float(created_at_val),
                                 data.get("iso_time", ""),
                                 data.get("profile_id", ""),
                                 data.get("profile_name", ""),

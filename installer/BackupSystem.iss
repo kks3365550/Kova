@@ -1,4 +1,4 @@
-; =========================================================================
+﻿; =========================================================================
 ; Kova (Local Backup & Disaster Recovery) Inno Setup 6+ 인스톨러 빌드 스크립트
 ; =========================================================================
 
@@ -55,6 +55,7 @@ Source: "..\VERSION"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 Source: "..\keys\*.pub"; DestDir: "{app}\keys"; Flags: ignoreversion restartreplace
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 Source: "..\tools\bin\rclone.exe"; DestDir: "{app}\tools\bin"; Flags: ignoreversion restartreplace onlyifdoesntexist
+Source: "..\engine_rust\kova_fast_engine.exe"; DestDir: "{app}\engine_rust"; Flags: ignoreversion restartreplace
 
 ; 3. VBScript 래퍼 및 운영 스크립트
 Source: "start_silent.vbs"; DestDir: "{app}"; Flags: ignoreversion

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Automated Git Versioning, Release Builder and Remote Deploy Tool
 """
@@ -280,6 +280,10 @@ def sync_install_directories(installer_exe: str = None):
         # Sync keys (including release_ed25519.pub)
         if os.path.exists(os.path.join(BASE_DIR, 'keys')):
             subprocess.run(['robocopy', os.path.join(BASE_DIR, 'keys'), os.path.join(target, 'keys'), '/E', '/MIR'], **robo_kwargs)
+
+        # Sync native Rust engine
+        if os.path.exists(os.path.join(BASE_DIR, 'engine_rust')):
+            subprocess.run(['robocopy', os.path.join(BASE_DIR, 'engine_rust'), os.path.join(target, 'engine_rust'), 'kova_fast_engine.exe'], **robo_kwargs)
 
         # Sync root py and bat files
         for item in os.listdir(BASE_DIR):

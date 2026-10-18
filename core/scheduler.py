@@ -1,4 +1,4 @@
-import os
+﻿import os
 import json
 import glob
 import time
@@ -129,16 +129,40 @@ class BackupScheduler:
                 if profile_id in self.active_jobs:
                     self.active_jobs[profile_id]["progress"] = p_data
 
-            manifest = SnapshotEngine.create_snapshot(
-                repo_dir=repo_dir,
-                sources=sources,
-                profile_id=profile_id,
-                profile_name=profile_name,
-                exclude_patterns=excludes,
-                compress_level=compress,
-                progress_callback=on_progress,
-                cancel_event=cancel_evt
-            )
+            manifest = None
+            use_rust = (ConfigManager.get_settings().get("backup_engine", "rust") == "rust")
+
+            if use_rust:
+                try:
+                    from core.rust_adapter import run_rust_backup, find_rust_engine_binary
+                    if find_rust_engine_binary():
+                        session_id = f"snap_sched_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.urandom(2).hex()}"
+                        self._log(profile_name, f"[초고속 Rust 네이티브 엔진 가동] 세션: {session_id}")
+
+                        res = run_rust_backup(
+                            sources=sources,
+                            repo_dir=repo_dir,
+                            session_id=session_id,
+                            zstd_level=compress,
+                            progress_callback=on_progress,
+                            cancel_event=cancel_evt
+                        )
+                        with open(res.manifest_path, "r", encoding="utf-8") as fp:
+                            manifest = json.load(fp)
+                except Exception as e_rust:
+                    self._log(profile_name, f"[경고] Rust 엔진 오류 ({e_rust}), Python 엔진으로 자동 폴백합니다.", level="WARNING")
+
+            if not manifest:
+                manifest = SnapshotEngine.create_snapshot(
+                    repo_dir=repo_dir,
+                    sources=sources,
+                    profile_id=profile_id,
+                    profile_name=profile_name,
+                    exclude_patterns=excludes,
+                    compress_level=compress,
+                    progress_callback=on_progress,
+                    cancel_event=cancel_evt
+                )
 
             # Prune old snapshots
             pruned = SnapshotEngine.prune_snapshots(

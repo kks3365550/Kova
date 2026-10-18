@@ -1,4 +1,4 @@
-import os
+﻿import os
 import sys
 import time
 import shutil
@@ -336,6 +336,19 @@ def delete_profile(profile_id: str):
     if not success:
         raise HTTPException(status_code=404, detail="Profile not found")
     return {"success": True}
+
+# --- System Settings API ---
+@app.get("/api/settings")
+def get_system_settings():
+    return {"success": True, "settings": ConfigManager.get_settings()}
+
+@app.post("/api/settings")
+def save_system_settings(settings: Dict[str, Any]):
+    current = ConfigManager.get_settings()
+    current.update(settings)
+    ConfigManager.save_settings(current)
+    append_task_log(f"시스템 전역 설정이 갱신되었습니다 (백업 엔진: {current.get('backup_engine', 'rust')})")
+    return {"success": True, "settings": current}
 
 # --- Path Validation & Folder Browse API ---
 @app.post("/api/validate-path")
