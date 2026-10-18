@@ -1054,10 +1054,15 @@ class SnapshotEngine:
                     try:
                         with open(snap_path, "r", encoding="utf-8") as f:
                             data = json.load(f)
-                            for entry in data.get("entries", []):
+                            files_list = data.get("entries") or data.get("files") or []
+                            for entry in files_list:
                                 blob_id = entry.get("blob_id") or entry.get("sha256")
                                 if blob_id:
                                     active_hashes.add(blob_id)
+                                for c in entry.get("chunks", []):
+                                    ch = c.get("hash")
+                                    if ch:
+                                        active_hashes.add(ch)
                     except Exception as e_snap:
                         # CRITICAL #2 FAIL-CLOSED: 매니페스트 파싱/읽기 실패 시 고아 블롭 정리 전면 중단!
                         # active_hashes에서 누락되어 정상 블롭이 영구 삭제되는 재앙 방지

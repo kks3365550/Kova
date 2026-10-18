@@ -174,6 +174,8 @@ class OffsiteReplicator:
                 os.makedirs(target_dir, exist_ok=True)
 
                 for f in files:
+                    if f in ("backup.lock", "DumpStack.log.tmp") or f.endswith(".lock") or f.endswith(".tmp") or ".tmp_" in f:
+                        continue
                     files_total += 1
                     src_file = os.path.join(root, f)
                     dst_file = os.path.join(target_dir, f)
@@ -684,6 +686,12 @@ hash_type = md5
             "--exclude", ".quarantine_blobs/**",
             "--exclude", "*.db-wal",
             "--exclude", "*.db-shm",
+            "--exclude", "backup.lock",
+            "--exclude", "*.lock",
+            "--exclude", "*.tmp",
+            "--exclude", "*.tmp_*",
+            "--exclude", "*.tmp.*",
+            "--exclude", ".cache/**",
         ]
         if packs_has_pack:
             cmd.extend(["--exclude", "blobs/**"])
