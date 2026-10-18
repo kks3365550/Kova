@@ -1,3 +1,4 @@
+mod baremetal;
 mod chunker;
 mod compressor;
 mod hasher;
@@ -57,6 +58,29 @@ enum Commands {
         #[arg(long, default_value_t = 256)]
         size_mb: usize,
     },
+    /// High-performance Windows Direct I/O and IOCP baremetal block clone
+    BaremetalClone {
+        #[arg(long)]
+        source: String,
+
+        #[arg(long)]
+        target: String,
+
+        #[arg(long, default_value_t = 0)]
+        start_offset: u64,
+
+        #[arg(long)]
+        total_bytes: u64,
+
+        #[arg(long, default_value_t = 32)]
+        queue_depth: usize,
+
+        #[arg(long, default_value_t = 16)]
+        chunk_mb: usize,
+
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -78,6 +102,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } => run_restore(&session_id, &repo, &target)?,
 
         Commands::Benchmark { size_mb } => run_benchmark(size_mb)?,
+
+        Commands::BaremetalClone {
+            source,
+            target,
+            start_offset,
+            total_bytes,
+            queue_depth,
+            chunk_mb,
+            json,
+        } => baremetal::run_baremetal_clone(
+            &source,
+            &target,
+            start_offset,
+            total_bytes,
+            queue_depth,
+            chunk_mb,
+            json,
+        )?,
     }
 
     Ok(())

@@ -229,24 +229,29 @@ def get_allocated_cluster_runs(
     cluster_size: int = 4096,
     max_chunk_bytes: int = 16 * 1024 * 1024,
     max_coalesce_gap_bytes: int = 0,
-    min_chunk_bytes: int = 0
+    min_chunk_bytes: int = 0,
+    two_stage_threshold_bytes: int = 0
 ) -> List[Tuple[int, int]]:
     """
     NTFS $Bitmap 바이트 배열을 파싱하여, 실제 데이터가 있는 LCN 구간을
     대형 연속 청크 (lcn, cluster_count) 목록으로 분할 반환.
-    - [Coalescing]: max_coalesce_gap_bytes(기본 0) 이하의 자잘한 빈틈은
-      max_gap_clusters > 0일 때만 병합, 기본 시나리오에서 100% disabled로 설정.
-    - [Min Chunk Floor]: min_chunk_bytes(기본 0)일 min_chunk_clusters > 0일 때만
-      인접 클러스터 및 갭을 흡수 병합, 기본 시나리오에서 100% disabled로 설정.
-    - min_chunk_clusters는 max_clusters를 never exceed로 clamp.
-    - 대형 빈 공간(max_coalesce_gap_bytes 초과)은 100% 스킵하여 전송 대역폭 보존.
+    - [Dynamic Two-Stage Streaming]: two_stage_threshold_bytes(기본 0) 설정 시:
+      * 임계값 미만(초반 SLC 고속 구간): max_chunk_bytes 및 max_coalesce_gap_bytes 적용
+      * 임계값 이상(후반 조각/낸드 플러시 구간): 8MB 청크, 갭 병합 0, min_chunk 0으로 자동 변속
+        (불필요한 Zero Over-writing 3GB 낭비 및 640ms 대형 청크 파이프라인 정체 원천 차단)
     """
     if not bitmap_bytes:
         return []
 
-    max_clusters = max(1, max_chunk_bytes // cluster_size)
-    max_gap_clusters = max(0, max_coalesce_gap_bytes // cluster_size)
-    min_chunk_clusters = min(max_clusters, max(0, min_chunk_bytes // cluster_size))
+    threshold_cluster = (two_stage_threshold_bytes // cluster_size) if two_stage_threshold_bytes > 0 else 0
+    default_max_clusters = max(1, max_chunk_bytes // cluster_size)
+    default_max_gap_clusters = max(0, max_coalesce_gap_bytes // cluster_size)
+    default_min_chunk_clusters = min(default_max_clusters, max(0, min_chunk_bytes // cluster_size))
+
+    # Stage 2 (SLC 고갈 구간: 8MB 청크, 0 gap, 0 min_chunk)
+    stage2_max_clusters = max(1, (8 * 1024 * 1024) // cluster_size)
+    stage2_max_gap_clusters = 0
+    stage2_min_chunk_clusters = 0
 
     raw_runs: List[Tuple[int, int]] = []
     cur_run_start = None
@@ -258,19 +263,27 @@ def get_allocated_cluster_runs(
         for bit in range(8):
             if (b >> bit) & 1:
                 lcn = byte_idx * 8 + bit
+
+                # Stage 1 vs Stage 2 동적 파라미터 선택
+                if threshold_cluster > 0 and lcn >= threshold_cluster:
+                    cur_max_clusters = stage2_max_clusters
+                    cur_max_gap_clusters = stage2_max_gap_clusters
+                else:
+                    cur_max_clusters = default_max_clusters
+                    cur_max_gap_clusters = default_max_gap_clusters
+
                 if cur_run_start is None:
                     cur_run_start = lcn
                     cur_run_end = lcn + 1
                 else:
-                    # 연속 클러스터(gap == 0)이거나, max_gap_clusters > 0 허용 범위 내 gap인 경우 병합
                     gap = lcn - cur_run_end
-                    if (gap == 0 or (max_gap_clusters > 0 and gap <= max_gap_clusters)) and (lcn + 1 - cur_run_start) <= max_clusters:
+                    if (gap == 0 or (cur_max_gap_clusters > 0 and gap <= cur_max_gap_clusters)) and (lcn + 1 - cur_run_start) <= cur_max_clusters:
                         cur_run_end = lcn + 1
                     else:
                         rem = cur_run_end - cur_run_start
                         c_lcn = cur_run_start
                         while rem > 0:
-                            take = min(rem, max_clusters)
+                            take = min(rem, cur_max_clusters)
                             raw_runs.append((c_lcn, take))
                             c_lcn += take
                             rem -= take
@@ -280,8 +293,9 @@ def get_allocated_cluster_runs(
     if cur_run_start is not None:
         rem = cur_run_end - cur_run_start
         c_lcn = cur_run_start
+        cur_max = stage2_max_clusters if (threshold_cluster > 0 and c_lcn >= threshold_cluster) else default_max_clusters
         while rem > 0:
-            take = min(rem, max_clusters)
+            take = min(rem, cur_max)
             raw_runs.append((c_lcn, take))
             c_lcn += take
             rem -= take
@@ -297,32 +311,42 @@ def get_allocated_cluster_runs(
         prev_end = prev_lcn + prev_count
         gap_clusters = lcn - prev_end
 
+        if threshold_cluster > 0 and lcn >= threshold_cluster:
+            cur_max_clusters = stage2_max_clusters
+            cur_max_gap_clusters = stage2_max_gap_clusters
+            cur_min_chunk_clusters = stage2_min_chunk_clusters
+        else:
+            cur_max_clusters = default_max_clusters
+            cur_max_gap_clusters = default_max_gap_clusters
+            cur_min_chunk_clusters = default_min_chunk_clusters
+
         if (
-            (gap_clusters == 0 or (max_gap_clusters > 0 and gap_clusters <= max_gap_clusters))
-            and (prev_count + gap_clusters + count) <= max_clusters
+            (gap_clusters == 0 or (cur_max_gap_clusters > 0 and gap_clusters <= cur_max_gap_clusters))
+            and (prev_count + gap_clusters + count) <= cur_max_clusters
         ):
             runs[-1] = (prev_lcn, prev_count + gap_clusters + count)
         elif (
-            min_chunk_clusters > 0
-            and prev_count < min_chunk_clusters
-            and (prev_count + gap_clusters + count) <= max_clusters
+            cur_min_chunk_clusters > 0
+            and prev_count < cur_min_chunk_clusters
+            and (prev_count + gap_clusters + count) <= cur_max_clusters
         ):
             runs[-1] = (prev_lcn, prev_count + gap_clusters + count)
         elif (
-            min_chunk_clusters > 0
-            and count < min_chunk_clusters
-            and (prev_count + gap_clusters + count) <= max_clusters
+            cur_min_chunk_clusters > 0
+            and count < cur_min_chunk_clusters
+            and (prev_count + gap_clusters + count) <= cur_max_clusters
         ):
             runs[-1] = (prev_lcn, prev_count + gap_clusters + count)
         else:
             runs.append((lcn, count))
 
-    # 잔여 초미세 청크 최종 플로어(Floor) 보장 (min_chunk_clusters > 0일 때만)
+    # 잔여 초미세 청크 최종 플로어(Floor) 보장
     final_runs: List[Tuple[int, int]] = []
     total_clusters_limit = len(bitmap_bytes) * 8
     for lcn, count in runs:
-        if min_chunk_clusters > 0 and count < min_chunk_clusters:
-            count = min(min_chunk_clusters, total_clusters_limit - lcn)
+        cur_min = stage2_min_chunk_clusters if (threshold_cluster > 0 and lcn >= threshold_cluster) else default_min_chunk_clusters
+        if cur_min > 0 and count < cur_min:
+            count = min(cur_min, total_clusters_limit - lcn)
         final_runs.append((lcn, count))
 
     return final_runs
@@ -870,7 +894,10 @@ def stream_volume_to_volume(
     cancel_event = None,
     chunk_bytes: int = 16 * 1024 * 1024,
     queue_depth: int = 12,
-    src_shadow_path: Optional[str] = None
+    src_shadow_path: Optional[str] = None,
+    max_coalesce_gap_bytes: int = 16 * 1024 * 1024,
+    min_chunk_bytes: int = 4 * 1024 * 1024,
+    two_stage_threshold_bytes: int = 200 * 1024 * 1024 * 1024
 ) -> Dict[str, Any]:
     """
     볼륨 직결 LBA 다이렉트 블록 스트리밍 복제.
@@ -883,7 +910,7 @@ def stream_volume_to_volume(
     src_vol = src_drive.strip().rstrip("\\")[:2].upper()
     dst_vol = dst_drive.strip().rstrip("\\")[:2].upper()
     start_time = time.time()
-    logger.info(f"🚀 [VSS 정합성 보장 초고속 LBA 블록 스트리밍 시작] {src_vol} -> {dst_vol} (청크={chunk_bytes // (1024*1024)}MB, 큐깊이={queue_depth})")
+    logger.info(f"🚀 [VSS 정합성 보장 초고속 LBA 블록 스트리밍 시작] {src_vol} -> {dst_vol} (청크={chunk_bytes // (1024*1024)}MB, 큐깊이={queue_depth}, 2단계변속={two_stage_threshold_bytes // (1024**3)}GB)")
 
     cluster_size, total_clusters, _ = get_volume_geometry(src_vol)
     src_path = f"\\\\.\\{src_vol}"
@@ -905,8 +932,9 @@ def stream_volume_to_volume(
             bitmap_bytes,
             cluster_size,
             chunk_bytes,
-            max_coalesce_gap_bytes=8 * 1024 * 1024,
-            min_chunk_bytes=2 * 1024 * 1024
+            max_coalesce_gap_bytes=max_coalesce_gap_bytes,
+            min_chunk_bytes=min_chunk_bytes,
+            two_stage_threshold_bytes=two_stage_threshold_bytes
         )
 
         if not runs:
@@ -937,7 +965,7 @@ def stream_volume_to_volume(
         # 2. Reader 스레드(Producer)와 Writer 스레드(Consumer)가 동시 병렬 구동 (Queue Depth 8~16)
         # 3. 소스/타겟 양방향 FILE_FLAG_NO_BUFFERING으로 OS 캐시 고갈/더티페이지 스로틀링(25MB/s) 100% 바이패스
         # ----------------------------------------------------------------------
-        num_buffers = max(8, min(16, queue_depth))
+        num_buffers = max(8, min(64, queue_depth))
         for _ in range(num_buffers):
             addr = None
             if kernel32 and VirtualAlloc:

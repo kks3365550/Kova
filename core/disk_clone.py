@@ -669,8 +669,11 @@ class DiskCloneManager:
                     "--src", "C:",
                     "--dst", target_drive,
                     "--ipc-file", ipc_file,
-                    "--chunk-mb", "16",
-                    "--queue-depth", "12"
+                    "--chunk-mb", "64",
+                    "--queue-depth", "32",
+                    "--gap-mb", "64",
+                    "--min-chunk-mb", "16",
+                    "--two-stage-gb", "200"
                 ]
                 if shadow_device:
                     cmd.extend(["--shadow", shadow_device])
@@ -868,6 +871,15 @@ class DiskCloneManager:
 
                 remove_esp_drive_letter(esp_letter)
                 self.append_log(f"  - ESP 파티션({esp_letter}) 숨김 모드로 안전 전환 완료.")
+
+            # 6. 타겟 SSD 백그라운드 Re-Trim (빈 공간 소거 및 낸드 쓰기 수명/성능 보존)
+            try:
+                target_clean = normalize_drive(target_drive).rstrip(":")
+                self.append_log(f"[6/6] 타겟 SSD({target_clean}:) 고속 Re-Trim 백그라운드 최적화 실행 중...")
+                run_elevated_command(["powershell", "-NoProfile", "-Command", f"Optimize-Volume -DriveLetter {target_clean} -ReTrim"], timeout=60)
+                self.append_log(f"  ✓ {target_clean}: SSD Re-Trim 최적화 완료 (미사용 낸드 블록 소거 완료)")
+            except Exception as e_trim:
+                self.append_log(f"  - [참고] Re-Trim 최적화 알림: {e_trim}")
 
             # 최종 완료
             with self.state_lock:

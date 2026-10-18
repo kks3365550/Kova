@@ -23,6 +23,9 @@ def main():
     parser.add_argument("--ipc-file", required=True, help="Shared IPC JSONL log file")
     parser.add_argument("--chunk-mb", type=int, default=16, help="Chunk size in MB (default: 16)")
     parser.add_argument("--queue-depth", type=int, default=12, help="Ring buffer queue depth (default: 12)")
+    parser.add_argument("--gap-mb", type=int, default=16, help="Max coalesce gap in MB (default: 16)")
+    parser.add_argument("--min-chunk-mb", type=int, default=4, help="Min chunk floor in MB (default: 4)")
+    parser.add_argument("--two-stage-gb", type=int, default=200, help="Two-stage downshift threshold in GB (default: 200)")
     args = parser.parse_args()
 
     ipc_path = args.ipc_file
@@ -56,7 +59,10 @@ def main():
             progress_callback=on_progress,
             chunk_bytes=args.chunk_mb * 1024 * 1024,
             queue_depth=args.queue_depth,
-            src_shadow_path=shadow_arg
+            src_shadow_path=shadow_arg,
+            max_coalesce_gap_bytes=args.gap_mb * 1024 * 1024,
+            min_chunk_bytes=args.min_chunk_mb * 1024 * 1024,
+            two_stage_threshold_bytes=args.two_stage_gb * 1024 * 1024 * 1024
         )
 
         emit({"type": "done", "result": res})
