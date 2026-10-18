@@ -176,14 +176,16 @@ fn run_backup(
     use std::collections::HashMap;
     let mut prev_files_map: HashMap<String, FileEntry> = HashMap::new();
     if let Some(prev_manifest) = cas.get_latest_manifest() {
+        let prev_sid = prev_manifest.session_id();
+        let prev_files = prev_manifest.files();
         if !json_mode {
             println!(
                 "[KOVA-FAST] Loaded base snapshot for incremental fast-path: {} ({} files)",
-                prev_manifest.session_id,
-                prev_manifest.files.len()
+                prev_sid,
+                prev_files.len()
             );
         }
-        for mut entry in prev_manifest.files {
+        for mut entry in prev_files {
             if !entry.is_dir {
                 if entry.chunks.is_empty() {
                     let hash_opt = entry.blob_id.as_ref().or(entry.sha256.as_ref());
@@ -396,14 +398,17 @@ fn run_backup(
         .join(";");
 
     let manifest = SnapshotManifest {
-        session_id: sid.clone(),
-        created_at: chrono::Local::now().to_rfc3339(),
-        source_root: src_str,
+        id: Some(sid.clone()),
+        session_id: Some(sid.clone()),
+        created_at: Some(serde_json::Value::String(chrono::Local::now().to_rfc3339())),
+        source_root: Some(src_str),
+        sources: None,
         total_files: all_entries.len(),
         total_bytes: tot_b,
         dedup_bytes: ded_b,
         compressed_bytes: cmp_b,
-        files: all_entries,
+        files: Some(all_entries),
+        entries: None,
     };
 
     cas.save_manifest(&manifest)?;
@@ -456,8 +461,10 @@ fn run_restore(
 
     fs::create_dir_all(target)?;
 
+    let manifest_files = manifest.files();
+
     // Create directories first
-    for entry in &manifest.files {
+    for entry in &manifest_files {
         if entry.is_dir {
             let dir_path = target.join(&entry.path);
             fs::create_dir_all(&dir_path)?;
@@ -465,7 +472,7 @@ fn run_restore(
     }
 
     // Restore files
-    manifest.files.par_iter().filter(|e| !e.is_dir).for_each(|entry| {
+    manifest_files.par_iter().filter(|e| !e.is_dir).for_each(|entry| {
         let file_path = target.join(&entry.path);
         if let Some(parent) = file_path.parent() {
             let _ = fs::create_dir_all(parent);

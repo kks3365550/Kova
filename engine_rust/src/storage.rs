@@ -30,26 +30,6 @@ where
     }
 }
 
-fn deserialize_source_root<'de, D>(deserializer: D) -> Result<String, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let v = serde_json::Value::deserialize(deserializer)?;
-    match v {
-        serde_json::Value::String(s) => Ok(s),
-        serde_json::Value::Array(arr) => {
-            let strs: Vec<String> = arr
-                .into_iter()
-                .filter_map(|x| match x {
-                    serde_json::Value::String(s) => Some(s),
-                    _ => None,
-                })
-                .collect();
-            Ok(strs.join(";"))
-        }
-        _ => Ok(String::new()),
-    }
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileChunkInfo {
@@ -83,12 +63,16 @@ pub struct FileEntry {
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct SnapshotManifest {
-    #[serde(alias = "id", default)]
-    pub session_id: String,
     #[serde(default)]
-    pub created_at: String,
-    #[serde(alias = "sources", deserialize_with = "deserialize_source_root", default)]
-    pub source_root: String,
+    pub id: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<serde_json::Value>,
+    #[serde(default)]
+    pub source_root: Option<String>,
+    #[serde(default)]
+    pub sources: Option<serde_json::Value>,
     #[serde(default)]
     pub total_files: usize,
     #[serde(default)]
@@ -97,8 +81,42 @@ pub struct SnapshotManifest {
     pub dedup_bytes: u64,
     #[serde(default)]
     pub compressed_bytes: u64,
-    #[serde(alias = "entries", default)]
-    pub files: Vec<FileEntry>,
+    #[serde(default)]
+    pub files: Option<Vec<FileEntry>>,
+    #[serde(default)]
+    pub entries: Option<Vec<FileEntry>>,
+}
+
+impl SnapshotManifest {
+    pub fn session_id(&self) -> String {
+        self.session_id.clone().or_else(|| self.id.clone()).unwrap_or_default()
+    }
+
+    pub fn source_root(&self) -> String {
+        if let Some(ref s) = self.source_root {
+            return s.clone();
+        }
+
+        match &self.sources {
+            Some(serde_json::Value::String(s)) => s.clone(),
+            Some(serde_json::Value::Array(arr)) => {
+                let strs: Vec<String> = arr
+                    .iter()
+                    .filter_map(|x| match x {
+                        serde_json::Value::String(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .collect();
+                strs.join(";")
+            }
+            Some(v) => v.to_string(),
+            None => String::new(),
+        }
+    }
+
+    pub fn files(self) -> Vec<FileEntry> {
+        self.files.or(self.entries).unwrap_or_default()
+    }
 }
 
 pub struct CasStorage {
@@ -155,7 +173,7 @@ impl CasStorage {
     pub fn save_manifest(&self, manifest: &SnapshotManifest) -> io::Result<()> {
         let snapshots_dir = self.repo_root.join("snapshots");
         fs::create_dir_all(&snapshots_dir)?;
-        let target_path = snapshots_dir.join(format!("{}.json", manifest.session_id));
+        let target_path = snapshots_dir.join(format!("{}.json", manifest.session_id()));
         let tmp_path = target_path.with_extension("tmp");
 
         let json = serde_json::to_string(manifest)
@@ -198,12 +216,24 @@ impl CasStorage {
         entries.sort_by(|a, b| b.0.cmp(&a.0));
 
         for (_mtime, path) in entries {
-            if let Ok(file) = File::open(&path) {
-                let reader = BufReader::new(file);
-                if let Ok(manifest) = serde_json::from_reader::<_, SnapshotManifest>(reader) {
-                    if !manifest.files.is_empty() {
-                        return Some(manifest);
+            match File::open(&path) {
+                Ok(file) => {
+                    let reader = BufReader::new(file);
+                    match serde_json::from_reader::<_, SnapshotManifest>(reader) {
+                        Ok(manifest) => {
+                            let count = manifest.files.as_ref().map_or(0, |f| f.len())
+                                + manifest.entries.as_ref().map_or(0, |e| e.len());
+                            if count > 0 {
+                                return Some(manifest);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[KOVA-FAST-DEBUG] Failed to parse manifest {}: {}", path.display(), e);
+                        }
                     }
+                }
+                Err(e) => {
+                    eprintln!("[KOVA-FAST-DEBUG] Failed to open manifest file {}: {}", path.display(), e);
                 }
             }
         }
