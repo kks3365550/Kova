@@ -175,9 +175,10 @@ fn run_backup(
     // Load latest snapshot manifest to build incremental fast-path map
     use std::collections::HashMap;
     let mut prev_files_map: HashMap<String, FileEntry> = HashMap::new();
-    if let Some(prev_manifest) = cas.get_latest_manifest() {
-        let prev_sid = prev_manifest.session_id();
-        let prev_files = prev_manifest.files();
+    let recent_manifests = cas.get_recent_manifests(5);
+    for manifest in recent_manifests {
+        let prev_sid = manifest.session_id();
+        let prev_files = manifest.files();
         if !json_mode {
             println!(
                 "[KOVA-FAST] Loaded base snapshot for incremental fast-path: {} ({} files)",
@@ -199,7 +200,7 @@ fn run_backup(
                     }
                 }
                 let norm_path = entry.path.replace('\\', "/");
-                prev_files_map.insert(norm_path, entry);
+                prev_files_map.entry(norm_path).or_insert(entry);
             }
         }
     }
@@ -217,7 +218,12 @@ fn run_backup(
             // skip reading from disk completely and reuse existing chunk metadata!
             let norm_rel = item.rel_path.replace('\\', "/");
             if let Some(prev) = prev_files_map.get(&norm_rel) {
-                let mtime_match = if prev.modified == item.modified {
+                let mtime_diff = if prev.modified > item.modified {
+                    prev.modified - item.modified
+                } else {
+                    item.modified - prev.modified
+                };
+                let mtime_match = if mtime_diff <= 5 {
                     true
                 } else if prev.modified % 1000 == 0 && (item.modified / 1000) == (prev.modified / 1000) {
                     true

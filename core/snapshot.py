@@ -473,8 +473,8 @@ class SnapshotEngine:
                 norm_full_path = full_path.replace('\\', '/').lower()
                 seen_norm_paths.add(norm_full_path)
 
-            # Check unmodified fast path (size identical and mtime within 1.0s tolerance for FAT32/NTFS precision)
-            if prev_entry and prev_entry.get("sha256") and prev_entry.get("size") == f_size and abs(prev_entry.get("mtime", 0) - f_mtime) < 1.0:
+            # Check unmodified fast path (size identical and mtime within 2.0s tolerance for FAT32/NTFS precision)
+            if prev_entry and prev_entry.get("sha256") and prev_entry.get("size") == f_size and abs(prev_entry.get("mtime", 0) - f_mtime) <= 2.0:
                 blob_id = prev_entry.get("blob_id", prev_entry.get("sha256"))
                 if blob_id and storage.has_blob(blob_id):
                     unmodified_files_count += 1

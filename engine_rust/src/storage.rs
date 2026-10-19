@@ -193,10 +193,10 @@ impl CasStorage {
         Ok(manifest)
     }
 
-    pub fn get_latest_manifest(&self) -> Option<SnapshotManifest> {
+    pub fn get_recent_manifests(&self, limit: usize) -> Vec<SnapshotManifest> {
         let snapshots_dir = self.repo_root.join("snapshots");
-        if !snapshots_dir.is_dir() {
-            return None;
+        if !snapshots_dir.is_dir() || limit == 0 {
+            return Vec::new();
         }
 
         let mut entries: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
@@ -215,6 +215,7 @@ impl CasStorage {
 
         entries.sort_by(|a, b| b.0.cmp(&a.0));
 
+        let mut manifests: Vec<SnapshotManifest> = Vec::new();
         for (_mtime, path) in entries {
             match File::open(&path) {
                 Ok(file) => {
@@ -224,7 +225,10 @@ impl CasStorage {
                             let count = manifest.files.as_ref().map_or(0, |f| f.len())
                                 + manifest.entries.as_ref().map_or(0, |e| e.len());
                             if count > 0 {
-                                return Some(manifest);
+                                manifests.push(manifest);
+                                if manifests.len() >= limit {
+                                    break;
+                                }
                             }
                         }
                         Err(e) => {
@@ -238,7 +242,11 @@ impl CasStorage {
             }
         }
 
-        None
+        manifests
+    }
+
+    pub fn get_latest_manifest(&self) -> Option<SnapshotManifest> {
+        self.get_recent_manifests(1).into_iter().next()
     }
 }
 

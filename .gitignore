@@ -77,3 +77,7 @@ dist/
 installer/runtime/
 
 data/rclone.conf
+
+# Rust target directories
+engine_rust/target/
+target_rust/
