@@ -164,6 +164,7 @@ class TestGoogleDriveOffsite(unittest.TestCase):
         with patch("core.offsite.g_service_account") as mock_sa, \
              patch("core.offsite.g_discovery") as mock_disc, \
              patch("subprocess.Popen") as mock_popen, \
+             patch.object(GoogleDriveOffsiteReplicator, "_get_rclone_exe", return_value="mock_rclone.exe"), \
              patch.object(GoogleDriveOffsiteReplicator, "_ensure_rclone_config", return_value="mock.conf"):
             
             mock_creds = MagicMock()
