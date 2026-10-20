@@ -3,7 +3,7 @@
 ; =========================================================================
 
 #define MyAppName "Kova"
-#define MyAppVersion "2.17.14"
+#define MyAppVersion "2.17.15"
 #define MyAppPublisher "kks3365550"
 #define MyAppURL "http://127.0.0.1:8765"
 #define MyAppExeName "Kova.exe"
@@ -63,6 +63,12 @@ Source: "start_tray.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "launch_dashboard.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\tray_app.py"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\stop_backup_system.bat"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+; Delete compromised legacy v1 public/private keys and credentials during installation/update
+Type: files; Name: "{app}\keys\release_ed25519.pub"
+Type: files; Name: "{app}\keys\release_ed25519.key"
+Type: files; Name: "{app}\keys\release_admin_cred.json"
 
 [Icons]
 Name: "{group}\{#MyAppName} 웹 대시보드"; Filename: "wscript.exe"; Parameters: """{app}\launch_dashboard.vbs"""; WorkingDir: "{app}"; IconFilename: "{sys}\shell32.dll"; IconIndex: 14

@@ -1,7 +1,7 @@
-# Kova (v2.17.13)
+# Kova (v2.17.15)
 > **Local-First Windows Backup & Instant Disaster Recovery Engine**
 
-[![Version](https://img.shields.io/badge/version-v2.17.13-blue.svg?style=flat-square)](https://github.com/kks3365550/Kova/releases)
+[![Version](https://img.shields.io/badge/version-v2.17.15-blue.svg?style=flat-square)](https://github.com/kks3365550/Kova/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Server-0078D6.svg?style=flat-square&logo=windows)](https://microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 [![Engine](https://img.shields.io/badge/engine-Python%203.10%2B%20%7C%20Rust-orange.svg?style=flat-square)](#architecture-overview)
@@ -52,7 +52,7 @@ flowchart TD
         VSS["Windows VSS Snapshot (vssadmin)"]
     end
 
-    subgraph CoreEngine["Kova Engine (v2.17.13)"]
+    subgraph CoreEngine["Kova Engine (v2.17.15)"]
         Scanner["Rust Fast Scanner (mtime fast-path)"]
         Compressor["Zstandard Parallel Compression (Full-Core)"]
         Packer["Track 2 Pack Container & Deduplication"]
@@ -104,9 +104,12 @@ flowchart TD
 - **3-2-1 Compliance**: Mirrors snapshots to a secondary destination (private NAS via SMB/NFS, or cloud destinations like Google Drive via `rclone`).
 - **Transport Security**: All remote communications to Google Drive or WebDAV endpoints are encrypted via TLS 1.3 / HTTPS.
 - **Clean Ingestion Filter**: Transient runtime locks (`backup.lock`) and temp buffers are strictly filtered out; remote chunk pruning (`prune_storage`) maintains cloud parity.
-- **Client-Side At-Rest Encryption (Zero-Trust Cloud)**:
-  - By default, raw backup chunks stored on local repositories are compressed (Zstandard) and verified with SHA-256, but left unencrypted at rest to maximize block-level deduplication across machines.
-  - When replicating to untrusted cloud providers (e.g. Google Drive), users can configure an **rclone `crypt` overlay remote** (`rclone config` -> `crypt`). When active, all chunks, pack containers, and snapshot metadata files are transparently encrypted on the client side with **AES-256-GCM** before upload.
+- **Native At-Rest Encryption Engine (`core/crypto_at_rest.py`)**:
+  - Kova features a built-in envelope encryption engine. When enabled with a master passphrase, all local data blobs are encrypted with **AES-256-GCM** using Scrypt key derivation (32-byte key, 16-byte salt, random 12-byte nonce, authenticated tag) under the `ENC\x01` binary container.
+  - When offsite replication is active, these locally encrypted blobs are synced to the cloud in their already-encrypted ciphertext form.
+- **Cloud Remote Encryption Layer (`rclone crypt`)**:
+  - Alternatively, if local backups remain unencrypted for maximum deduplication but cloud copies must be zero-knowledge, users can configure an **rclone `crypt` overlay remote** (`rclone config` -> `crypt`).
+  - Rclone crypt transparently secures file contents using **XSalsa20-Poly1305** authenticated encryption and obfuscates file/directory names using **AES-EME** before data leaves the workstation.
 
 ### 6. Granular & Bare-Metal Recovery
 - **Snapshot Time Machine**: Browse filesystem states at any historical snapshot point.
@@ -119,7 +122,7 @@ flowchart TD
 
 ### Method 1: Windows Installer (Inno Setup)
 The recommended deployment method for standard Windows PCs:
-1. Download `Kova_Setup_v2.17.13.exe` from [GitHub Releases](https://github.com/kks3365550/Kova/releases).
+1. Download `Kova_Setup_v2.17.15.exe` from [GitHub Releases](https://github.com/kks3365550/Kova/releases).
 2. Run the installer. It bundles an embedded CPython runtime, so no prior Python installation is required.
 3. The installer automatically terminates any previous instances, registers the background service, and creates Desktop/Start Menu shortcuts.
 
@@ -189,7 +192,7 @@ python cli.py restore <snapshot_id> --target C:\Restore_Target
 - **Zero-Cloud Air-Gapped by Default**: All backups and catalog databases stay strictly on-premises. Zero phone-home requests, zero telemetry.
 - **Root Trust Anchor**: Update payloads and self-extracting release bundles are cryptographically verified using active **Ed25519 v2 public key signatures** (`keys/release_ed25519_v2.pub`). Legacy v1 signatures are rejected.
 - **Credential Isolation**: Master password hashes, session salts, and OAuth tokens are stored exclusively in local untracked files (`data/auth_config.json`, `data/app_settings.json`) and ignored by git (`.gitignore`).
-- **Cloud At-Rest Encryption**: Optional client-side AES-256 encryption via rclone `crypt` ensures zero-knowledge privacy when syncing offsite to third-party cloud providers.
+- **Native At-Rest & Cloud Encryption**: Local repository encryption via **AES-256-GCM** with **Scrypt KDF** (`core/crypto_at_rest.py`), plus optional cloud zero-knowledge encryption via rclone `crypt` using **XSalsa20-Poly1305** (data) and **AES-EME** (filenames).
 
 ---
 

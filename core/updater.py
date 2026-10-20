@@ -38,47 +38,33 @@ PUBLIC_KEY_PATH = os.path.join(BASE_DIR, "keys", "release_ed25519_v2.pub")
 PUBLIC_KEY_DIR = os.path.join(BASE_DIR, "keys")
 
 
+V2_KEY_SHA256 = "b621a2b26a166b9f6b9f09f2764339eda7d07f1b44fc6a0492291dfb9b6256eb"
+
+
 def get_trusted_public_key_paths() -> list:
     """
     신뢰하는 업데이트 서명 공개키 목록.
-
-    왜 디렉터리 스캔인가:
-        배포 서명 개인키가 이력에 유출됐다 (docs/SECURITY_20261008.md).
-        키를 교체하려면 전환 기간에 구 공개키와 신 공개키를 동시에
-        신뢰해야 한다. 단일 경로만 보면 키를 바꾸는 순간 기존 클라이언트가
-        새 릴리즈를 거부한다.
-
-    반환:
-        존재하는 *.pub 파일의 절대 경로 리스트. 기존 release_ed25519.pub 가
-        있으면 항상 맨 앞에 둔다 (결정적 순서, 하위 호환).
-        파일이 없으면 빈 리스트.
-
-    주의:
-        10KB를 넘는 파일은 건너뛴다 (PEM 공개키는 수백 바이트다).
-        키 내용은 절대 로그에 남기지 않는다. 호출자가 basename 만 기록한다.
+    유출된 구형 v1 키(release_ed25519.pub)를 영구 무효화하고,
+    오직 SHA-256 지문이 검증된 v2 공개키(release_ed25519_v2.pub) 단독만 반환합니다.
     """
+    v2_path = os.path.abspath(PUBLIC_KEY_PATH)
+    if not os.path.exists(v2_path):
+        logger.error("get_trusted_public_key_paths: v2 public key not found at %s", v2_path)
+        return []
     try:
-        if not os.path.isdir(PUBLIC_KEY_DIR):
-            return [PUBLIC_KEY_PATH] if os.path.exists(PUBLIC_KEY_PATH) else []
-        import glob as _glob
-        pubs = sorted(_glob.glob(os.path.join(PUBLIC_KEY_DIR, "*.pub")))
-        # 크기 가드 + 절대 경로 정규화
-        cleaned = []
-        for p in pubs:
-            try:
-                if os.path.getsize(p) > 10 * 1024:
-                    continue
-                cleaned.append(os.path.abspath(p))
-            except OSError:
-                continue
-        # 기존 키를 맨 앞으로 (결정적 순서)
-        legacy = os.path.abspath(PUBLIC_KEY_PATH)
-        if legacy in cleaned:
-            cleaned.remove(legacy)
-            cleaned.insert(0, legacy)
-        return cleaned
-    except Exception:
-        # 키 목록을 못 읽으면 빈 리스트로 Fail-Closed. 호출자가 거부한다.
+        import hashlib
+        with open(v2_path, "rb") as f:
+            digest = hashlib.sha256(f.read()).hexdigest().lower()
+        if digest == V2_KEY_SHA256.lower():
+            return [v2_path]
+        logger.error(
+            "get_trusted_public_key_paths: v2 key fingerprint mismatch! (expected %s, got %s)",
+            V2_KEY_SHA256,
+            digest
+        )
+        return []
+    except Exception as e:
+        logger.error("get_trusted_public_key_paths error: %s", e)
         return []
 
 
