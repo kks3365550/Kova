@@ -1,0 +1,42 @@
+{
+  "parent_event": {
+    "event_id": "evt_run_20261002_182535_002",
+    "project": "BackupSystem",
+    "loop": "restore_verification",
+    "run_id": "run_20261002_182535",
+    "timestamp": "2026-10-02T18:28:54.144895+00:00",
+    "stage": "observe",
+    "status": "FAIL",
+    "error_class": "data_integrity_violation",
+    "error_code": "RESTORE_HASH_MISMATCH",
+    "traits": [
+      "integrity_critical"
+    ],
+    "duration_ms": 12.5,
+    "evidence_ref": "runs/run_20261002_182535/evidence/defensive_parent_evidence.json",
+    "contract_version": "0.2",
+    "policy_version": "0.2"
+  },
+  "restore_res": {
+    "snapshot_id": "snap_20261003_032853_faa92a",
+    "target_dir": "C:\\Users\\kksjmj\\AppData\\Local\\Temp\\loop_defensive_sandbox_hhfc4zqy",
+    "total_files": 2,
+    "restored_files": 1,
+    "skipped_files": 0,
+    "failed_files": [
+      {
+        "rel_path": "doc1.txt",
+        "error": "Hash verification failed for C:\\Users\\kksjmj\\AppData\\Local\\Temp\\loop_defensive_sandbox_hhfc4zqy\\doc1.txt (Expected: 634fb90551b81082122d7e2f509d92f4e45f2c147334b1297627175984deb8cc, got f1327b97a59df3cdbbad91b11e33e199c1d0eab19cc2977698c8f9856bf36560)"
+      }
+    ],
+    "restored_bytes": 40,
+    "duration_seconds": 0.43
+  },
+  "quarantine_record": {
+    "quarantined_at": "2026-10-02T18:28:54.145420+00:00",
+    "target_blob": "634fb90551b81082122d7e2f509d92f4e45f2c147334b1297627175984deb8cc.blob",
+    "snapshot_id": "snap_20261003_032853_faa92a",
+    "action": "marked_untrusted_non_destructive",
+    "reason": "SHA-256 mismatch detected by RestoreEngine"
+  }
+}

@@ -1,0 +1,2083 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kova — Local Backup. Instant Recovery.</title>
+    <!-- Tailwind CSS (Local Bundle) -->
+    <script src="/static/vendor/tailwind.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eff6ff',
+                            500: '#3b82f6',
+                            600: '#2563eb',
+                            700: '#1d4ed8',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons (Local Bundle) -->
+    <script src="/static/vendor/lucide.min.js"></script>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2338bdf8' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='10 1.5 2 5.5 2 14.5 10 18.5 18 14.5 18 5.5 10 1.5'/%3E%3Cline x1='10' y1='1.5' x2='10' y2='18.5'/%3E%3Ccircle cx='10' cy='10' r='2.5' fill='%2338bdf8' fill-opacity='0.4'/%3E%3C/svg%3E">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="bg-[#09090b] text-zinc-100 min-h-screen flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white">
+
+    <!-- Top Navigation Bar - Linear / Vercel Engineering Console -->
+    <header class="border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-xl sticky top-0 z-30">
+        <!-- Main Top Bar -->
+        <div class="px-6 py-2.5 flex items-center justify-between border-b border-zinc-800/60">
+            <div class="flex items-center gap-3">
+                <div class="w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800/90 flex items-center justify-center shadow-inner group">
+                    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:scale-110">
+                        <polygon points="10 1.5 2 5.5 2 14.5 10 18.5 18 14.5 18 5.5 10 1.5" />
+                        <line x1="10" y1="1.5" x2="10" y2="18.5" />
+                        <circle cx="10" cy="10" r="2.5" fill="#38bdf8" fill-opacity="0.3" stroke="#38bdf8" stroke-width="1" />
+                    </svg>
+                </div>
+                <div class="flex items-center gap-2">
+                    <h1 class="text-sm font-bold text-zinc-100 tracking-tight font-mono">KOVA VaultOS</h1>
+                    <span id="header-version-badge" class="text-[10px] px-2 py-0.5 bg-zinc-900 text-zinc-400 rounded font-mono border border-zinc-800">v{{ version if version else '2.9.11' }}</span>
+                    <span id="header-release-status" class="hidden text-[10px] px-2 py-0.5 rounded font-medium flex items-center gap-1 border border-emerald-900/60 text-emerald-400 bg-emerald-950/40" title="마스터 서버(K12) 동기화 상태">
+                        <i data-lucide="check" id="header-release-icon" class="w-3 h-3"></i>
+                        <span id="header-release-text">최신 버전</span>
+                    </span>
+                </div>
+            </div>
+
+            <!-- Top Center: Linear Navigation Tabs -->
+            <nav class="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-lg border border-zinc-800/80">
+                <button onclick="switchTab('dashboard')" data-tab="dashboard" class="tab-btn px-3 py-1.5 rounded-md text-xs font-semibold bg-white/10 text-white transition flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="layout-dashboard" class="w-3.5 h-3.5 text-blue-400"></i> 대시보드
+                </button>
+                <button onclick="switchTab('custom')" data-tab="custom" class="tab-btn px-3 py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5">
+                    <i data-lucide="check-square" class="w-3.5 h-3.5"></i> 백업 항목
+                </button>
+                <button onclick="switchTab('runner')" data-tab="runner" class="tab-btn px-3 py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5">
+                    <i data-lucide="activity" class="w-3.5 h-3.5"></i> 실시간 러너
+                </button>
+                <button onclick="switchTab('snapshots')" data-tab="snapshots" class="tab-btn px-3 py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5">
+                    <i data-lucide="history" class="w-3.5 h-3.5"></i> 타임머신
+                </button>
+                <button onclick="switchTab('profiles')" data-tab="profiles" class="tab-btn px-3 py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5">
+                    <i data-lucide="sliders" class="w-3.5 h-3.5"></i> 프로필 & 스케줄
+                </button>
+                <button onclick="switchTab('system-image')" data-tab="system-image" class="tab-btn px-3 py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5">
+                    <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-emerald-400"></i> 통백업 & OS 복원
+                </button>
+            </nav>
+
+            <!-- Header Utility Actions -->
+            <div class="flex items-center gap-2">
+                <div class="relative" id="auth-badge-wrapper">
+                    <button id="auth-badge-btn" onclick="toggleAuthDropdown()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition border bg-zinc-900/80 border-zinc-800 text-zinc-300 hover:bg-zinc-800 hover:text-white" title="보안 상태">
+                        <i data-lucide="shield-check" id="auth-badge-icon" class="w-3.5 h-3.5 text-emerald-400"></i>
+                        <span id="auth-badge-label">보안 인증</span>
+                        <i data-lucide="chevron-down" class="w-3 h-3 opacity-60"></i>
+                    </button>
+                    <!-- 드롭다운 메뉴 -->
+                    <div id="auth-dropdown" class="hidden absolute right-0 top-full mt-2 w-52 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl shadow-black/80 z-50 overflow-hidden">
+                        <div class="px-4 py-2 border-b border-zinc-800 text-[11px] text-zinc-400 flex items-center gap-2">
+                            <i data-lucide="shield" class="w-3.5 h-3.5 text-blue-400"></i>
+                            <span>보안 관리</span>
+                        </div>
+                        <button id="auth-pw-btn" onclick="handleAuthPasswordClick(event)" class="w-full text-left px-4 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition flex items-center gap-2.5">
+                            <i data-lucide="key-round" id="auth-pw-btn-icon" class="w-3.5 h-3.5 text-amber-400"></i> <span id="auth-pw-btn-text">비밀번호 변경</span>
+                        </button>
+                        <button onclick="toggleLocalhostBypass()" id="auth-bypass-toggle-btn" class="w-full text-left px-4 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition flex items-center justify-between">
+                            <span class="flex items-center gap-2"><i data-lucide="laptop" class="w-3.5 h-3.5 text-blue-400"></i> 로컬 자동로그인</span>
+                            <span id="auth-bypass-status-tag" class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/60 text-blue-300 font-mono">ON</span>
+                        </button>
+                        <button onclick="submitAuthLogout()" class="w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-950/40 hover:text-red-300 transition flex items-center gap-2.5 border-t border-zinc-800/80">
+                            <i data-lucide="log-out" class="w-3.5 h-3.5"></i> 로그아웃
+                        </button>
+                    </div>
+                </div>
+
+                <button onclick="openOnboardingWizard(true)" class="px-2.5 py-1.5 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded-lg text-xs font-medium transition border border-zinc-800 flex items-center gap-1.5" title="초기 백업 설정 마법사 열기">
+                    <i data-lucide="wand-2" class="w-3.5 h-3.5 text-blue-400"></i> 온보딩
+                </button>
+                <button onclick="runGarbageCollection()" class="px-2.5 py-1.5 bg-zinc-900/80 hover:bg-zinc-800 text-zinc-300 hover:text-white rounded-lg text-xs font-medium transition border border-zinc-800 flex items-center gap-1.5" title="저장소 가비지 컬렉션 정리">
+                    <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-400"></i> 정리
+                </button>
+                <button onclick="shutdownServer()" class="px-2.5 py-1.5 bg-zinc-900/60 hover:bg-red-950/60 text-zinc-400 hover:text-red-300 rounded-lg text-xs font-medium transition border border-zinc-800/80 hover:border-red-800/50 flex items-center gap-1.5" title="백업 백그라운드 서비스 완전 종료">
+                    <i data-lucide="power" class="w-3.5 h-3.5"></i> 종료
+                </button>
+            </div>
+        </div>
+
+        <!-- Linear KPI Metric Strip (Always visible status line) -->
+        <div class="px-6 py-2 bg-zinc-950 flex items-center justify-between text-[11px] font-mono text-zinc-400 border-b border-zinc-900">
+            <div class="flex items-center gap-5">
+                <span class="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> 3-2-1 무결성 보호 정상
+                </span>
+                <span class="text-zinc-700">|</span>
+                <span>로컬 WORM: <b class="text-zinc-200">불변 격리 (활성)</b></span>
+                <span class="text-zinc-700">|</span>
+                <span>오프사이트: <b id="sidebar-offsite-status" class="text-indigo-400">동기화 완료</b></span>
+                <span class="text-zinc-700">|</span>
+                <span>VSS 섀도: <b class="text-cyan-400">무중단 가동</b></span>
+            </div>
+            <div class="flex items-center gap-4 text-zinc-400">
+                <span>FastCDC 청킹: <b id="stat-chunk-files-badge" class="text-zinc-300">0개 분할</b></span>
+                <span class="text-zinc-700">|</span>
+                <span>중복제거 절감률: <b id="stat-dedup-pct-badge" class="text-emerald-400">76.9% SAVED</b></span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Global Real-time Alert Banner (Red Alert System) -->
+    <div id="global-alert-banner" class="hidden shrink-0 border-b px-6 py-2.5 flex items-center justify-between text-xs transition-all duration-300 z-30">
+        <div class="flex items-center gap-3">
+            <span id="alert-banner-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
+                <i data-lucide="alert-triangle" id="alert-banner-icon" class="w-3.5 h-3.5"></i>
+                <span id="alert-banner-status">CRITICAL</span>
+            </span>
+            <span id="alert-banner-message" class="font-medium text-slate-200"></span>
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="dismissAlertBanner()" class="text-slate-400 hover:text-white p-1 rounded transition" title="배너 닫기">
+                <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Remote Master Release Banner (One-Click Sync) -->
+    <div id="remote-release-banner" class="hidden shrink-0 border-b border-indigo-500/30 bg-gradient-to-r from-indigo-950/90 via-slate-900 to-purple-950/90 px-6 py-2 flex items-center justify-between text-xs transition-all duration-300 z-30">
+        <div class="flex items-center gap-3">
+            <span class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider flex items-center gap-1.5 bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                <i data-lucide="sparkles" class="w-3 h-3 text-indigo-400"></i> 새 버전
+            </span>
+            <span id="remote-release-text" class="text-slate-200 font-medium"></span>
+        </div>
+        <div class="flex items-center gap-2">
+            <button id="btn-download-installer" onclick="downloadInstaller()" class="px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-indigo-500/40">
+                <i data-lucide="download" class="w-3 h-3"></i> 인스톨러 다운로드
+            </button>
+            <button id="btn-sync-remote-release" onclick="triggerRemoteReleaseSync()" class="px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white">
+                <i data-lucide="refresh-cw" class="w-3 h-3" id="sync-btn-icon"></i> <span id="sync-btn-text">릴리즈 확인</span>
+            </button>
+            <button onclick="dismissRemoteReleaseBanner()" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition" title="닫기">
+                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Workspace Container (Full Width, Zero Clunky Sidebar) -->
+    <div class="flex-1 flex flex-col overflow-hidden bg-[#09090b]">
+
+        <!-- Main Content Area -->
+        <main class="flex-1 overflow-y-auto p-6">
+
+            <!-- TAB 1: 대시보드 (Dashboard) - Concept A: Observability Operations Console (Datadog x Cloudflare Zero Trust) -->
+            <div id="tab-dashboard" class="tab-content max-w-[1700px] mx-auto space-y-4">
+                
+                <!-- 1. TOP GLOBAL HEALTH STRIP (Datadog Style Metric Strip) -->
+                <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                    
+                    <!-- METRIC 1: PROTECTION STATE -->
+                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between">
+                        <div class="space-y-1">
+                            <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                                PROTECTION HEALTH
+                            </span>
+                            <div class="flex items-center gap-2">
+                                <span id="dash-protection-pill" class="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-950/80 text-emerald-300 border border-emerald-800 flex items-center gap-1">
+                                    <span>3-2-1 OK</span>
+                                </span>
+                                <span class="text-[10px] font-mono text-zinc-500">RPO: 0m</span>
+                            </div>
+                        </div>
+                        <div class="w-8 h-8 rounded-lg bg-emerald-950/40 border border-emerald-800/40 flex items-center justify-center text-emerald-400">
+                            <i data-lucide="shield-check" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+
+                    <!-- METRIC 2: WORM VAULT & INTEGRITY -->
+                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between">
+                        <div class="space-y-1">
+                            <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">WORM VAULT INTEGRITY</span>
+                            <div class="flex items-center gap-1.5 font-mono">
+                                <span class="text-xs font-bold text-emerald-400 bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-800/50">LOCKED</span>
+                                <span class="text-[11px] text-zinc-300 font-semibold">100% OK</span>
+                            </div>
+                        </div>
+                        <div class="w-8 h-8 rounded-lg bg-zinc-800/70 border border-zinc-700/60 flex items-center justify-center text-blue-400">
+                            <i data-lucide="lock" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+
+                    <!-- METRIC 3: STORAGE REDUCTION & EFFICIENCY -->
+                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between">
+                        <div class="space-y-1">
+                            <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">STORAGE EFFICIENCY</span>
+                            <div class="flex items-center gap-1.5 font-mono">
+                                <span id="stat-dedup-saved" class="text-xs font-bold text-emerald-400">0 B (0%)</span>
+                                <span id="stat-dedup-pct-badge" class="text-[10px] px-1 rounded bg-zinc-800 text-zinc-400">SAVED</span>
+                            </div>
+                        </div>
+                        <div class="w-8 h-8 rounded-lg bg-zinc-800/70 border border-zinc-700/60 flex items-center justify-center text-indigo-400">
+                            <i data-lucide="archive" class="w-4 h-4"></i>
+                        </div>
+                    </div>
+
+                    <!-- METRIC 4: OFFSITE REPLICATION -->
+                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between">
+                        <div class="space-y-1">
+                            <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">OFFSITE 3-2-1 MIRROR</span>
+                            <div class="flex items-center gap-1.5 font-mono">
+                                <span id="dashboard-offsite-sync-state" class="text-xs font-bold text-cyan-400">SYNCED</span>
+                                <span id="dashboard-offsite-mode" class="text-[10px] text-zinc-400 font-mono">Lag: 0ms</span>
+                            </div>
+                        </div>
+                        <div class="w-8 h-8 rounded-lg bg-cyan-950/40 border border-cyan-800/40 flex items-center justify-center text-cyan-400">
+                            <i data-lucide="cloud" class="w-4 h-4"></i>
+                        </div>
+                        <div class="hidden" id="dashboard-offsite-target">-</div>
+                        <div class="hidden" id="dashboard-offsite-badge"></div>
+                    </div>
+
+                    <!-- METRIC 5: FAST AUDIT ACTION (Col Span on desktop) -->
+                    <div class="col-span-2 md:col-span-4 lg:col-span-1 p-2 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2">
+                        <button onclick="triggerQuickBackup()" class="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white rounded-lg text-xs font-bold font-mono transition shadow-lg shadow-blue-600/25 flex items-center justify-center gap-1.5">
+                            <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+                            <span>BACKUP NOW</span>
+                        </button>
+                    </div>
+
+                </div>
+
+                <!-- 2. MAIN CONSOLE GRID: BALANCED 2-COLUMN LAYOUT -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+                    
+                    <!-- LEFT COLUMN: HISTOGRAM, FASTCDC ENGINE & SNAPSHOT AUDIT TRAIL (Col Span 7) -->
+                    <div class="lg:col-span-7 flex flex-col space-y-4">
+                        
+                        <!-- DB-BACKED HISTORICAL SNAPSHOT VOLUME & GROWTH CHART PANEL -->
+                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg">
+                            <div class="flex justify-between items-center pb-2.5 border-b border-zinc-800/80 mb-3">
+                                <div class="flex items-center gap-2">
+                                    <div class="w-2 h-2 rounded-full bg-blue-400"></div>
+                                    <span class="text-xs font-bold text-zinc-100 font-mono uppercase tracking-wide">Snapshot Volume & Growth</span>
+                                    <span id="chart-meta-summary" class="text-[10px] text-zinc-500 font-mono">| 실측 DB 연동 스냅샷 추이</span>
+                                </div>
+                                <div class="flex items-center gap-3 text-[11px] font-mono text-zinc-400">
+                                    <span class="flex items-center gap-1"><span class="w-2 h-2 bg-blue-500 rounded-sm"></span> Total Size (GB)</span>
+                                    <span class="flex items-center gap-1"><span class="w-2 h-2 bg-emerald-400 rounded-sm"></span> Files Count</span>
+                                </div>
+                            </div>
+
+                            <!-- Dynamic DB-Backed Snapshot Chart Container -->
+                            <div id="dashboard-snapshot-chart" class="h-36 w-full flex items-end justify-start gap-2 sm:gap-2.5 pt-7 pb-2 px-3 bg-zinc-950/70 rounded-xl border border-zinc-800/60 relative overflow-hidden">
+                                <!-- Dynamically Injected by renderDashboardSnapshotChart() with Real SQLite/Metadata Data -->
+                                <div class="w-full h-full flex items-center justify-center text-zinc-500 text-xs font-mono">
+                                    실제 스냅샷 DB 데이터 로딩 중...
+                                </div>
+                            </div>
+                            
+                            <div id="chart-date-labels" class="flex justify-between items-center text-[10px] font-mono text-zinc-500 mt-1.5 px-0.5">
+                                <span>과거 스냅샷</span>
+                                <span class="text-blue-400">최신 스냅샷 (Live)</span>
+                            </div>
+                        </div>
+
+                        <!-- FASTCDC CHUNKING & DEDUPLICATION TELEMETRY -->
+                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
+                            <div class="flex justify-between items-center text-xs">
+                                <div class="flex items-center gap-2">
+                                    <i data-lucide="cpu" class="w-4 h-4 text-emerald-400"></i>
+                                    <span class="font-bold text-zinc-200 font-mono">FastCDC Chunk Deduplication Engine</span>
+                                </div>
+                                <span class="text-[11px] font-mono text-zinc-400">Content-Defined Variable Chunks</span>
+                            </div>
+
+                            <div class="grid grid-cols-3 gap-2.5 text-center font-mono">
+                                <div class="p-2.5 rounded-lg bg-zinc-950/70 border border-zinc-800/70">
+                                    <span class="text-[10px] text-zinc-500 block uppercase">Physical Vault</span>
+                                    <span id="stat-stored-bytes" class="text-xs font-bold text-zinc-100 mt-0.5 block">0 B</span>
+                                </div>
+                                <div class="p-2.5 rounded-lg bg-zinc-950/70 border border-zinc-800/70">
+                                    <span class="text-[10px] text-zinc-500 block uppercase">Logical Volume</span>
+                                    <span id="stat-logical-bytes" class="text-xs font-bold text-zinc-300 mt-0.5 block">0 B</span>
+                                </div>
+                                <div class="p-2.5 rounded-lg bg-zinc-950/70 border border-zinc-800/70">
+                                    <span class="text-[10px] text-zinc-500 block uppercase">Chunks Processed</span>
+                                    <span id="stat-total-chunks" class="text-xs font-bold text-emerald-400 mt-0.5 block">0개</span>
+                                    <span class="hidden" id="stat-chunk-files-badge">0</span>
+                                    <span class="hidden" id="stat-chunk-strategies"></span>
+                                </div>
+                            </div>
+
+                            <!-- Dedup Progress -->
+                            <div class="space-y-1">
+                                <div class="flex justify-between items-center text-[10px] font-mono text-zinc-400">
+                                    <span>FastCDC Space Reduction Ratio</span>
+                                    <span class="text-emerald-400 font-bold">Content-Addressed SHA-256</span>
+                                </div>
+                                <div class="w-full bg-zinc-950 rounded-full h-2 overflow-hidden border border-zinc-800 p-0.5">
+                                    <div id="stat-dedup-progress" class="bg-gradient-to-r from-blue-500 to-emerald-400 h-full rounded-full transition-all duration-500" style="width: 25%"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- SNAPSHOT AUDIT TABLE (Recent Snapshots) -->
+                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg flex flex-col justify-between">
+                            <div>
+                                <div class="flex justify-between items-center pb-2.5 border-b border-zinc-800/80 mb-3">
+                                    <div class="flex items-center gap-2">
+                                        <i data-lucide="history" class="w-4 h-4 text-blue-400"></i>
+                                        <h2 class="text-xs font-bold text-zinc-100 font-mono uppercase tracking-wide">Snapshot Audit Trail</h2>
+                                        <span class="text-[10px] text-zinc-500 font-mono">| SHA-256 Merkle Feed</span>
+                                    </div>
+                                    <button onclick="switchTab('snapshots')" class="text-[11px] text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1 transition">
+                                        <span>전체 타임머신 복원</span> &rarr;
+                                    </button>
+                                </div>
+
+                                <!-- Snapshots List Container (Injected by JS) -->
+                                <div id="recent-snapshots-list" class="space-y-2">
+                                    <!-- Injected by JS -->
+                                </div>
+                            </div>
+
+                            <div class="pt-3 border-t border-zinc-800/80 mt-3 flex items-center justify-between text-[11px] font-mono text-zinc-400">
+                                <div class="flex items-center gap-3">
+                                    <span>보관 스냅샷: <b id="stat-total-snaps" class="text-zinc-100">0</b>개</span>
+                                    <span>•</span>
+                                    <span>활성 프로필: <b id="stat-active-profiles" class="text-zinc-100">0 / 0</b></span>
+                                </div>
+                                <span class="text-[10px] text-zinc-500">SHA-256 Content-Addressed Vault</span>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- RIGHT COLUMN: STORAGE TOPOLOGY, DISKS & LIVE TELEMETRY (Col Span 5) -->
+                    <div class="lg:col-span-5 flex flex-col space-y-4">
+                        
+                        <!-- SYSTEM DRIVES STATUS (C:, D:, E:) -->
+                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
+                            <div class="flex items-center justify-between text-xs font-bold text-zinc-300 font-mono">
+                                <div class="flex items-center gap-2">
+                                    <i data-lucide="hard-drive" class="w-4 h-4 text-amber-400"></i>
+                                    <span>SYSTEM DRIVES & REPOSITORY</span>
+                                </div>
+                                <span class="text-[10px] text-zinc-500 font-normal">Real-Time IO</span>
+                            </div>
+                            <div id="system-drives-list" class="space-y-2 font-mono">
+                                <!-- Injected by JS -->
+                            </div>
+                        </div>
+
+                        <!-- PHYSICAL DISKS (SMART HEALTH) -->
+                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
+                            <div class="flex items-center justify-between text-xs font-bold text-zinc-300 font-mono">
+                                <div class="flex items-center gap-2">
+                                    <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
+                                    <span>PHYSICAL DISKS & SMART HEALTH</span>
+                                </div>
+                                <span id="storage-overall-badge" class="px-1.5 py-0.5 bg-emerald-950 text-emerald-300 text-[10px] rounded border border-emerald-800">HEALTHY</span>
+                            </div>
+                            <div id="physical-disks-list" class="space-y-2 font-mono text-xs">
+                                <div class="text-zinc-500 text-[11px] py-1">스토리지 건강 상태 로딩 중...</div>
+                            </div>
+                        </div>
+
+                        <!-- 3-2-1 BACKUP TOPOLOGY & WORM SECURITY CARD -->
+                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
+                            <div class="flex justify-between items-center text-xs font-bold font-mono text-zinc-200">
+                                <div class="flex items-center gap-1.5">
+                                    <i data-lucide="network" class="w-4 h-4 text-blue-400"></i>
+                                    <span>3-2-1 STORAGE TOPOLOGY</span>
+                                </div>
+                                <span class="px-1.5 py-0.5 bg-blue-950 text-blue-300 text-[10px] rounded border border-blue-800">AIR-GAP READY</span>
+                            </div>
+
+                            <div class="grid grid-cols-2 gap-2 text-[11px] font-mono">
+                                <div class="p-2.5 rounded-lg bg-zinc-950/80 border border-zinc-800/80">
+                                    <span class="text-[10px] text-zinc-500 block uppercase">1. Local Vault</span>
+                                    <span class="text-zinc-200 font-bold block mt-0.5">WORM Immutable</span>
+                                    <span class="text-[10px] text-emerald-400">Write-Once / Lock</span>
+                                </div>
+                                <div class="p-2.5 rounded-lg bg-zinc-950/80 border border-zinc-800/80">
+                                    <span class="text-[10px] text-zinc-500 block uppercase">2. Remote Mirror</span>
+                                    <span class="text-zinc-200 font-bold block mt-0.5">Cloud / NAS / Offsite</span>
+                                    <span class="text-[10px] text-cyan-400">Encrypted Transport</span>
+                                </div>
+                            </div>
+
+                            <!-- OS BARE-METAL BACKUP BANNER -->
+                            <div class="p-3 rounded-lg bg-gradient-to-br from-emerald-950/30 to-zinc-950/60 border border-emerald-900/40 flex items-center justify-between">
+                                <div class="space-y-0.5">
+                                    <div class="text-xs font-bold text-zinc-200 flex items-center gap-1.5 font-mono">
+                                        <i data-lucide="shield" class="w-3.5 h-3.5 text-emerald-400"></i>
+                                        <span>OS Bare-Metal Recovery</span>
+                                    </div>
+                                    <p class="text-[10px] text-zinc-400">C: 드라이브 SSD 돌연사 대비 시스템 이미지</p>
+                                </div>
+                                <button onclick="switchTab('system-image')" class="py-1 px-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 hover:text-white rounded text-[11px] font-mono transition border border-zinc-700 flex items-center gap-1">
+                                    <span>관리</span> &rarr;
+                                </button>
+                            </div>
+
+                            <!-- RESCUE USB MAKER BANNER (Dashboard Quick Action) -->
+                            <div class="p-3 rounded-lg bg-gradient-to-br from-blue-950/40 via-zinc-950/60 to-indigo-950/40 border border-blue-900/50 flex items-center justify-between">
+                                <div class="space-y-0.5">
+                                    <div class="text-xs font-bold text-zinc-100 flex items-center gap-1.5 font-mono">
+                                        <i data-lucide="disc" class="w-3.5 h-3.5 text-blue-400"></i>
+                                        <span>긴급 복구 부팅 USB</span>
+                                        <span class="text-[9px] px-1.5 py-0.2 rounded bg-blue-900/60 text-blue-300 font-bold border border-blue-800/60">0초 자동실행</span>
+                                    </div>
+                                    <p class="text-[10px] text-zinc-400">부팅 불가 시 원클릭 복원용 UEFI 미디어</p>
+                                </div>
+                                <div class="flex items-center gap-1.5">
+                                    <button onclick="openRescueUsbModal()" class="py-1 px-2.5 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white rounded text-[11px] font-mono font-bold transition shadow-sm flex items-center gap-1">
+                                        <i data-lucide="hard-drive" class="w-3 h-3"></i>
+                                        <span>제작</span>
+                                    </button>
+                                    <button onclick="openRescueGuideModal()" class="py-1 px-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded text-[11px] font-mono transition border border-zinc-700 flex items-center gap-1" title="복구 USB 사용법 및 부팅 안내">
+                                        <i data-lucide="help-circle" class="w-3 h-3 text-amber-400"></i>
+                                        <span>사용법</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- LIVE TELEMETRY & EVENT STREAM -->
+                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg flex flex-col justify-between">
+                            <div>
+                                <div class="flex justify-between items-center pb-2.5 border-b border-zinc-800/80 mb-3">
+                                    <div class="flex items-center gap-2">
+                                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                                        <h2 class="text-xs font-bold text-zinc-100 font-mono uppercase tracking-wide">Live Telemetry & Event Stream</h2>
+                                    </div>
+                                    <span class="text-[10px] font-mono text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">STREAMING</span>
+                                </div>
+
+                                <!-- Console Log Terminal Screen -->
+                                <div class="p-3 bg-zinc-950 rounded-lg border border-zinc-800/80 font-mono text-[11px] leading-relaxed space-y-1.5 h-48 overflow-y-auto text-zinc-400 select-text">
+                                    <div class="flex items-start gap-2">
+                                        <span class="text-zinc-600">[09:00:01]</span>
+                                        <span class="text-blue-400 font-bold">[ENGINE]</span>
+                                        <span class="text-zinc-300">FastCDC chunk index loaded (0 corruptions)</span>
+                                    </div>
+                                    <div class="flex items-start gap-2">
+                                        <span class="text-zinc-600">[09:00:03]</span>
+                                        <span class="text-cyan-400 font-bold">[VSS]</span>
+                                        <span class="text-zinc-300">Shadow Copy set initialized for C:, D:</span>
+                                    </div>
+                                    <div class="flex items-start gap-2">
+                                        <span class="text-zinc-600">[09:00:09]</span>
+                                        <span class="text-emerald-400 font-bold">[WORM]</span>
+                                        <span class="text-zinc-300">Immutable lock applied to local vault snapshot</span>
+                                    </div>
+                                    <div class="flex items-start gap-2">
+                                        <span class="text-zinc-600">[09:00:12]</span>
+                                        <span class="text-indigo-400 font-bold">[OFFSITE]</span>
+                                        <span class="text-zinc-300">Remote mirror handshake verified (Lag: 0ms)</span>
+                                    </div>
+                                    <div class="flex items-start gap-2">
+                                        <span class="text-zinc-600">[09:00:15]</span>
+                                        <span class="text-emerald-400 font-bold">[SUCCESS]</span>
+                                        <span class="text-emerald-300">Scheduled backup completed cleanly (Exit 0)</span>
+                                    </div>
+                                    <div class="flex items-start gap-2 text-zinc-500 italic">
+                                        <span>[SYSTEM]</span>
+                                        <span>Observability daemon polling active at 30s interval...</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="pt-2.5 border-t border-zinc-800/80 mt-2.5 flex items-center justify-between text-[10px] font-mono text-zinc-500">
+                                <span>Status: Engine Nominal</span>
+                                <span>Daemon Heartbeat: OK</span>
+                            </div>
+                        </div>
+
+                    </div>
+
+                </div>
+
+            </div>
+
+            <!-- TAB: 백업 항목 직접 선택 (Custom Item Selector) -->
+            <div id="tab-custom" class="tab-content hidden space-y-6">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                            <i data-lucide="check-square" class="w-5 h-5 text-blue-400"></i> 백업 대상 직접 선택 & 맞춤형 백업
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-0.5">백업하고 싶은 드라이버, 설치 프로그램, 프로젝트 폴더를 체크박스로 자유롭게 선택하여 백업합니다.</p>
+                    </div>
+                    <button onclick="loadCustomSelectionData()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition border border-slate-700 flex items-center gap-1.5">
+                        <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 프로그램 목록 새로고침
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Left 2 Cols: Item Selection Cards -->
+                    <div class="lg:col-span-2 space-y-5">
+                        
+                        <!-- 1. Windows Drivers -->
+                        <div class="p-4 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 flex items-center justify-between">
+                            <div class="flex items-center gap-3">
+                                <div class="p-2.5 bg-indigo-500/20 text-indigo-400 rounded-xl border border-indigo-500/30">
+                                    <i data-lucide="cpu" class="w-5 h-5"></i>
+                                </div>
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <h3 class="text-sm font-bold text-zinc-100">윈도우 OEM 드라이버 전체</h3>
+                                        <span class="text-[10px] px-2 py-0.5 bg-indigo-900/60 text-indigo-300 rounded-full font-medium border border-indigo-700">43개 드라이버 자동 감지</span>
+                                    </div>
+                                    <p class="text-xs text-zinc-400 mt-0.5">그래픽(AMD), Wi-Fi, 사운드, 네트워크 등 PC 하드웨어 드라이버를 자동 추출하여 백업합니다.</p>
+                                </div>
+                            </div>
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" id="custom-include-drivers" checked class="sr-only peer">
+                                <div class="w-11 h-6 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                            </label>
+                        </div>
+
+                        <!-- 2. Installed Applications Selector -->
+                        <div class="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 space-y-4">
+                            <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-2">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg">
+                                        <i data-lucide="package" class="w-4 h-4"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-sm font-bold text-zinc-100">설치된 응용 프로그램 선택</h3>
+                                        <p class="text-[11px] text-zinc-400">PC에 설치된 프로그램 중 백업할 항목을 선택하세요.</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <button onclick="toggleAllApps(true)" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-[11px] font-medium border border-zinc-700 transition">전체 선택</button>
+                                    <button onclick="toggleAllApps(false)" class="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-[11px] font-medium border border-zinc-700 transition">선택 해제</button>
+                                </div>
+                            </div>
+
+                            <!-- Search Input -->
+                            <div class="relative">
+                                <i data-lucide="search" class="w-4 h-4 text-zinc-400 absolute left-3 top-2.5"></i>
+                                <input type="text" id="app-search-input" oninput="filterAppsList()" placeholder="프로그램 이름 검색 (예: Chrome, Kakao, Steam, Code, Docker...)" class="w-full bg-zinc-950/80 border border-zinc-800 rounded-xl pl-9 pr-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-blue-500 placeholder:text-zinc-500">
+                            </div>
+
+                            <!-- Apps Scrollable List -->
+                            <div id="installed-apps-container" class="max-h-60 overflow-y-auto space-y-1.5 pr-1 text-xs">
+                                <div class="text-zinc-500 text-center py-6">설치된 프로그램 목록을 검색 중입니다...</div>
+                            </div>
+                        </div>
+
+                        <!-- 3. Additional Custom Folders -->
+                        <div class="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 space-y-3">
+                            <div class="flex justify-between items-center">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="p-2 bg-purple-500/20 text-purple-400 rounded-lg">
+                                        <i data-lucide="folder-plus" class="w-4 h-4"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="text-sm font-bold text-zinc-100">추가 사용자 정의 폴더</h3>
+                                        <p class="text-[11px] text-zinc-400">직접 지정하고 싶은 다른 드라이브나 폴더가 있다면 추가하세요.</p>
+                                    </div>
+                                </div>
+                                <button onclick="openDirectoryPickerForCustom()" class="px-3 py-1.5 bg-blue-600/80 hover:bg-blue-600 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1.5 shadow-sm">
+                                    <i data-lucide="plus" class="w-3.5 h-3.5"></i> 폴더 추가
+                                </button>
+                            </div>
+                            <div id="custom-folders-list" class="space-y-1.5 text-xs">
+                                <div class="text-slate-500 text-xs py-1">추가된 별도 폴더가 없습니다.</div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- Right Col: Target Settings & Run Action -->
+                    <div class="space-y-4">
+                        <div class="p-5 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 space-y-4 sticky top-6">
+                            <h3 class="text-sm font-bold text-zinc-100 flex items-center gap-2">
+                                <i data-lucide="sliders" class="w-4 h-4 text-blue-400"></i> 백업 실행 설정
+                            </h3>
+
+                            <div>
+                                <label class="block text-xs font-semibold text-zinc-300 mb-1">백업 저장소 (Repository)</label>
+                                <div class="flex gap-2">
+                                    <input type="text" id="custom-repo-dir" placeholder="예: D:\MyBackup_Repository 또는 E:\BackupRepository" class="flex-1 bg-zinc-950/80 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 font-mono focus:outline-none focus:border-blue-500">
+                                    <button onclick="openDirectoryPicker('custom-repo-dir')" class="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-medium border border-zinc-700 shrink-0">선택</button>
+                                </div>
+                                <p id="custom-repo-space-hint" class="text-[11px] text-zinc-400 mt-1">백업 아카이브와 블롭이 안전하게 저장될 로컬 드라이브 폴더입니다.</p>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-semibold text-zinc-300 mb-1">프로필 이름</label>
+                                <input type="text" id="custom-profile-name" value="내 맞춤형 선택 백업" class="w-full bg-zinc-950/80 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-blue-500">
+                            </div>
+
+                            <div class="p-3.5 bg-zinc-950/80 rounded-xl border border-zinc-800 space-y-2 text-xs">
+                                <div class="text-zinc-400 font-semibold flex justify-between">
+                                    <span>선택된 대상 요약</span>
+                                </div>
+                                <div class="space-y-1 text-slate-300 text-[11px]">
+                                    <div class="flex justify-between">
+                                        <span>윈도우 드라이버:</span>
+                                        <span id="summary-drivers-badge" class="text-emerald-400 font-medium">포함 (43개)</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>선택된 프로그램:</span>
+                                        <span id="summary-apps-count" class="font-bold text-blue-400 font-mono">0개</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>추가 정의 폴더:</span>
+                                        <span id="summary-custom-count" class="font-bold text-purple-400 font-mono">0개</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Pre-flight Space Estimator -->
+                            <div class="pt-1">
+                                <button type="button" onclick="estimateCustomBackupSpace(this)" class="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold border border-slate-700 transition flex items-center justify-center gap-1.5 shadow-sm">
+                                    <i data-lucide="scale" class="w-3.5 h-3.5 text-cyan-400"></i>
+                                    <span>📊 백업 전 용량 사전 예측 (Pre-flight Check)</span>
+                                </button>
+                                <div id="estimate-result-box" class="hidden mt-2 p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 text-[11px] space-y-1"></div>
+                            </div>
+
+                            <div class="flex items-center gap-2 pt-1">
+                                <input type="checkbox" id="custom-save-profile" checked class="rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-0 w-4 h-4">
+                                <label for="custom-save-profile" class="text-xs text-slate-300 cursor-pointer">이 선택 구성을 기본 프로필로 저장</label>
+                            </div>
+
+                            <button onclick="startCustomSelectionBackup()" class="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2">
+                                <i data-lucide="play" class="w-4 h-4 fill-current"></i> 선택한 항목 지금 백업 시작
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 2: 실시간 백업 러너 (Live Runner) -->
+            <div id="tab-runner" class="tab-content hidden space-y-6">
+                <div class="p-6 rounded-2xl glass-card border border-slate-700/60 space-y-6">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-3">
+                            <div class="p-3 bg-blue-600/20 text-blue-400 rounded-xl border border-blue-500/30">
+                                <i data-lucide="cpu" class="w-6 h-6"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-base font-bold text-slate-100">실시간 백업 & 복원 엔진 모니터</h2>
+                                <p class="text-xs text-slate-400">백업/복원 작업 진행 상황과 파일 I/O 및 실시간 로그를 표시합니다.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span id="runner-status-badge" class="px-3 py-1 bg-slate-700 text-slate-300 rounded-full text-xs font-semibold">대기 중</span>
+                            <button id="runner-cancel-btn" onclick="cancelCurrentTask()" class="hidden px-3 py-1 bg-red-600/80 hover:bg-red-600 text-white rounded-full text-xs font-semibold transition">
+                                작업 취소
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Progress Indicator -->
+                    <div class="space-y-2 bg-slate-900/60 p-5 rounded-2xl border border-slate-800">
+                        <div class="flex justify-between items-center text-xs font-semibold">
+                            <span id="runner-current-file" class="text-slate-300 truncate max-w-xl">대기 중</span>
+                            <span id="runner-percent-text" class="text-blue-400 font-mono text-base">0%</span>
+                        </div>
+                        <div class="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
+                            <div id="runner-progress-bar" class="bg-gradient-to-r from-blue-500 to-indigo-500 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                        </div>
+                        <div class="flex justify-between items-center text-[11px] text-slate-400">
+                            <span id="runner-stats-text">파일: 0 / 0</span>
+                            <span>SHA-256 증분 검증 활성화</span>
+                        </div>
+                    </div>
+
+                    <!-- Live Terminal Output -->
+                    <div class="space-y-2">
+                        <div class="flex justify-between items-center text-xs text-slate-400">
+                            <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+                                <i data-lucide="terminal" class="w-4 h-4 text-blue-400"></i> 작업 실행 로그
+                            </span>
+                            <div class="flex items-center gap-2">
+                                <button onclick="copyDiagnosticLogs(this)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] font-semibold border border-slate-700 transition flex items-center gap-1.5 shadow-sm">
+                                    <i data-lucide="clipboard-copy" class="w-3.5 h-3.5 text-cyan-400"></i>
+                                    <span>진단 로그 복사</span>
+                                </button>
+                                <span class="text-[11px]">최근 30건 실시간 스트리밍</span>
+                            </div>
+                        </div>
+                        <div id="terminal-log-box" class="terminal-box h-72 rounded-xl p-4 overflow-y-auto text-xs leading-relaxed space-y-1">
+                            <div class="text-slate-500">엔진 준비 완료. 작업이 시작되면 실시간 로그가 여기에 출력됩니다.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: 스냅샷 타임머신 (Time Machine & Restore) -->
+            <div id="tab-snapshots" class="tab-content hidden space-y-4">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                            <i data-lucide="history" class="w-5 h-5 text-blue-400"></i> 스냅샷 타임머신
+                        </h2>
+                        <p class="text-xs text-slate-400">저장된 백업 시점 목록입니다. 특정 시점의 파일을 탐색하거나 원클릭으로 복원할 수 있습니다.</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="runDRDrill()" class="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-900/30 flex items-center gap-1.5">
+                            <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+                            <span>🧪 1초 복구 모의훈련 (DR Drill)</span>
+                        </button>
+                        <button onclick="loadSnapshots()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition border border-slate-700 flex items-center gap-1.5">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 새로고침
+                        </button>
+                    </div>
+                </div>
+
+                <div class="rounded-2xl glass-card border border-slate-700/60 overflow-hidden">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left">
+                            <thead class="bg-slate-900/80 border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                                <tr>
+                                    <th class="py-3 px-4">스냅샷 ID</th>
+                                    <th class="py-3 px-4">프로필</th>
+                                    <th class="py-3 px-4">유형</th>
+                                    <th class="py-3 px-4">생성 일시</th>
+                                    <th class="py-3 px-4">총 파일/용량</th>
+                                    <th class="py-3 px-4">중복제거 절감</th>
+                                    <th class="py-3 px-4 text-right">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody id="snapshots-table-body" class="divide-y divide-slate-800/60">
+                                <!-- Injected by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 4: 백업 프로필 & 스케줄 (Profiles & Schedules) -->
+            <div id="tab-profiles" class="tab-content hidden space-y-4">
+                <div class="flex justify-between items-center">
+                    <div>
+                        <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                            <i data-lucide="sliders" class="w-5 h-5 text-blue-400"></i> 백업 프로필 & 자동 스케줄
+                        </h2>
+                        <p class="text-xs text-slate-400">백업할 대상 폴더, 저장소 위치, 제외 규칙, 자동 백업 주기 등을 관리합니다.</p>
+                    </div>
+                    <button onclick="openCreateProfileModal()" class="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition flex items-center gap-2 shadow-lg shadow-blue-600/30">
+                        <i data-lucide="plus" class="w-4 h-4"></i> 새 프로필 추가
+                    </button>
+                </div>
+
+                <!-- Windows Task Scheduler & 3-2-1 Offsite Remote Replication (2-Column Grid) -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+                    
+                    <!-- LEFT: Windows Task Scheduler Card (Smart Select On/Off) -->
+                    <div class="p-5 bg-gradient-to-r from-blue-950/40 via-indigo-950/30 to-purple-950/40 rounded-2xl border border-blue-800/40 flex flex-col justify-between gap-4 shadow-lg">
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <span class="text-sm font-bold text-white flex items-center gap-2">
+                                    <i data-lucide="zap" class="w-4 h-4 text-amber-400"></i> Windows OS 작업 스케줄러
+                                </span>
+                                <span id="windows-task-status-badge" class="text-[11px] px-2.5 py-0.5 rounded-full font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                                    확인 중...
+                                </span>
+                            </div>
+                            <p class="text-xs text-slate-300 leading-relaxed">
+                                평상시에는 파이썬 프로세스가 <strong class="text-emerald-400">완전히 꺼져(0 MB / 0% CPU)</strong> 대기하며, 지정된 백업 시간에만 윈도우 OS가 백그라운드에서 1초 켜서 백업 후 <strong class="text-blue-400">즉시 자동 종료</strong>합니다.
+                            </p>
+                            <div id="windows-task-next-run" class="text-[11px] text-blue-300 font-mono"></div>
+                            <!-- 스케줄러 백업 로그 확인 -->
+                            <button onclick="showScheduledBackupLogs()" class="text-[11px] text-amber-300 hover:text-amber-200 underline underline-offset-2 flex items-center gap-1">
+                                <i data-lucide="scroll-text" class="w-3 h-3"></i> 마지막 스케줄러 백업 로그 보기
+                            </button>
+                        </div>
+                        <div class="flex items-center gap-2 pt-2 border-t border-blue-900/40">
+                            <button onclick="registerWindowsTaskFromUI()" class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center justify-center gap-1.5">
+                                <i data-lucide="calendar-check" class="w-3.5 h-3.5"></i> OS 스케줄러 등록
+                            </button>
+                            <button onclick="unregisterWindowsTaskFromUI()" class="px-3 py-2 bg-slate-800 hover:bg-red-950/60 text-slate-300 hover:text-red-400 border border-slate-700 rounded-xl text-xs font-medium transition">
+                                등록 해제
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- RIGHT: 3-2-1 Offsite Remote Replication Card -->
+                    <div class="p-5 bg-gradient-to-r from-cyan-950/40 via-slate-900/60 to-blue-950/40 rounded-2xl border border-cyan-800/40 flex flex-col justify-between gap-3 shadow-lg">
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm font-bold text-white flex items-center gap-2">
+                                        <i data-lucide="globe" class="w-4 h-4 text-cyan-400"></i> 3-2-1 오프사이트 원격 복제
+                                    </span>
+                                    <span id="offsite-status-badge" class="text-[11px] px-2.5 py-0.5 rounded-full font-medium bg-slate-800 text-slate-400 border border-slate-700">
+                                        확인 중...
+                                    </span>
+                                </div>
+                                <button onclick="triggerOffsiteSyncFromUI()" class="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center gap-1">
+                                    <i data-lucide="refresh-cw" class="w-3 h-3"></i> 원격 복제
+                                </button>
+                            </div>
+                            <p class="text-xs text-slate-300 leading-relaxed">
+                                로컬 1차 백업 후 사내 PC/NAS 또는 <strong class="text-cyan-400">구글 드라이브</strong> 클라우드로 자동 복제하여 랜섬웨어·재해로부터 보호합니다.
+                            </p>
+
+                            <!-- 오프사이트 대상 공급자 선택 (Local vs Google Drive) -->
+                            <div class="pt-1.5 border-t border-slate-800/80">
+                                <div class="flex flex-wrap items-center gap-3 mb-2">
+                                    <label class="flex items-center gap-1.5 cursor-pointer text-xs text-slate-200">
+                                        <input type="radio" name="offsite-provider" value="local" id="offsite-provider-local" onchange="toggleOffsiteProviderUI('local')" checked class="text-cyan-500 bg-slate-800 border-slate-700 focus:ring-0">
+                                        <span class="font-medium">🖥️ 로컬 / SMB</span>
+                                    </label>
+                                    <label class="flex items-center gap-1.5 cursor-pointer text-xs text-slate-200">
+                                        <input type="radio" name="offsite-provider" value="gdrive" id="offsite-provider-gdrive" onchange="toggleOffsiteProviderUI('gdrive')" class="text-cyan-500 bg-slate-800 border-slate-700 focus:ring-0">
+                                        <span class="font-medium">☁️ 구글 드라이브</span>
+                                    </label>
+                                </div>
+
+                                <!-- 로컬 / SMB 설정 필드 -->
+                                <div id="offsite-local-fields" class="space-y-1">
+                                    <div class="flex gap-2">
+                                        <input type="text" id="offsite-remote-path" placeholder="예: \\192.168.1.100\BackupShare 또는 Z:\RemoteBackup" class="flex-1 bg-slate-800/90 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500">
+                                        <button onclick="openDirectoryPicker('offsite-remote-path')" class="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl text-xs font-medium shrink-0">폴더 선택</button>
+                                    </div>
+                                </div>
+
+                                <!-- 구글 드라이브 설정 필드 -->
+                                <div id="offsite-gdrive-fields" class="space-y-2 hidden">
+                                    <div>
+                                        <div class="flex items-center justify-between">
+                                            <label class="block text-[11px] font-semibold text-slate-300">구글 인증 키 (.json)</label>
+                                            <span class="text-[10px] text-cyan-400 font-medium">OAuth 2.0 / 서비스 계정</span>
+                                        </div>
+                                        <div class="flex items-center gap-1.5 mt-1">
+                                            <input type="text" id="offsite-gdrive-credentials" placeholder="자동 탐색 또는 파일 선택" class="flex-1 bg-slate-800/90 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500">
+                                            <input type="file" id="gdrive-cred-file-input" class="hidden" accept=".json" onchange="uploadGdriveCredFile(this)">
+                                            <button type="button" onclick="document.getElementById('gdrive-cred-file-input').click()" class="px-2.5 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl text-xs font-medium shrink-0 flex items-center gap-1">
+                                                <i data-lucide="upload" class="w-3.5 h-3.5"></i> 선택
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label class="block text-[11px] font-semibold text-slate-300">구글 드라이브 대상 폴더명 / ID</label>
+                                        <input type="text" id="offsite-gdrive-folder" placeholder="예: 폴더명 또는 Folder ID" class="w-full bg-slate-800/90 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-mono focus:outline-none focus:border-cyan-500">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Checkboxes & Save Buttons Row -->
+                        <div class="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+                            <div class="flex items-center gap-3">
+                                <label class="flex items-center gap-1.5 cursor-pointer text-xs text-slate-300">
+                                    <input type="checkbox" id="offsite-enabled" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+                                    <span class="font-semibold">복제 활성화</span>
+                                </label>
+                                <label class="flex items-center gap-1.5 cursor-pointer text-xs text-slate-400">
+                                    <input type="checkbox" id="offsite-auto-sync" class="rounded bg-slate-800 border-slate-700 text-cyan-500 focus:ring-0">
+                                    <span>완료 후 자동 동기화</span>
+                                </label>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <button onclick="testOffsiteFromUI()" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-800/60 rounded-xl text-xs font-medium transition flex items-center gap-1">
+                                    <i data-lucide="network" class="w-3.5 h-3.5"></i> 테스트
+                                </button>
+                                <button onclick="saveOffsiteConfigFromUI()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center gap-1">
+                                    <i data-lucide="save" class="w-3.5 h-3.5"></i> 저장
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- 스케줄러 백업 로그 모달 -->
+                <div id="backup-log-modal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm items-center justify-center p-4">
+                    <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-4xl max-h-[80vh] flex flex-col shadow-2xl">
+                        <div class="flex items-center justify-between p-4 border-b border-slate-700 shrink-0">
+                            <div class="flex items-center gap-2">
+                                <i data-lucide="scroll-text" class="w-5 h-5 text-amber-400"></i>
+                                <span class="text-sm font-bold text-white">스케줄러 백업 로그</span>
+                            </div>
+                            <div class="flex items-center gap-2.5">
+                                <button onclick="copyModalLogs(this)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold border border-slate-700 transition flex items-center gap-1.5 shadow-sm">
+                                    <i data-lucide="clipboard-copy" class="w-3.5 h-3.5 text-cyan-400"></i>
+                                    <span>로그 복사</span>
+                                </button>
+                                <button onclick="closeModal('backup-log-modal')" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
+                                    <i data-lucide="x" class="w-5 h-5"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="backup-log-meta" class="px-4 py-2 text-[11px] text-slate-400 font-mono border-b border-slate-800 shrink-0"></div>
+                        <pre id="backup-log-body" class="flex-1 overflow-auto p-4 text-[11px] font-mono text-slate-300 whitespace-pre-wrap leading-relaxed"></pre>
+                    </div>
+                </div>
+
+                <div id="profiles-list-container" class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
+                    <!-- Injected by JS -->
+                </div>
+            </div>
+
+            <!-- TAB 5: 윈도우 OS 전체 시스템 이미지 백업 (Bare-Metal Image) -->
+            <div id="tab-system-image" class="tab-content hidden space-y-6">
+                <!-- Header -->
+                <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                    <div>
+                        <h2 class="text-base font-bold text-white flex items-center gap-2">
+                            <i data-lucide="hard-drive" class="w-5 h-5 text-emerald-400"></i> 디스크 통백업 & OS 전체 복원 (LBA 블록 .qblk & Bare-Metal)
+                            <span class="text-[11px] px-2.5 py-0.5 bg-emerald-950/80 text-emerald-300 rounded-full border border-emerald-700/60 font-medium font-mono">SSD 사망 대비 특화</span>
+                        </h2>
+                        <p class="text-xs text-slate-400 mt-1">
+                            C드라이브 SSD가 물리적으로 고장 나 새 SSD로 교체했을 때, 윈도우 재설치 없이 <strong>부팅(EFI) 파티션 + OS + 프로그램 전체를 100% 원상복구</strong>합니다.
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="loadSystemImageStatus(); loadArchiveList(); loadVhdxList(); loadMigrationDrives()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-xl text-xs font-semibold transition border border-slate-700 flex items-center gap-1.5">
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 상태 새로고침
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Status Cards Grid -->
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <!-- C: Drive Status -->
+                    <div class="p-4 rounded-2xl glass-card border border-slate-700/60 space-y-1">
+                        <div class="flex justify-between items-center text-slate-400 text-xs font-medium">
+                            <span>C: 드라이브 (백업 대상)</span>
+                            <i data-lucide="laptop" class="w-4 h-4 text-blue-400"></i>
+                        </div>
+                        <div id="sysimg-c-used" class="text-2xl font-black text-slate-100 font-mono">0 GB</div>
+                        <div id="sysimg-c-total" class="text-[11px] text-slate-400">전체 용량 중 0 GB 사용 중</div>
+                    </div>
+
+                    <!-- Target Drive Status -->
+                    <div class="p-4 rounded-2xl glass-card border border-slate-700/60 space-y-1">
+                        <div class="flex justify-between items-center text-slate-400 text-xs font-medium">
+                            <span id="sysimg-target-title">백업 저장 드라이브</span>
+                            <i data-lucide="database" class="w-4 h-4 text-emerald-400"></i>
+                        </div>
+                        <div id="sysimg-d-free" class="text-2xl font-black text-emerald-400 font-mono">0 GB</div>
+                        <div id="sysimg-space-badge" class="text-[11px] text-slate-400">여유 공간 계산 중...</div>
+                    </div>
+
+                    <!-- Last Backup Status -->
+                    <div class="p-4 rounded-2xl glass-card border border-slate-700/60 space-y-1">
+                        <div class="flex justify-between items-center text-slate-400 text-xs font-medium">
+                            <span>최근 생성된 통백업 (OS 이미지)</span>
+                            <i data-lucide="shield-check" class="w-4 h-4 text-purple-400"></i>
+                        </div>
+                        <div id="sysimg-last-status" class="text-2xl font-black text-slate-100 font-mono">미생성</div>
+                        <div id="sysimg-last-time" class="text-[11px] text-slate-400">저장소에 생성된 통백업 아카이브 없음</div>
+                    </div>
+                </div>
+
+                <!-- 2-COLUMN UNIFIED PANEL: 백업 생성 제어기 (좌) + 보관 아카이브 및 복원 (우) -->
+                <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+                    
+                    <!-- LEFT COLUMN (Col Span 6): 디스크 통백업 생성 제어 및 실시간 실행 콘솔 -->
+                    <div class="lg:col-span-6 p-6 bg-gradient-to-br from-purple-950/40 via-slate-900/80 to-blue-950/40 rounded-2xl border border-purple-500/30 space-y-4 shadow-2xl flex flex-col justify-between h-full">
+                        <div class="space-y-4">
+                            <!-- Header -->
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-zinc-800/80">
+                                <div class="space-y-0.5">
+                                    <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                                        <i data-lucide="shield-check" class="w-4 h-4 text-purple-400"></i>
+                                        <span>디스크 통백업 생성</span>
+                                        <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 font-bold border border-emerald-800 font-mono">LBA 블록 스트리밍 (.qblk)</span>
+                                    </h3>
+                                    <p class="text-[11px] text-zinc-400">
+                                        C: 드라이브(부팅 파티션+OS 전체)를 zstd 초고속 압축 단일 블록 아카이브(.qblk)로 통백업합니다.
+                                    </p>
+                                </div>
+                                <div class="flex items-center gap-1.5 shrink-0">
+                                    <label class="text-[11px] text-zinc-300 font-medium">저장:</label>
+                                    <select id="sysimg-drive-select" class="bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-xl px-2.5 py-1 focus:outline-none focus:border-purple-500 font-mono">
+                                        <option value="" disabled selected>검색 중...</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Options & Action -->
+                            <div class="bg-zinc-950/60 p-4 rounded-xl border border-zinc-800/80 space-y-3">
+                                <div>
+                                    <label class="text-xs text-zinc-300 font-semibold flex items-center gap-1.5 mb-1.5">
+                                        <i data-lucide="cpu" class="w-3.5 h-3.5 text-purple-400"></i>
+                                        <span>백업 엔진 및 방식:</span>
+                                    </label>
+                                    <select id="archive-compress-select" class="w-full bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-purple-500 font-mono">
+                                        <option value="fast" selected>LBA 블록 스트리밍 (.qblk) - zstd 풀코어 압축 / NTFS 빈공간 100% 스킵</option>
+                                    </select>
+                                </div>
+
+                                <div class="space-y-1.5 pt-1.5 border-t border-zinc-800/60">
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" id="chk-archive-auto-verify" checked class="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-purple-600 focus:ring-0">
+                                        <span class="text-xs text-zinc-200 font-semibold">4단계 실측 검증 자동 실행 (권장)</span>
+                                    </label>
+                                    <label class="flex items-center gap-2 cursor-pointer">
+                                        <input type="checkbox" id="chk-archive-upload-gdrive" class="w-4 h-4 rounded border-zinc-700 bg-zinc-800 text-purple-600 focus:ring-0">
+                                        <span class="text-xs text-purple-300 font-semibold flex items-center gap-1.5">
+                                            <i data-lucide="cloud-upload" class="w-3.5 h-3.5 text-purple-400"></i>
+                                            완료 후 구글 드라이브 업로드 (6청크 병렬)
+                                        </span>
+                                    </label>
+                                </div>
+
+                                <div class="pt-2">
+                                    <button id="btn-start-archive" onclick="startDriveArchiveBackup()" class="w-full py-2.5 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-emerald-600/20 flex items-center justify-center gap-2">
+                                        <i data-lucide="save" class="w-4 h-4"></i>
+                                        <span>지금 OS 통백업 생성 시작</span>
+                                    </button>
+                                    <button id="btn-stop-archive" onclick="stopDriveArchiveBackup()" class="hidden w-full py-2.5 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/80 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5">
+                                        <i data-lucide="square" class="w-3.5 h-3.5 fill-current"></i>
+                                        <span>작업 중단</span>
+                                    </button>
+                                    <button id="btn-start-sysimg" onclick="startDriveArchiveBackup()" class="hidden"></button>
+                                    <button id="btn-stop-sysimg" onclick="stopDriveArchiveBackup()" class="hidden"></button>
+                                </div>
+                            </div>
+
+                            <!-- Progress Status Bar -->
+                            <div class="space-y-1.5">
+                                <div class="flex justify-between items-center text-xs">
+                                    <div class="flex items-center gap-1.5">
+                                        <span class="text-zinc-400 font-medium">진행:</span>
+                                        <span id="archive-current-phase" class="text-zinc-300 font-mono text-[11px] truncate max-w-[200px]">대기 중</span>
+                                        <span id="sysimg-current-phase" class="hidden"></span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span id="archive-progress-percent" class="font-mono font-bold text-emerald-400">0.0%</span>
+                                        <span id="sysimg-progress-percent" class="hidden">0.0%</span>
+                                        <span id="archive-status-badge" class="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-zinc-800 text-zinc-400 border border-zinc-700">대기 중</span>
+                                        <span id="sysimg-running-badge" class="hidden"></span>
+                                    </div>
+                                </div>
+                                <div class="w-full bg-zinc-950 rounded-full h-2.5 overflow-hidden border border-zinc-800">
+                                    <div id="archive-progress-bar" class="bg-gradient-to-r from-emerald-600 via-teal-500 to-indigo-500 h-2.5 rounded-full transition-all duration-300 shadow-sm" style="width: 0%"></div>
+                                    <div id="sysimg-progress-bar" class="hidden" style="width: 0%"></div>
+                                </div>
+                            </div>
+
+                            <!-- Execution Console -->
+                            <div class="space-y-1.5">
+                                <div class="flex justify-between items-center text-xs">
+                                    <span class="text-zinc-300 font-semibold flex items-center gap-1.5">
+                                        <i data-lucide="terminal" class="w-3.5 h-3.5 text-emerald-400"></i> 실시간 실행 콘솔 로그
+                                    </span>
+                                </div>
+                                <div id="archive-console" class="bg-zinc-950 rounded-xl p-3.5 font-mono text-[11px] text-zinc-300 h-44 overflow-y-auto border border-zinc-800/80 space-y-1 select-text leading-relaxed">
+                                    <div class="text-zinc-500">[대기] '지금 OS 통백업 생성 시작' 버튼을 누르면 VSS 스냅샷 및 LBA 블록 스트리밍(.qblk) 생성과 4단계 실측 검증이 시작됩니다.</div>
+                                </div>
+                                <div id="sysimg-console" class="hidden"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- RIGHT COLUMN (Col Span 6): 보관 중인 통백업 아카이브 & 1-Click 복원 센터 -->
+                    <div class="lg:col-span-6 p-6 bg-gradient-to-br from-slate-900/90 via-zinc-950/90 to-purple-950/30 rounded-2xl border border-purple-500/30 space-y-4 shadow-2xl flex flex-col justify-between h-full">
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between pb-3 border-b border-zinc-800/80">
+                                <div class="space-y-0.5">
+                                    <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                                        <i data-lucide="box" class="w-4 h-4 text-emerald-400"></i>
+                                        <span>보관 중인 통백업 아카이브</span>
+                                    </h3>
+                                    <p class="text-[11px] text-zinc-400">
+                                        1-Click 새 SSD 복원 및 가상 드라이브 읽기 전용 마운트
+                                    </p>
+                                </div>
+                                <div class="flex items-center gap-2 shrink-0">
+                                    <button onclick="loadArchiveList(); loadVhdxList()" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-xs font-medium border border-zinc-700 transition flex items-center gap-1">
+                                        <i data-lucide="refresh-cw" class="w-3 h-3"></i> 새로고침
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Stored Archives List -->
+                            <div id="archive-list-container" class="space-y-2.5 max-h-[460px] overflow-y-auto pr-1">
+                                <div class="text-zinc-500 text-xs py-8 text-center">아카이브 목록을 로드하는 중...</div>
+                            </div>
+
+                            <!-- VHDX Mount List Container (하위 호환) -->
+                            <div id="vhdx-list-container" class="space-y-2 pt-1"></div>
+                        </div>
+
+                        <div class="pt-3 border-t border-zinc-800/80 text-[11px] font-mono text-zinc-400 flex items-center justify-between">
+                            <span class="flex items-center gap-1.5 text-emerald-400 font-semibold">
+                                <i data-lucide="shield-check" class="w-3.5 h-3.5"></i> 4단계 실측 검증 (부팅/라이선스 보존)
+                            </span>
+                            <span class="text-zinc-500">Fast Block Engine</span>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- LIVE SSD MIGRATION (CLONE & BOOTABLE) PANEL (2-COLUMN GRID) -->
+                <div class="p-6 bg-gradient-to-br from-indigo-950/40 via-slate-900/80 to-purple-950/40 rounded-2xl border border-indigo-500/30 space-y-4 shadow-2xl">
+                    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-3 border-b border-zinc-800/80">
+                        <div class="space-y-1">
+                            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                                <i data-lucide="cpu" class="w-4 h-4 text-indigo-400"></i>
+                                <span>1-Click 라이브 SSD 마이그레이션 (Live Disk Clone & Bootable)</span>
+                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-indigo-950 text-indigo-300 font-bold border border-indigo-800">NVMe LBA 직사 복제</span>
+                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 font-bold border border-emerald-800">즉시 부팅 가능</span>
+                            </h3>
+                            <p class="text-xs text-zinc-400">
+                                현재 켜져 있는 Windows C: 드라이브(OS + 모든 프로그램 + 설정)를 VSS로 실시간 캡처하여 다른 물리 SSD로 통째로 복제하고, 
+                                즉시 부팅할 수 있도록 부트로더(<code>bcdboot</code>)를 자동 주입합니다.
+                            </p>
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button onclick="loadMigrationDrives()" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold transition border border-zinc-700 flex items-center gap-1.5" title="연결된 SSD 목록 새로고침">
+                                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> 드라이브 새로고침
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 2-Column Split: Target Controls (Left) & Realtime Console (Right) -->
+                    <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                        <!-- Left Column (Col 6): Target Selection, Action Button, Progress -->
+                        <div class="lg:col-span-6 space-y-4">
+                            <div class="bg-zinc-950/60 p-4 rounded-xl border border-zinc-800/80 space-y-3">
+                                <div>
+                                    <label class="text-xs text-zinc-300 font-semibold flex items-center gap-1.5 mb-1.5">
+                                        <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-blue-400"></i>
+                                        <span>복제 대상(타겟) 새 SSD 드라이브 선택:</span>
+                                    </label>
+                                    <select id="migration-target-select" onchange="onMigrationDriveChange()" class="w-full bg-zinc-900 border border-zinc-700 text-zinc-200 text-xs rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 font-mono">
+                                        <option value="">드라이브 목록 로딩 중...</option>
+                                    </select>
+                                    <div id="migration-drive-info" class="text-xs pt-1">
+                                        <!-- JS 동적 출력 -->
+                                    </div>
+                                </div>
+
+                                <div class="pt-2">
+                                    <button id="btn-start-migration" onclick="openMigrationConfirmModal()" class="w-full py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2">
+                                        <i data-lucide="play" class="w-4 h-4 fill-current"></i>
+                                        <span>지금 새 SSD로 마이그레이션 시작</span>
+                                    </button>
+                                    <button id="btn-stop-migration" onclick="stopLiveMigration()" class="hidden w-full py-2.5 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800/80 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5">
+                                        <i data-lucide="square" class="w-3.5 h-3.5 fill-current"></i>
+                                        <span>작업 중단</span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Progress Status Bar -->
+                            <div class="space-y-1.5">
+                                <div class="flex justify-between items-center text-xs">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-zinc-300 font-semibold">진행 상태:</span>
+                                        <span id="migration-current-phase" class="text-zinc-400 font-mono text-[11px]">대기 중</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <span id="migration-progress-percent" class="font-mono font-bold text-indigo-400">0.0%</span>
+                                        <span id="migration-status-badge" class="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wider bg-zinc-800 text-zinc-400 border border-zinc-700">대기 중</span>
+                                    </div>
+                                </div>
+                                <div class="w-full bg-zinc-950 rounded-full h-2.5 overflow-hidden border border-zinc-800">
+                                    <div id="migration-progress-bar" class="bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-400 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Column (Col 6): Real-time Execution Console -->
+                        <div class="lg:col-span-6 space-y-1.5">
+                            <div class="flex justify-between items-center text-xs">
+                                <span class="text-zinc-300 font-semibold flex items-center gap-1.5">
+                                    <i data-lucide="terminal" class="w-3.5 h-3.5 text-cyan-400"></i> 실시간 마이그레이션 실행 콘솔
+                                </span>
+                            </div>
+                            <div id="migration-console" class="bg-zinc-950 rounded-xl p-3.5 font-mono text-xs text-zinc-300 h-44 overflow-y-auto border border-zinc-800/80 space-y-1 select-text leading-relaxed">
+                                <div class="text-zinc-500">[대기] 새 SSD를 선택하고 '지금 새 SSD로 마이그레이션 시작'을 누르면 실시간 복제가 시작됩니다.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2-COLUMN LOWER ROW: 긴급 복구 USB 제작기 (좌) + SSD 고장 시 4단계 매뉴얼 (우) -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-5 items-stretch">
+                    <!-- RESCUE USB MAKER PANEL IN OS BACKUP TAB -->
+                    <div class="p-6 bg-gradient-to-br from-blue-950/30 via-slate-900/60 to-indigo-950/30 rounded-2xl border border-blue-900/40 space-y-4 flex flex-col justify-between shadow-xl">
+                        <div class="space-y-3">
+                            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-blue-900/40">
+                                <div class="space-y-1">
+                                    <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                                        <i data-lucide="disc" class="w-4 h-4 text-blue-400"></i>
+                                        <span>긴급 재해 복구(Rescue DR) UEFI 부팅 USB</span>
+                                    </h3>
+                                    <span class="inline-block text-[10px] px-2 py-0.5 rounded-full bg-blue-900/60 text-blue-300 font-bold border border-blue-700/60">0초 전자동 실행 비상 미디어</span>
+                                </div>
+                            </div>
+                            <p class="text-xs text-slate-300 leading-relaxed">
+                                윈도우 부팅 불가나 SSD 돌연사 교체 시, PC에 꽂고 켜기만 하면 <strong>윈도우 설치 창 없이 0초 만에 복구 콘솔이 자동 실행</strong>되는 전용 비상 미디어입니다.
+                            </p>
+                            <div class="p-3 bg-zinc-950/60 rounded-xl border border-zinc-800/70 text-[11px] text-zinc-400 space-y-1 font-mono">
+                                <div>• 지원 환경: UEFI 64-bit / GPT 파티션</div>
+                                <div>• 탑재 도구: Windows RE + VSS 엔진 + 복원 자동 스크립트</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2 pt-2 border-t border-blue-900/30">
+                            <button onclick="openRescueGuideModal()" class="flex-1 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold transition border border-slate-700 flex items-center justify-center gap-1.5">
+                                <i data-lucide="help-circle" class="w-3.5 h-3.5 text-amber-400"></i> 사용법 안내
+                            </button>
+                            <button onclick="openRescueUsbModal()" class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-600/30 flex items-center justify-center gap-1.5 transition">
+                                <i data-lucide="hard-drive" class="w-3.5 h-3.5"></i> USB 지금 제작
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Bare-Metal Emergency Recovery Manual (Compact 2x2 Grid) -->
+                    <div class="p-6 bg-slate-900/60 rounded-2xl border border-slate-800 space-y-3 flex flex-col justify-between shadow-xl">
+                        <div>
+                            <div class="flex items-center gap-2 text-sm font-bold text-white pb-2 border-b border-zinc-800/80">
+                                <i data-lucide="life-buoy" class="w-4 h-4 text-amber-400"></i>
+                                <span>C: SSD가 완전히 고장 났을 때! 원상복구 매뉴얼</span>
+                            </div>
+                            <p class="text-xs text-slate-400 mt-2">
+                                새 SSD를 구입하여 본체에 장착한 뒤 그대로 복원하는 4단계 절차입니다.
+                            </p>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                            <div class="p-3 bg-slate-800/40 rounded-xl border border-slate-700/40 space-y-1">
+                                <div class="flex items-center gap-1.5">
+                                    <div class="w-5 h-5 rounded-md bg-blue-600/30 text-blue-400 flex items-center justify-center text-[10px] font-bold font-mono">1</div>
+                                    <span class="text-xs font-bold text-slate-200">새 SSD 장착</span>
+                                </div>
+                                <p class="text-[11px] text-slate-400 leading-snug pl-6.5">
+                                    새 SSD를 포맷 없이 그대로 본체에 연결합니다.
+                                </p>
+                            </div>
+
+                            <div class="p-3 bg-slate-800/40 rounded-xl border border-slate-700/40 space-y-1">
+                                <div class="flex items-center gap-1.5">
+                                    <div class="w-5 h-5 rounded-md bg-indigo-600/30 text-indigo-400 flex items-center justify-center text-[10px] font-bold font-mono">2</div>
+                                    <span class="text-xs font-bold text-slate-200">복구 USB 부팅</span>
+                                </div>
+                                <p class="text-[11px] text-slate-400 leading-snug pl-6.5">
+                                    비상 복구 USB를 꽂고 PC 전원을 켭니다.
+                                </p>
+                            </div>
+
+                            <div class="p-3 bg-slate-800/40 rounded-xl border border-slate-700/40 space-y-1">
+                                <div class="flex items-center gap-1.5">
+                                    <div class="w-5 h-5 rounded-md bg-purple-600/30 text-purple-400 flex items-center justify-center text-[10px] font-bold font-mono">3</div>
+                                    <span class="text-xs font-bold text-slate-200">이미지 복구 선택</span>
+                                </div>
+                                <p class="text-[11px] text-slate-400 leading-snug pl-6.5">
+                                    [컴퓨터 복구] → [시스템 이미지 복구] 클릭.
+                                </p>
+                            </div>
+
+                            <div class="p-3 bg-slate-800/40 rounded-xl border border-slate-700/40 space-y-1">
+                                <div class="flex items-center gap-1.5">
+                                    <div class="w-5 h-5 rounded-md bg-emerald-600/30 text-emerald-400 flex items-center justify-center text-[10px] font-bold font-mono">4</div>
+                                    <span class="text-xs font-bold text-slate-200">자동 복원 및 부팅</span>
+                                </div>
+                                <p class="text-[11px] text-slate-400 leading-snug pl-6.5">
+                                    이미지 감지 후 [다음] 클릭 시 원상태 복원!
+                                </p>
+                            </div>
+                        </div>
+
+                        <div class="pt-2 border-t border-slate-800/80 text-[10px] text-zinc-500 font-mono flex items-center justify-between">
+                            <span>EFI Bootloader Auto Injection</span>
+                            <span class="text-emerald-400">100% 무결 보존</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <!-- MODAL 1: Snapshot File Explorer -->
+    <div id="explorer-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center">
+                <div>
+                    <h3 id="explorer-modal-title" class="font-bold text-sm text-slate-100 flex items-center gap-2">
+                        <i data-lucide="folder-search" class="w-4 h-4 text-blue-400"></i>
+                        <span>스냅샷 파일 탐색</span>
+                    </h3>
+                    <div id="explorer-modal-meta" class="text-xs text-slate-400 mt-0.5"></div>
+                </div>
+                <button onclick="closeModal('explorer-modal')" class="text-slate-400 hover:text-slate-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <!-- Breadcrumb Navigation & Quick Filter -->
+            <div class="px-4 py-2 bg-slate-950/60 border-b border-slate-800 flex items-center justify-between gap-3 text-xs">
+                <div id="explorer-breadcrumb" class="flex items-center gap-1.5 overflow-x-auto py-0.5 text-slate-400 flex-1 font-mono text-[11px]">
+                    <!-- Dynamic breadcrumb tags -->
+                </div>
+                <div class="relative w-48 shrink-0">
+                    <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2"></i>
+                    <input type="text" id="explorer-search-input" oninput="filterExplorerItems()" placeholder="현재 폴더 내 검색..." class="w-full bg-slate-800 border border-slate-700/80 rounded-lg pl-8 pr-2.5 py-1 text-xs text-slate-200 focus:outline-none focus:border-blue-500">
+                </div>
+            </div>
+
+            <!-- Directory Items List -->
+            <div id="explorer-tree-container" class="p-3 overflow-y-auto flex-1 space-y-1 font-mono text-xs max-h-[55vh]">
+                <!-- Direct items -->
+            </div>
+
+            <div class="p-3 bg-slate-950 border-t border-slate-800 flex justify-between items-center text-xs">
+                <div id="explorer-item-count" class="text-slate-400 text-[11px]"></div>
+                <button onclick="closeModal('explorer-modal')" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold">
+                    닫기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 1.5: First-Run Onboarding Wizard Modal -->
+    <div id="onboarding-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-blue-500/40 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
+            <div class="p-5 bg-gradient-to-r from-blue-950/80 to-slate-900 border-b border-slate-800 flex justify-between items-center">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-blue-600/30 border border-blue-500/50 flex items-center justify-center text-blue-400 font-bold">
+                        <i data-lucide="sparkles" class="w-4 h-4 text-blue-400"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm text-slate-100">첫 실행 스마트 백업 마법사</h3>
+                        <p class="text-[11px] text-blue-300/80">3단계로 주요 데이터를 안전하게 보호하세요</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('onboarding-modal')" class="text-slate-400 hover:text-slate-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-5 space-y-4 text-xs">
+                <!-- Step 1: Backup Sources -->
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-1.5 flex items-center gap-1.5">
+                        <span class="w-4 h-4 rounded-full bg-blue-600 text-[10px] text-white flex items-center justify-center font-bold">1</span>
+                        <span>백업 대상 폴더 (추천 자동 선택)</span>
+                    </label>
+                    <div class="space-y-1.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+                        <label class="flex items-center gap-2 cursor-pointer hover:text-blue-300 text-slate-300">
+                            <input type="checkbox" id="onboard-src-desktop" checked class="rounded border-slate-700 text-blue-600 focus:ring-0">
+                            <i data-lucide="monitor" class="w-3.5 h-3.5 text-blue-400"></i>
+                            <span>바탕화면 (Desktop) 폴더</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer hover:text-blue-300 text-slate-300">
+                            <input type="checkbox" id="onboard-src-documents" checked class="rounded border-slate-700 text-blue-600 focus:ring-0">
+                            <i data-lucide="file-text" class="w-3.5 h-3.5 text-blue-400"></i>
+                            <span>내 문서 (Documents) 폴더</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Step 2: Storage Location -->
+                <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                        <label class="text-slate-300 font-semibold flex items-center gap-1.5">
+                            <span class="w-4 h-4 rounded-full bg-blue-600 text-[10px] text-white flex items-center justify-center font-bold">2</span>
+                            <span>백업 저장소 위치</span>
+                        </label>
+                        <span id="onboard-drive-badge" class="text-[10px] text-blue-400 bg-blue-950/70 border border-blue-800/60 px-2 py-0.5 rounded-full font-mono">드라이브 탐색 중...</span>
+                    </div>
+                    <input type="text" id="onboard-repo-dir" placeholder="자동 추천 드라이브 검색 중..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 text-xs font-mono focus:border-blue-500 focus:outline-none">
+                    <div id="onboard-drive-chips" class="flex flex-wrap gap-1.5 mt-2"></div>
+                    <p class="text-[10px] text-slate-400 mt-1">시스템에서 여유 공간이 충분한 최적의 드라이브를 자동으로 추천합니다.</p>
+                </div>
+
+                <!-- Step 3: Schedule -->
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-1.5 flex items-center gap-1.5">
+                        <span class="w-4 h-4 rounded-full bg-blue-600 text-[10px] text-white flex items-center justify-center font-bold">3</span>
+                        <span>자동 백업 일정</span>
+                    </label>
+                    <select id="onboard-schedule-time" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 text-xs focus:border-blue-500 focus:outline-none">
+                        <option value="09:00" selected>매일 오전 09:00 자동 백업 (권장)</option>
+                        <option value="18:00">매일 오후 18:00 (퇴근 전 자동 백업)</option>
+                        <option value="manual">수동 백업 (사용자가 직접 시작할 때만)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="p-4 bg-slate-950/80 border-t border-slate-800 flex justify-end gap-2 text-xs">
+                <button type="button" onclick="closeModal('onboarding-modal')" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-medium">
+                    나중에 설정
+                </button>
+                <button type="button" onclick="completeOnboardingWizard()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-lg shadow-blue-900/30">
+                    <i data-lucide="check-circle" class="w-3.5 h-3.5"></i>
+                    <span>스마트 설정 완료</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 2: Restore Modal -->
+    <div id="restore-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center">
+                <h3 id="restore-modal-title" class="font-bold text-sm text-slate-100 flex items-center gap-2">
+                    <i data-lucide="archive-restore" class="w-4 h-4 text-blue-400"></i>
+                    <span>스냅샷 복원</span>
+                </h3>
+                <button onclick="closeModal('restore-modal')" class="text-slate-400 hover:text-slate-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-5 space-y-4 text-xs">
+                <input type="hidden" id="restore-snapshot-id">
+                <input type="hidden" id="restore-selected-paths">
+
+                <!-- Selective Restore Badge (Optional) -->
+                <div id="restore-selective-badge" class="hidden p-2.5 bg-blue-950/60 border border-blue-800/50 rounded-xl text-blue-300 text-xs flex items-center justify-between">
+                    <div class="flex items-center gap-2 truncate">
+                        <i data-lucide="filter" class="w-3.5 h-3.5 text-blue-400 shrink-0"></i>
+                        <span id="restore-selective-text" class="truncate">선택된 특정 항목만 복원합니다.</span>
+                    </div>
+                    <button type="button" onclick="clearSelectiveRestore()" class="text-[10px] px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded shrink-0">
+                        전체 복원으로 전환
+                    </button>
+                </div>
+
+                <!-- Restoration Destination Mode -->
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-2">복원 방식 선택</label>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <!-- Option 1: In-Place -->
+                        <label class="flex items-start gap-3 p-3 bg-slate-800/60 border border-slate-700/80 rounded-xl cursor-pointer hover:border-amber-500/60 transition group has-[:checked]:border-amber-500 has-[:checked]:bg-amber-950/20">
+                            <input type="radio" name="restore-mode" id="restore-mode-inplace" value="inplace" onchange="toggleRestoreMode()" class="mt-0.5 text-amber-500 focus:ring-0">
+                            <div>
+                                <div class="font-bold text-slate-200 group-hover:text-amber-300 flex items-center gap-1.5">
+                                    <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 text-amber-400"></i> 원래 위치에 즉시 복원
+                                </div>
+                                <div class="text-[11px] text-slate-400 mt-0.5">백업 당시의 원래 드라이브/폴더로 원상 롤백합니다.</div>
+                            </div>
+                        </label>
+
+                        <!-- Option 2: Safe Folder -->
+                        <label class="flex items-start gap-3 p-3 bg-slate-800/60 border border-slate-700/80 rounded-xl cursor-pointer hover:border-blue-500/60 transition group has-[:checked]:border-blue-500 has-[:checked]:bg-blue-950/20">
+                            <input type="radio" name="restore-mode" id="restore-mode-safe" value="safe" checked onchange="toggleRestoreMode()" class="mt-0.5 text-blue-500 focus:ring-0">
+                            <div>
+                                <div class="font-bold text-slate-200 group-hover:text-blue-300 flex items-center gap-1.5">
+                                    <i data-lucide="folder-check" class="w-3.5 h-3.5 text-blue-400"></i> 새 폴더에 안전 복원
+                                </div>
+                                <div class="text-[11px] text-slate-400 mt-0.5">현재 파일에 영향 없이 지정한 폴더로 안전하게 풉니다.</div>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Warning Banner for In-Place Mode -->
+                <div id="restore-inplace-warning" class="hidden p-3 bg-amber-950/40 border border-amber-800/60 rounded-xl text-amber-300 space-y-1.5">
+                    <div class="font-semibold flex items-center gap-1.5 text-xs">
+                        <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-400 shrink-0"></i>
+                        <span>주의: 현재 폴더의 파일들이 과거 스냅샷 시점 상태로 덮어써집니다.</span>
+                    </div>
+                    <div class="text-[11px] text-slate-400">백업 당시 원본 위치 목록:</div>
+                    <div id="restore-original-sources-list" class="text-[11px] text-amber-200/90 font-mono bg-slate-950/80 p-2 rounded-lg break-all max-h-24 overflow-y-auto space-y-0.5">
+                    </div>
+                </div>
+
+                <!-- Safe Mode Target Directory Input -->
+                <div id="restore-target-dir-container">
+                    <label class="block text-slate-300 font-semibold mb-1">복원 대상 디렉토리 경로</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="restore-target-dir" placeholder="예: C:\Restored_Files" class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                        <button type="button" onclick="openDirectoryPicker('restore-target-dir')" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl font-medium shrink-0">
+                            폴더 선택
+                        </button>
+                    </div>
+                    <p class="text-[11px] text-slate-400 mt-1">스냅샷 파일들이 지정한 폴더 안으로 원래 구조 그대로 복원됩니다.</p>
+                </div>
+
+                <div class="flex items-center gap-2 pt-1">
+                    <input type="checkbox" id="restore-overwrite" checked class="rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-0 w-4 h-4">
+                    <label for="restore-overwrite" class="text-slate-300 cursor-pointer">동일한 파일이 존재할 경우 덮어쓰기</label>
+                </div>
+            </div>
+            <div class="p-4 bg-slate-950 border-t border-slate-800 flex justify-end gap-2">
+                <button type="button" onclick="closeModal('restore-modal')" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold">취소</button>
+                <button type="button" id="btn-start-restore" onclick="startRestore()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-600/30 flex items-center gap-1.5">
+                    <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+                    <span>복원 시작</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 3: Profile Create / Edit Modal -->
+    <div id="profile-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center">
+                <h3 id="profile-modal-title" class="font-bold text-sm text-slate-100">백업 프로필 설정</h3>
+                <button onclick="closeModal('profile-modal')" class="text-slate-400 hover:text-slate-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-5 space-y-4 text-xs max-h-[70vh] overflow-y-auto">
+                <input type="hidden" id="prof-id">
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-1">프로필 이름</label>
+                    <input type="text" id="prof-name" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500">
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-slate-300 font-semibold">백업 대상 경로 목록 (한 줄에 하나씩)</label>
+                        <div class="flex items-center gap-2">
+                            <button type="button" onclick="validateModalSources()" class="text-emerald-400 hover:text-emerald-300 text-[11px] font-medium flex items-center gap-1">
+                                <i data-lucide="check-check" class="w-3 h-3"></i> 경로 검증
+                            </button>
+                            <button type="button" onclick="openDirectoryPicker('prof-sources')" class="text-blue-400 hover:text-blue-300 text-[11px] font-medium">+ 폴더 추가</button>
+                        </div>
+                    </div>
+                    <textarea id="prof-sources" rows="3" oninput="debounceValidateModalSources()" placeholder="예: C:\Users\Documents&#10;D:\Projects" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-blue-500"></textarea>
+                    <div id="prof-sources-validation-feedback" class="mt-1 space-y-1 text-[11px]"></div>
+                </div>
+                <div>
+                    <label class="block text-slate-300 font-semibold mb-1">백업 저장소(Repository) 경로</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="prof-repo" oninput="debounceValidateModalRepo()" placeholder="예: D:\Backup_Repo" class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono focus:outline-none focus:border-blue-500">
+                        <button type="button" onclick="openDirectoryPicker('prof-repo')" class="px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl font-medium shrink-0">선택</button>
+                    </div>
+                    <div id="prof-repo-validation-feedback" class="mt-1 text-[11px] text-zinc-400"></div>
+                </div>
+                <div>
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-slate-300 font-semibold">제외 패턴 (쉼표 구분)</label>
+                        <button type="button" onclick="applySmartExcludePreset()" class="text-xs text-blue-400 hover:text-blue-300 underline font-mono flex items-center gap-1">
+                            <i data-lucide="sparkles" class="w-3 h-3"></i>스마트 제외 프리셋 적용
+                        </button>
+                    </div>
+                    <input type="text" id="prof-excludes" placeholder="*.tmp, *.log, .git, node_modules, pagefile.sys, hiberfil.sys" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 font-mono text-xs focus:outline-none focus:border-blue-500">
+                    <p class="text-[10px] text-zinc-500 mt-1">Acronis/Macrium 방식: 시스템 가상메모리(pagefile, hiberfil, swapfile), 휴지통, 임시파일 등 자동 제외</p>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">스케줄링 방식</label>
+                        <select id="prof-schedule-type" onchange="onScheduleTypeChange()" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 cursor-pointer">
+                            <option value="interval_hours">⏱️ N시간 간격 반복 (Interval)</option>
+                            <option value="daily">📅 매일 지정 시각 (Daily)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label id="prof-schedule-label" class="block text-slate-300 font-semibold mb-1">반복 간격 (시간)</label>
+                        <input type="number" id="prof-interval" min="1" max="168" value="24" placeholder="예: 24" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500">
+                        <input type="time" id="prof-daily-time" value="03:00" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500 hidden">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">최대 보관 스냅샷 수</label>
+                        <input type="number" id="prof-retention" min="1" max="1000" value="30" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500">
+                    </div>
+                    <div>
+                        <label class="block text-slate-300 font-semibold mb-1">압축 레벨 (1~9)</label>
+                        <input type="number" id="prof-compression" min="1" max="9" value="6" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-blue-500">
+                    </div>
+                </div>
+                <div class="flex items-center gap-2 pt-1">
+                    <input type="checkbox" id="prof-auto-enable" class="rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-0 w-4 h-4">
+                    <label for="prof-auto-enable" class="text-slate-300 cursor-pointer font-medium">백그라운드 자동 스케줄링 백업 활성화</label>
+                </div>
+            </div>
+            <div class="p-4 bg-slate-950 border-t border-slate-800 flex justify-end gap-2">
+                <button onclick="closeModal('profile-modal')" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold">취소</button>
+                <button onclick="saveProfileFromModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-600/30">저장</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL 4: Directory Browser Picker -->
+    <div id="browse-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center">
+                <div class="truncate mr-4">
+                    <h3 class="font-bold text-sm text-slate-100">디렉토리 선택</h3>
+                    <div id="browse-current-path" class="text-[11px] text-blue-400 font-mono truncate mt-0.5"></div>
+                </div>
+                <button onclick="closeModal('browse-modal')" class="text-slate-400 hover:text-slate-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div id="browse-items-list" class="p-3 overflow-y-auto flex-1 space-y-1">
+                <!-- Folder items -->
+            </div>
+            <div class="p-3 bg-slate-950 border-t border-slate-800 flex justify-between items-center">
+                <button onclick="selectCurrentBrowsePath()" class="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold">
+                    현재 폴더 선택
+                </button>
+                <button onclick="closeModal('browse-modal')" class="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold">
+                    닫기
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================
+         Auth Modals (Tailwind Dark Theme)
+         ============================================================ -->
+
+    <!-- 공통 모달 컨테이너 -->
+    <div id="auth-modal-overlay" class="hidden fixed inset-0 bg-black/75 backdrop-blur-md z-50 flex items-center justify-center p-4">
+        <!-- (a) 최초 마스터 암호 설정 모달 -->
+        <div id="modal-auth-setup" class="hidden w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div class="px-6 py-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950/50">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/20">
+                    <i data-lucide="shield-alert" class="w-5 h-5 text-white"></i>
+                </div>
+                <div>
+                    <h3 class="text-sm font-bold text-white">마스터 비밀번호 설정</h3>
+                    <p class="text-[11px] text-slate-400">대시보드와 백업 엔진을 안전하게 보호합니다</p>
+                </div>
+            </div>
+            <form id="form-auth-setup" onsubmit="submitAuthSetup(event)" class="px-6 py-5 space-y-4">
+                <div>
+                    <label for="setup-password" class="block text-xs font-semibold text-slate-300 mb-1.5">새 마스터 비밀번호</label>
+                    <input type="password" id="setup-password" required minlength="8" class="w-full px-3.5 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" placeholder="최소 8자리 이상 입력" autocomplete="new-password">
+                </div>
+                <div>
+                    <label for="setup-password-confirm" class="block text-xs font-semibold text-slate-300 mb-1.5">비밀번호 확인</label>
+                    <input type="password" id="setup-password-confirm" required minlength="8" class="w-full px-3.5 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" placeholder="비밀번호 다시 입력" autocomplete="new-password">
+                </div>
+                <div id="setup-error" class="hidden text-xs text-red-400 bg-red-950/50 border border-red-800/60 rounded-xl px-3.5 py-2.5 flex items-center gap-2"></div>
+                <label class="flex items-start gap-2.5 cursor-pointer select-none p-2.5 rounded-xl bg-slate-800/40 border border-slate-700/50 hover:bg-slate-800/70 transition">
+                    <input type="checkbox" id="setup-remember" checked class="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500">
+                    <span class="text-xs text-slate-300 leading-relaxed">
+                        로컬 PC(127.0.0.1)에서는 자동 로그인 유지
+                        <span class="block text-[10px] text-slate-500 mt-0.5">내 PC에서는 암호 입력 없이 즉시 대시보드 사용 가능</span>
+                    </span>
+                </label>
+                <button type="submit" class="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2">
+                    <i data-lucide="check" class="w-4 h-4"></i> 마스터 비밀번호 설정 완료
+                </button>
+            </form>
+        </div>
+
+        <!-- (b) 로그인 모달 -->
+        <div id="modal-auth-login" class="hidden w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div class="px-6 py-4 border-b border-slate-800 flex items-center gap-3 bg-slate-950/50">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+                    <i data-lucide="lock" class="w-5 h-5 text-white"></i>
+                </div>
+                <div>
+                    <h3 class="text-sm font-bold text-white">마스터 인증</h3>
+                    <p class="text-[11px] text-slate-400">대시보드 접근을 위해 비밀번호를 입력하세요</p>
+                </div>
+            </div>
+            <form id="form-auth-login" onsubmit="submitAuthLogin(event)" class="px-6 py-5 space-y-4">
+                <div>
+                    <label for="login-password" class="block text-xs font-semibold text-slate-300 mb-1.5">마스터 비밀번호</label>
+                    <input type="password" id="login-password" required class="w-full px-3.5 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" placeholder="비밀번호 입력" autocomplete="current-password">
+                </div>
+                <div id="login-error" class="hidden text-xs text-red-400 bg-red-950/50 border border-red-800/60 rounded-xl px-3.5 py-2.5 flex items-center gap-2"></div>
+                <button type="submit" class="w-full py-2.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2">
+                    <i data-lucide="log-in" class="w-4 h-4"></i> 대시보드 로그인
+                </button>
+            </form>
+        </div>
+
+        <!-- (c) 비밀번호 변경 모달 -->
+        <div id="modal-auth-change" class="hidden w-full max-w-md bg-slate-900 border border-slate-700/80 rounded-2xl shadow-2xl shadow-black/80 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/50">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-amber-500 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/20">
+                        <i data-lucide="key-round" class="w-5 h-5 text-white"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-white">비밀번호 변경</h3>
+                        <p class="text-[11px] text-slate-400">마스터 비밀번호를 재설정합니다</p>
+                    </div>
+                </div>
+                <button onclick="closeAuthModal()" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form id="form-auth-change" onsubmit="submitAuthChangePassword(event)" class="px-6 py-5 space-y-4">
+                <div>
+                    <label for="change-current" class="block text-xs font-semibold text-slate-300 mb-1.5">현재 비밀번호</label>
+                    <input type="password" id="change-current" required class="w-full px-3.5 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" placeholder="현재 비밀번호" autocomplete="current-password">
+                </div>
+                <div>
+                    <label for="change-new" class="block text-xs font-semibold text-slate-300 mb-1.5">새 비밀번호</label>
+                    <input type="password" id="change-new" required minlength="8" class="w-full px-3.5 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" placeholder="최소 8자리 이상" autocomplete="new-password">
+                </div>
+                <div>
+                    <label for="change-new-confirm" class="block text-xs font-semibold text-slate-300 mb-1.5">새 비밀번호 확인</label>
+                    <input type="password" id="change-new-confirm" required minlength="8" class="w-full px-3.5 py-2.5 bg-slate-800/90 border border-slate-700 rounded-xl text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" placeholder="새 비밀번호 다시 입력" autocomplete="new-password">
+                </div>
+                <div id="change-error" class="hidden text-xs text-red-400 bg-red-950/50 border border-red-800/60 rounded-xl px-3.5 py-2.5 flex items-center gap-2"></div>
+                <div class="flex items-center gap-2.5 pt-2">
+                    <button type="button" onclick="closeAuthModal()" class="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition">
+                        취소
+                    </button>
+                    <button type="submit" class="flex-1 py-2.5 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-amber-600/30 flex items-center justify-center gap-1.5">
+                        <i data-lucide="check" class="w-4 h-4"></i> 변경 저장
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 🧪 1초 복구 모의훈련 (DR Drill) 인증서 모달 -->
+    <div id="modal-dr-drill" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm items-center justify-center p-4">
+        <div class="w-full max-w-lg bg-slate-900 border border-emerald-500/50 rounded-2xl shadow-2xl shadow-emerald-950/50 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div class="px-6 py-4 bg-gradient-to-r from-emerald-950/80 to-slate-900 border-b border-emerald-500/30 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="p-2 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40">
+                        <i data-lucide="shield-check" class="w-5 h-5"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                            <span>1초 복구 모의훈련 (DR Drill)</span>
+                            <span class="px-2 py-0.5 rounded-full text-[10px] bg-emerald-500/20 text-emerald-300 font-mono font-semibold border border-emerald-500/30">100% 무결성 검증</span>
+                        </h3>
+                        <p class="text-[11px] text-slate-400">가상 격리 환경에서 즉각 복구 가능성을 실측 검증했습니다</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('modal-dr-drill')" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4">
+                <div class="p-4 bg-slate-950/70 rounded-xl border border-slate-800 space-y-2 text-xs">
+                    <div class="flex justify-between items-center text-slate-300">
+                        <span class="text-slate-400">인증서 식별자:</span>
+                        <span id="drill-cert-id" class="font-mono font-bold text-emerald-400 text-[11px]">-</span>
+                    </div>
+                    <div class="flex justify-between items-center text-slate-300">
+                        <span class="text-slate-400">대상 스냅샷:</span>
+                        <span id="drill-snap-id" class="font-mono text-slate-200 text-[11px]">-</span>
+                    </div>
+                    <div class="flex justify-between items-center text-slate-300">
+                        <span class="text-slate-400">검증 소요 시간:</span>
+                        <span id="drill-duration" class="font-mono text-cyan-400 font-semibold">-</span>
+                    </div>
+                    <div class="flex justify-between items-center text-slate-300">
+                        <span class="text-slate-400">판정 결과:</span>
+                        <span id="drill-status-badge" class="font-bold text-emerald-400">100% 정상 복구 보증</span>
+                    </div>
+                </div>
+
+                <div>
+                    <h4 class="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-1.5">
+                        <i data-lucide="file-check" class="w-3.5 h-3.5 text-emerald-400"></i> 실측 샘플 복원 검증 내역
+                    </h4>
+                    <div id="drill-files-list" class="space-y-1.5 max-h-48 overflow-y-auto text-[11px] font-mono"></div>
+                </div>
+
+                <div class="pt-2">
+                    <button onclick="closeModal('modal-dr-drill')" class="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition shadow-lg shadow-emerald-900/30">
+                        확인 완료
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Rescue USB Maker Wizard -->
+    <div id="rescue-usb-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/80">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400">
+                        <i data-lucide="disc" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm text-slate-100 flex items-center gap-2">
+                            <span>긴급 재해 복구(Rescue DR) UEFI 부팅 USB 제작기</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-900/60 text-blue-300 font-bold border border-blue-800/60">0초 자동실행 탑재</span>
+                        </h3>
+                        <p class="text-xs text-slate-400 mt-0.5">연결된 이동식 USB에 순정 WinPE + 자동 복구 콘솔을 설치합니다.</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('rescue-usb-modal')" class="text-slate-400 hover:text-slate-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="p-5 overflow-y-auto space-y-4 text-xs">
+                <!-- 1. USB 대상 선택 -->
+                <div class="space-y-1.5">
+                    <div class="flex items-center justify-between text-slate-300 font-semibold">
+                        <label class="flex items-center gap-1.5">
+                            <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-blue-400"></i>
+                            <span>대상 USB 드라이브 선택</span>
+                        </label>
+                        <div class="flex items-center gap-2">
+                            <span id="rescue-usb-scan-badge" class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">스캔 대기</span>
+                            <button onclick="loadRescueUsbTargets()" class="text-blue-400 hover:text-blue-300 text-[11px] font-mono flex items-center gap-1">
+                                <i data-lucide="refresh-cw" class="w-3 h-3"></i> 새로고침
+                            </button>
+                        </div>
+                    </div>
+                    <select id="rescue-usb-select" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500 font-mono">
+                        <option value="">USB를 검색 중입니다...</option>
+                    </select>
+                </div>
+
+                <!-- 2. 선택된 대상 상세 정보 -->
+                <div id="rescue-usb-target-info">
+                    <!-- JS에 의해 동적 렌더링 -->
+                </div>
+
+                <!-- 3. 실시간 제작 진행률 & 콘솔 로그 -->
+                <div id="rescue-usb-progress-container" class="space-y-2 hidden">
+                    <div class="flex items-center justify-between text-xs">
+                        <span id="rescue-usb-phase-text" class="text-slate-300 font-semibold flex items-center gap-1.5 font-mono">
+                            <i data-lucide="loader-2" class="w-3.5 h-3.5 text-blue-400 animate-spin"></i>
+                            <span>제작 진행 중...</span>
+                        </span>
+                        <span id="rescue-usb-progress-pct" class="font-mono text-blue-400 font-bold">0%</span>
+                    </div>
+                    <div class="w-full h-2.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                        <div id="rescue-usb-progress-bar" class="h-full bg-gradient-to-r from-blue-600 via-indigo-500 to-emerald-500 transition-all duration-300 w-0"></div>
+                    </div>
+                    <div class="space-y-1">
+                        <span class="text-[11px] text-slate-400 font-mono flex items-center gap-1">
+                            <i data-lucide="terminal" class="w-3 h-3 text-slate-500"></i> 실시간 빌드/주입 로그:
+                        </span>
+                        <div id="rescue-usb-console" class="bg-slate-950 rounded-xl p-3 font-mono text-[11px] text-slate-300 h-36 overflow-y-auto border border-slate-800/80 space-y-1 select-text"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-4 bg-slate-950 border-t border-slate-800 flex justify-between items-center">
+                <button type="button" onclick="openRescueGuideModal()" class="px-3 py-2 text-xs text-slate-400 hover:text-white flex items-center gap-1.5 transition">
+                    <i data-lucide="book-open" class="w-3.5 h-3.5 text-amber-400"></i>
+                    <span>부팅 및 복구 사용법 보기</span>
+                </button>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="closeModal('rescue-usb-modal')" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition">닫기</button>
+                    <button type="button" id="btn-start-make-usb" onclick="startRescueUsbCreation()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-600/30 flex items-center gap-1.5 transition">
+                        <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+                        <span>긴급 복구 USB 제작 시작</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Rescue USB Usage Guide -->
+    <div id="rescue-guide-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+            <div class="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-950/80">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400">
+                        <i data-lucide="life-buoy" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm text-slate-100 flex items-center gap-2">
+                            <span>긴급 재해 복구 부팅 USB 사용 안내서</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950 text-emerald-300 font-bold border border-emerald-800/60">0초 자동실행</span>
+                        </h3>
+                        <p class="text-xs text-slate-400 mt-0.5">PC 전원이 켜지지 않거나 부팅 불가/새 SSD 교체 시 복구 방법</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('rescue-guide-modal')" class="text-slate-400 hover:text-slate-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="p-5 overflow-y-auto space-y-4 text-xs">
+                <!-- 핵심 특징 스트립 -->
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono text-center">
+                    <div class="p-2 rounded-lg bg-zinc-950/70 border border-zinc-800 text-emerald-400 font-bold">0초 자동 실행</div>
+                    <div class="p-2 rounded-lg bg-zinc-950/70 border border-zinc-800 text-blue-400 font-bold">Shift+F10 불필요</div>
+                    <div class="p-2 rounded-lg bg-zinc-950/70 border border-zinc-800 text-indigo-400 font-bold">UEFI 보안부팅 지원</div>
+                    <div class="p-2 rounded-lg bg-zinc-950/70 border border-zinc-800 text-cyan-400 font-bold">백업본 자동 탐색</div>
+                </div>
+
+                <!-- 4단계 복구 절차 -->
+                <div class="space-y-2">
+                    <h4 class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                        <i data-lucide="check-circle" class="w-3.5 h-3.5 text-blue-400"></i>
+                        <span>실전 긴급 복구 4단계 절차</span>
+                    </h4>
+                    <div id="rescue-guide-steps" class="space-y-2">
+                        <!-- JS로 동적 렌더링 -->
+                    </div>
+                </div>
+
+                <!-- 제조사별 부팅 단축키 -->
+                <div class="space-y-2 pt-2 border-t border-zinc-800">
+                    <h4 class="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                        <i data-lucide="keyboard" class="w-3.5 h-3.5 text-amber-400"></i>
+                        <span>주요 PC / 메인보드 부팅 단축키 (전원 켜자마자 연타)</span>
+                    </h4>
+                    <div id="rescue-guide-boot-keys" class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <!-- JS로 동적 렌더링 -->
+                    </div>
+                </div>
+
+                <!-- 윈도우 부팅 상태 활용 팁 -->
+                <div class="p-3 bg-zinc-950 rounded-xl border border-zinc-800 text-[11px] text-zinc-400 leading-relaxed space-y-1">
+                    <div class="font-bold text-slate-200 flex items-center gap-1">
+                        <i data-lucide="info" class="w-3.5 h-3.5 text-blue-400"></i>
+                        <span>윈도우가 정상 작동하는 상태에서도 즉시 사용 가능:</span>
+                    </div>
+                    <div>USB를 PC에 꽂고 <b>1_긴급복구콘솔_실행.bat</b> 또는 <b>2_백업이미지탐색기.bat</b>을 더블클릭하면, 
+                    내장된 무설치 Python을 통해 언제든 즉시 시스템 백업을 점검하거나 복원할 수 있습니다.</div>
+                </div>
+            </div>
+
+            <div class="p-4 bg-slate-950 border-t border-slate-800 flex justify-end">
+                <button type="button" onclick="closeModal('rescue-guide-modal')" class="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-blue-600/30">
+                    확인 완료
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Migration Danger Confirmation -->
+    <div id="migration-confirm-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-zinc-900 border border-amber-500/50 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-fade-in">
+            <div class="p-5 bg-gradient-to-r from-amber-950/80 via-zinc-900 to-zinc-900 border-b border-zinc-800 flex justify-between items-center">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 font-bold">
+                        <i data-lucide="alert-triangle" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm text-zinc-100">라이브 SSD 마이그레이션 실행 확인</h3>
+                        <p class="text-[11px] text-amber-300/80">대상 드라이브 데이터가 덮어씌워집니다</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('migration-confirm-modal')" class="text-zinc-400 hover:text-zinc-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="p-5 space-y-4 text-xs text-zinc-300 leading-relaxed">
+                <div class="p-3 bg-amber-950/30 border border-amber-800/40 rounded-xl space-y-2">
+                    <div class="font-semibold text-amber-300 flex items-center gap-1.5">
+                        <i data-lucide="shield-alert" class="w-4 h-4"></i>
+                        <span>주의: 대상 드라이브 (<span id="modal-migration-target-text" class="font-mono font-bold text-white"></span>) 데이터 덮어쓰기</span>
+                    </div>
+                    <p class="text-[11px] text-zinc-400">
+                        선택하신 대상 드라이브에 저장된 기존 데이터는 복제 과정에서 원본 C: 드라이브 내용과 동일하게 미러링 동기화됩니다. 
+                        반드시 대상 드라이브가 올바른 새 SSD인지 다시 한번 확인해 주세요.
+                    </p>
+                </div>
+
+                <div class="space-y-2 text-[11px] text-zinc-400 font-mono bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                    <div>✓ 원본 볼륨: C:\ (현재 가동 중인 Windows OS)</div>
+                    <div>✓ 실시간 정합성: VSS(볼륨 섀도 복사본) 무중단 스냅샷 적용</div>
+                    <div>✓ 부트로더: bcdboot 자동 주입으로 즉시 단독 부팅 가능</div>
+                </div>
+
+                <!-- 100% 부팅 보장 옵션 -->
+                <div class="p-3 bg-purple-950/40 border border-purple-800/50 rounded-xl space-y-1.5">
+                    <label class="flex items-start gap-2.5 cursor-pointer select-none">
+                        <input type="checkbox" id="chk-migration-auto-esp" checked class="mt-0.5 rounded border-purple-700 text-purple-600 focus:ring-0">
+                        <div>
+                            <span class="text-xs font-bold text-purple-300 flex items-center gap-1.5">
+                                <i data-lucide="sparkles" class="w-3.5 h-3.5 text-purple-400"></i>
+                                <span>100% 부팅 보장: 새 SSD를 UEFI 표준(GPT + 260MB FAT32 ESP)으로 자동 파티셔닝</span>
+                            </span>
+                            <p class="text-[11px] text-zinc-400 mt-0.5">
+                                새 SSD 전체를 최신 메인보드 표준 규격으로 자동 분할하고 BCD를 독립 주입하여 100% 단독 부팅을 보장합니다. (체크 해제 시 기존 파티션 유지 모드)
+                            </p>
+                        </div>
+                    </label>
+                </div>
+
+                <label class="flex items-start gap-2.5 p-3 rounded-xl bg-zinc-950/80 border border-zinc-800 cursor-pointer select-none">
+                    <input type="checkbox" id="chk-migration-danger-confirm" onchange="onMigrationDangerCheckChange()" class="mt-0.5 rounded border-zinc-700 text-indigo-600 focus:ring-0">
+                    <span class="text-xs text-zinc-300">
+                        대상 드라이브를 정확히 확인하였으며, Windows C: 드라이브를 라이브 복제하여 부팅 가능한 SSD로 생성하는 것에 동의합니다.
+                    </span>
+                </label>
+            </div>
+
+            <div class="p-4 bg-zinc-950 border-t border-zinc-800 flex justify-end gap-2">
+                <button onclick="closeModal('migration-confirm-modal')" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition">
+                    취소
+                </button>
+                <button id="btn-run-migration-final" onclick="confirmAndRunMigration()" disabled class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-indigo-600/30">
+                    확인 및 마이그레이션 시작
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL: Archive Restore Confirmation -->
+    <div id="archive-restore-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-zinc-900 border border-purple-500/50 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-fade-in">
+            <div class="p-5 bg-gradient-to-r from-purple-950/80 via-zinc-900 to-zinc-900 border-b border-zinc-800 flex justify-between items-center">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-purple-500/20 border border-purple-500/40 flex items-center justify-center text-purple-400 font-bold">
+                        <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-sm text-zinc-100">통백업 아카이브 복원 확인 (VHDX / WIM)</h3>
+                        <p class="text-[11px] text-purple-300/80">선택한 대상 드라이브로 VHDX/WIM 이미지를 안전하게 복원 및 전개합니다</p>
+                    </div>
+                </div>
+                <button onclick="closeModal('archive-restore-modal')" class="text-zinc-400 hover:text-zinc-200">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="p-5 space-y-4 text-xs text-zinc-300 leading-relaxed">
+                <div class="p-3 bg-purple-950/30 border border-purple-800/40 rounded-xl space-y-2">
+                    <div class="font-semibold text-purple-300 flex items-center gap-1.5">
+                        <i data-lucide="archive" class="w-4 h-4"></i>
+                        <span>복원 원본 아카이브:</span>
+                    </div>
+                    <div id="modal-archive-restore-wim" class="font-mono text-[11px] text-zinc-200 break-all bg-zinc-950/80 p-2 rounded-lg border border-zinc-800"></div>
+                </div>
+
+                <div class="space-y-1.5">
+                    <label class="font-semibold text-zinc-200 flex items-center gap-1.5">
+                        <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-blue-400"></i>
+                        <span>복원할 대상 SSD / 드라이브 선택:</span>
+                    </label>
+                    <select id="archive-restore-target-select" class="w-full bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs rounded-xl px-3 py-2 font-mono focus:outline-none focus:border-purple-500">
+                        <option value="">드라이브 선택...</option>
+                    </select>
+                </div>
+
+                <div class="space-y-1.5 text-[11px] text-zinc-400 font-mono bg-zinc-950 p-3 rounded-xl border border-zinc-800">
+                    <div>✓ 복원 기술: VHDX 오프라인 마운트 & 초고속 LBA 블록 스트리밍 복제 (잠긴 파일 충돌 0%)</div>
+                    <div>✓ 라이선스 보존: 원본 VSN(Volume Serial Number) 자동 복원</div>
+                    <div>✓ 부트로더 주입: bcdboot UEFI 부트 매니저 자동 복구</div>
+                </div>
+
+                <label class="flex items-start gap-2.5 p-3 rounded-xl bg-zinc-950/80 border border-zinc-800 cursor-pointer select-none">
+                    <input type="checkbox" id="chk-archive-restore-danger" onchange="onArchiveRestoreDangerCheckChange()" class="mt-0.5 rounded border-zinc-700 text-purple-600 focus:ring-0">
+                    <span class="text-xs text-zinc-300">
+                        대상 드라이브의 기존 내용이 덮어씌워짐을 확인하였으며, 통백업 아카이브 복원을 진행합니다.
+                    </span>
+                </label>
+            </div>
+
+            <div class="p-4 bg-zinc-950 border-t border-zinc-800 flex justify-end gap-2">
+                <button onclick="closeModal('archive-restore-modal')" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition">
+                    취소
+                </button>
+                <button id="btn-run-archive-restore-final" onclick="confirmAndRunArchiveRestore()" disabled class="px-5 py-2 bg-purple-600 hover:bg-purple-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-purple-600/30">
+                    확인 및 복원 시작
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 모듈화된 백업 서브시스템 스크립트 로드 -->
+    <script src="/static/js/backup_utils.js?v={{ v_ts }}"></script>
+    <script src="/static/js/backup_auth.js?v={{ v_ts }}"></script>
+    <script src="/static/js/backup_snapshots.js?v={{ v_ts }}"></script>
+    <script src="/static/js/backup_custom.js?v={{ v_ts }}"></script>
+    <script src="/static/js/backup_sysimage.js?v={{ v_ts }}"></script>
+    <script src="/static/js/backup_migration.js?v={{ v_ts }}"></script>
+    <script src="/static/js/rescue_usb.js?v={{ v_ts }}"></script>
+    <script src="/static/app.js?v={{ v_ts }}"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "error_class": "file_not_found",
+  "error_detail": "Failed files: [{'rel_path': 'obj_doc1.txt', 'error': 'Blob not found in repository: 33046bbb4e1511a044d02f6374370e3f85109f0cc67486e06af73cbe05573c62'}]",
+  "missing_blob": "33046bbb4e1511a044d02f6374370e3f85109f0cc67486e06af73cbe05573c62.blob",
+  "traits": [
+    "missing_resource"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "run_id": "run_20261003_002923_goal3_fast_path",
+  "contract_version": "0.3",
+  "policy_version": "0.3",
+  "raw_restore_result": {
+    "snapshot_id": "snap_20261002_090011_a5d463",
+    "target_dir": "C:\\Users\\kksjmj\\AppData\\Local\\Temp\\goal3_fast_sandbox_pmzxk7jl",
+    "total_files": 76242,
+    "restored_files": 76182,
+    "skipped_files": 60,
+    "failed_files": [],
+    "restored_bytes": 21466955325,
+    "duration_seconds": 181.72
+  },
+  "wall_clock_ms": 181734.69
+}

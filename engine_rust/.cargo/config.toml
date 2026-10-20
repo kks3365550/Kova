@@ -1,0 +1,7 @@
+[build]
+target-dir = "C:/Users/kksjmj/Desktop/ai/target_rust"
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "ar"
+

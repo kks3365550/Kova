@@ -1,0 +1,21 @@
+{
+  "run_id": "run_20261003_003623_goal5_defensive",
+  "contract_version": "0.3",
+  "policy_version": "0.3",
+  "raw_restore_result": {
+    "snapshot_id": "snap_20261003_093624_b084b6",
+    "target_dir": "C:\\Users\\kksjmj\\AppData\\Local\\Temp\\goal5_sandbox_8ivb9lu3",
+    "total_files": 2,
+    "restored_files": 1,
+    "skipped_files": 0,
+    "failed_files": [
+      {
+        "rel_path": "corrupt_doc.txt",
+        "error": "Hash verification failed for C:\\Users\\kksjmj\\AppData\\Local\\Temp\\goal5_sandbox_8ivb9lu3\\corrupt_doc.txt (Expected: 6f00d6014795448537f9391cf49bffa83de035bcf11f368bc7b77dd57f2e9cd8, got 23dac352e125afcf06cef10cf95005223bb427936ff19c602ecdd96b106a0ce8)"
+      }
+    ],
+    "restored_bytes": 26,
+    "duration_seconds": 0.43
+  },
+  "wall_clock_ms": 429.54
+}

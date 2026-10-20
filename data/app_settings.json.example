@@ -1,0 +1,15 @@
+{
+  "server_port": 8765,
+  "server_host": "127.0.0.1",
+  "auto_open_browser": true,
+  "dark_mode": true,
+  "log_level": "INFO",
+  "min_free_disk_gb": 10,
+  "enable_ransomware_protection": false,
+  "offsite_enabled": false,
+  "offsite_provider": "local",
+  "offsite_remote_path": "",
+  "offsite_auto_sync": false,
+  "offsite_gdrive_credentials_file": "",
+  "offsite_gdrive_folder_id": ""
+}

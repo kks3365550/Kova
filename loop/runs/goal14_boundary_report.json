@@ -1,0 +1,71 @@
+{
+  "timestamp": "2026-10-03T01:15:55.746611+00:00",
+  "goal": "GOAL_14",
+  "contract_updated": true,
+  "restore_adapter_modified": false,
+  "case_a_empty_snapshot": {
+    "under_unmodified_adapter": {
+      "status": "FAIL",
+      "criteria": {
+        "AC-RESTORE-01": false,
+        "AC-RESTORE-02": true,
+        "AC-RESTORE-03": true
+      }
+    },
+    "under_updated_contract_rule": {
+      "status": "PASS",
+      "criteria": {
+        "AC-RESTORE-01": true,
+        "AC-RESTORE-02": true,
+        "AC-RESTORE-03": true
+      }
+    }
+  },
+  "case_b_non_empty_zero_restore": {
+    "under_unmodified_adapter": {
+      "status": "FAIL",
+      "criteria": {
+        "AC-RESTORE-01": false,
+        "AC-RESTORE-02": false,
+        "AC-RESTORE-03": false
+      }
+    },
+    "under_updated_contract_rule": {
+      "status": "FAIL",
+      "criteria": {
+        "AC-RESTORE-01": false,
+        "AC-RESTORE-02": false,
+        "AC-RESTORE-03": false
+      }
+    }
+  },
+  "regression": {
+    "all_pass": true,
+    "suites": {
+      "REG-01": {
+        "status": "PASS",
+        "returncode": 0,
+        "duration_seconds": 5.073
+      },
+      "REG-02": {
+        "status": "PASS",
+        "returncode": 0,
+        "duration_seconds": 1.096
+      },
+      "REG-03": {
+        "status": "PASS",
+        "returncode": 0,
+        "duration_seconds": 3.922
+      },
+      "REG-04": {
+        "status": "PASS",
+        "returncode": 0,
+        "duration_seconds": 1.502
+      }
+    }
+  },
+  "immutability": {
+    "core_changed": 0,
+    "repository_changed": 0
+  }
+}

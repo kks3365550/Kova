@@ -1,0 +1,23 @@
+{
+  "dataset": {
+    "file_count": 531,
+    "total_bytes": 187651500,
+    "total_mb": 178.96
+  },
+  "python_engine": {
+    "backup_seconds": 0.768,
+    "backup_speed_mb": 233.1,
+    "restore_seconds": 0.904,
+    "restore_speed_mb": 198.0,
+    "integrity_pass": true
+  },
+  "rust_engine": {
+    "backup_seconds": 0.474,
+    "backup_speed_mb": 377.8,
+    "restore_seconds": 0.424,
+    "restore_speed_mb": 422.3,
+    "integrity_pass": true,
+    "sqlite_synced": true
+  },
+  "speedup_factor": 1.62
+}

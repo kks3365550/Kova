@@ -1,0 +1,12 @@
+{
+  "run_id": "run_20261002_222527_missing_object",
+  "contract_version": "0.2",
+  "policy_version": "0.3",
+  "run_status": "ABORTED_SAFE",
+  "events_count": 3,
+  "fast_path": "PASS",
+  "defensive_path": "SAFE_ABORTED",
+  "failure_class": "file_not_found",
+  "policy_action": "abort",
+  "quarantine_blocked": true
+}

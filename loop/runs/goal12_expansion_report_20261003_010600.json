@@ -1,0 +1,48 @@
+{
+  "timestamp": "2026-10-03T01:06:06.158880+00:00",
+  "goal": "GOAL_12",
+  "results": {
+    "ACCESS_DENIED": {
+      "scenario": "ACCESS_DENIED",
+      "run_id": "run_20261003_010600_goal12_access_denied",
+      "status": "PASS",
+      "event_status": "FAIL",
+      "rollup_status": "ABORTED_SAFE",
+      "inv5_enforced": true,
+      "infinite_retry_blocked": true,
+      "evidence_preserved": true,
+      "lineage_preserved": true,
+      "target_blob_mutated": false
+    },
+    "FILE_NOT_FOUND": {
+      "scenario": "FILE_NOT_FOUND",
+      "run_id": "run_20261003_010600_goal12_file_not_found",
+      "status": "PASS",
+      "event_status": "FAIL",
+      "rollup_status": "ABORTED_SAFE",
+      "inv6_enforced": true,
+      "arbitrary_creation_prevented": true,
+      "evidence_preserved": true,
+      "lineage_preserved": true,
+      "target_blob_mutated": false
+    },
+    "HASH_MISMATCH": {
+      "scenario": "HASH_MISMATCH",
+      "run_id": "run_20261003_010600_goal12_hash_mismatch",
+      "status": "PASS",
+      "event_status": "FAIL",
+      "rollup_status": "COMPLETED_SAFE",
+      "inv2_enforced": true,
+      "non_destructive_quarantine": true,
+      "evidence_preserved": true,
+      "lineage_preserved": true,
+      "target_blob_mutated": false
+    }
+  },
+  "immutability": {
+    "core_mutations": 0,
+    "production_repo_mutations": 0,
+    "fixture_normal_blobs_mutated": 0
+  },
+  "all_passed": true
+}

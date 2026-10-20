@@ -1,0 +1,15 @@
+{
+  "snapshot_id": "snap_20261002_090011_a5d463",
+  "restore_result": {
+    "snapshot_id": "snap_20261002_090011_a5d463",
+    "target_dir": "C:\\Users\\kksjmj\\AppData\\Local\\Temp\\loop_fast_sandbox_ea22k_m7",
+    "total_files": 76242,
+    "restored_files": 76182,
+    "skipped_files": 60,
+    "failed_files": [],
+    "restored_bytes": 21466955325,
+    "duration_seconds": 185.07
+  },
+  "baseline_sec": 185.08613810000315,
+  "loop_eval_sec": 7.299997378140688e-06
+}

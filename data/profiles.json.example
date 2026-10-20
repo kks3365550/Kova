@@ -1,0 +1,22 @@
+[
+  {
+    "id": "default",
+    "name": "Default Backup Profile",
+    "source_paths": [
+      "C:\\Users\\Default\\Documents"
+    ],
+    "repo_dir": "D:\\BackupRepository",
+    "exclude_patterns": [
+      "node_modules",
+      "__pycache__",
+      "*.tmp",
+      "*.log"
+    ],
+    "schedule_type": "manual",
+    "schedule_value": "12",
+    "auto_backup_enabled": false,
+    "retention_count": 30,
+    "retention_days": 60,
+    "compression_level": 3
+  }
+]

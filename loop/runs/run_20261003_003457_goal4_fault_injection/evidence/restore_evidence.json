@@ -1,0 +1,21 @@
+{
+  "run_id": "run_20261003_003457_goal4_fault_injection",
+  "contract_version": "0.3",
+  "policy_version": "0.3",
+  "raw_restore_result": {
+    "snapshot_id": "snap_20261003_093458_785e0d",
+    "target_dir": "C:\\Users\\kksjmj\\AppData\\Local\\Temp\\goal4_sandbox_4srftv33",
+    "total_files": 2,
+    "restored_files": 1,
+    "skipped_files": 0,
+    "failed_files": [
+      {
+        "rel_path": "fault_test_doc2.txt",
+        "error": "Hash verification failed for C:\\Users\\kksjmj\\AppData\\Local\\Temp\\goal4_sandbox_4srftv33\\fault_test_doc2.txt (Expected: 73ea3bc4f2aacf9826fad0a9641979a403734da5138220a8ee471d2f56d5aaec, got d8104a23b3d699c28086eadcdef6663f3f73d0a7423532bce63b283946d0df8d)"
+      }
+    ],
+    "restored_bytes": 42,
+    "duration_seconds": 0.42
+  },
+  "wall_clock_ms": 420.58
+}

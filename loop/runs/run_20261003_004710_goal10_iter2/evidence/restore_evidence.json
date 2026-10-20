@@ -1,0 +1,16 @@
+{
+  "run_id": "run_20261003_004710_goal10_iter2",
+  "contract_version": "0.3",
+  "policy_version": "0.3",
+  "raw_restore_result": {
+    "snapshot_id": "snap_20261003_094708_594a31",
+    "target_dir": "C:\\Users\\kksjmj\\AppData\\Local\\Temp\\goal10_sandbox_iter2_j816ukin",
+    "total_files": 10,
+    "restored_files": 10,
+    "skipped_files": 0,
+    "failed_files": [],
+    "restored_bytes": 430,
+    "duration_seconds": 0.28
+  },
+  "wall_clock_ms": 282.92
+}

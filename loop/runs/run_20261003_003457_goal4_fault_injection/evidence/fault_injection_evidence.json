@@ -1,0 +1,16 @@
+{
+  "run_id": "run_20261003_003457_goal4_fault_injection",
+  "target_blob": "73ea3bc4f2aacf9826fad0a9641979a403734da5138220a8ee471d2f56d5aaec.blob",
+  "corrupt_offset": 25,
+  "original_byte": "0x5F",
+  "corrupted_byte": "0xA0",
+  "original_sha256": "f31d0f44c57810f4b2aae85740c6894ac9004b08f508d0b6c22c92fc62102ff0",
+  "corrupted_sha256": "bad27b087aaa7d5395f0dcd949c191f3022d603fcc6491643b2cfb3920e26079",
+  "detected_in_failed_files": [
+    {
+      "rel_path": "fault_test_doc2.txt",
+      "error": "Hash verification failed for C:\\Users\\kksjmj\\AppData\\Local\\Temp\\goal4_sandbox_4srftv33\\fault_test_doc2.txt (Expected: 73ea3bc4f2aacf9826fad0a9641979a403734da5138220a8ee471d2f56d5aaec, got d8104a23b3d699c28086eadcdef6663f3f73d0a7423532bce63b283946d0df8d)"
+    }
+  ],
+  "event_status": "FAIL"
+}

@@ -1,0 +1,21 @@
+{
+  "run_id": "run_20261003_010600_goal12_access_denied",
+  "contract_version": "0.3",
+  "policy_version": "0.3",
+  "raw_restore_result": {
+    "snapshot_id": "snap_20261003_100602_b5d52e",
+    "target_dir": "C:\\Users\\kksjmj\\AppData\\Local\\Temp\\g12_acc_sbx_xd7q86g2",
+    "total_files": 2,
+    "restored_files": 1,
+    "skipped_files": 0,
+    "failed_files": [
+      {
+        "rel_path": "doc1.txt",
+        "error": "[Errno 13] Permission denied"
+      }
+    ],
+    "restored_bytes": 26,
+    "duration_seconds": 0.42
+  },
+  "wall_clock_ms": 422.86
+}

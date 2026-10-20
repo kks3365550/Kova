@@ -1,0 +1,7 @@
+{
+  "action": "abort",
+  "quarantine_blocked": true,
+  "inv_checked": "INV-6",
+  "validator_result": "ALLOW",
+  "status": "SAFE_ABORTED"
+}

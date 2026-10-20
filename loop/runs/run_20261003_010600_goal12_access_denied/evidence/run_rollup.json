@@ -1,0 +1,9 @@
+{
+  "run_id": "run_20261003_010600_goal12_access_denied",
+  "failure_class": "access_denied",
+  "parent_event_status": "FAIL",
+  "final_run_status": "ABORTED_SAFE",
+  "quarantine_invoked": false,
+  "infinite_retry_prevented": true,
+  "evidence_preserved": true
+}

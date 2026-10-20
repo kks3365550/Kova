@@ -1,0 +1,21 @@
+{
+  "run_id": "run_20261003_010600_goal12_hash_mismatch",
+  "contract_version": "0.3",
+  "policy_version": "0.3",
+  "raw_restore_result": {
+    "snapshot_id": "snap_20261003_100603_54a571",
+    "target_dir": "C:\\Users\\kksjmj\\AppData\\Local\\Temp\\g12_hash_sbx_vn1tgt6o",
+    "total_files": 2,
+    "restored_files": 1,
+    "skipped_files": 0,
+    "failed_files": [
+      {
+        "rel_path": "doc1.txt",
+        "error": "Hash verification failed for C:\\Users\\kksjmj\\AppData\\Local\\Temp\\g12_hash_sbx_vn1tgt6o\\doc1.txt (Expected: c3431ec5864fedbccc7b2f35368c43f135a701b1291887d57405edae9b503d8b, got a38ace811786f9a75264e614c42325bb73f09e6988db019c779395c07c917636)"
+      }
+    ],
+    "restored_bytes": 26,
+    "duration_seconds": 0.41
+  },
+  "wall_clock_ms": 407.83
+}

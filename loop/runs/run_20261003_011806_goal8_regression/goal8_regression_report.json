@@ -1,0 +1,68 @@
+{
+  "run_id": "run_20261003_011806_goal8_regression",
+  "timestamp": "2026-10-03T01:18:17.925930+00:00",
+  "total_suites": 4,
+  "passed_suites": 4,
+  "failed_suites": 0,
+  "all_passed": true,
+  "results": [
+    {
+      "id": "REG-01",
+      "name": "Normal Path Regression Gate",
+      "cmd": [
+        "C:\\Users\\kksjmj\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\python.exe",
+        "tools/test_normal_regression.py"
+      ],
+      "passed": true,
+      "returncode": 0,
+      "duration_sec": 5.127,
+      "stdout_tail": "�� Round 2 鍮꾪듃 �씪移� / 遺덉씪移�        : 23媛� �씪移� / 0媛� 遺덉씪移�\n  ��� �룞�떆�꽦 �뒪�듃�젅�뒪 �삤�깘 寃⑸━ 諛쒖깮 嫄댁닔 : 0嫄� (湲곗��: 0嫄�)\n  ��� �룞�떆�꽦 �뒪�듃�젅�뒪 �뀒�뒪�듃 �넻怨�        : �쐟 PASS\n--------------------------------------------------------------------------------\n  �윃� 寃곕줎: v2.9.12 �젙�긽 寃쎈줈 Regression Gate [100% ALL GREEN]\n  Self-Healing 湲곕뒫 異붽�� �썑�뿉�룄 �젙�긽 DB 諛� ����옣�냼瑜� �넀�긽�쑝濡� �삤�뙋�븯�뒗 False Positive媛� 0嫄댁엫�씠 利앸챸�릺�뿀�뒿�땲�떎.\n================================================================================\n\n",
+      "stderr": ""
+    },
+    {
+      "id": "REG-02",
+      "name": "v2.3.9 Verification Suite",
+      "cmd": [
+        "C:\\Users\\kksjmj\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\python.exe",
+        "-m",
+        "unittest",
+        "tests/test_v239_verification.py"
+      ],
+      "passed": true,
+      "returncode": 0,
+      "duration_sec": 1.114,
+      "stdout_tail": "",
+      "stderr": ""
+    },
+    {
+      "id": "REG-03",
+      "name": "Disaster Scenarios Suite",
+      "cmd": [
+        "C:\\Users\\kksjmj\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\python.exe",
+        "-m",
+        "unittest",
+        "tests/test_disaster_scenarios.py"
+      ],
+      "passed": true,
+      "returncode": 0,
+      "duration_sec": 3.98,
+      "stdout_tail": "",
+      "stderr": ""
+    },
+    {
+      "id": "REG-04",
+      "name": "P0 Fail-Closed Safeguard Suite",
+      "cmd": [
+        "C:\\Users\\kksjmj\\AppData\\Local\\hermes\\hermes-agent\\venv\\Scripts\\python.exe",
+        "-m",
+        "unittest",
+        "tests/test_p0_fail_closed.py"
+      ],
+      "passed": true,
+      "returncode": 0,
+      "duration_sec": 1.574,
+      "stdout_tail": "",
+      "stderr": ""
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "run_id": "run_20261002_234915_adversarial",
+  "contract_version": "0.2",
+  "policy_version": "0.3",
+  "test_type": "ADVERSARIAL_POLICY_VALIDATION",
+  "run_status": "COMPLETED_SAFE",
+  "total_vectors": 6,
+  "passed_vectors": 6,
+  "failed_vectors": 0,
+  "bypass_prevented": true,
+  "drift_prevented": true,
+  "inventory_mutations": 0,
+  "core_mutations": 0,
+  "results": [
+    {
+      "vector": 1,
+      "name": "file_not_found_quarantine",
+      "verdict": "BLOCK",
+      "pass": true
+    },
+    {
+      "vector": 2,
+      "name": "access_denied_quarantine",
+      "verdict": "BLOCK",
+      "pass": true
+    },
+    {
+      "vector": 3,
+      "name": "bitrot_retry",
+      "verdict": "BLOCK",
+      "pass": true
+    },
+    {
+      "vector": 4,
+      "name": "healthy_state_defensive_action",
+      "verdict": "BLOCK",
+      "pass": true
+    },
+    {
+      "vector": 5,
+      "name": "execution_gate_bypass_prevention",
+      "verdict": "EXCEPTION_RAISED",
+      "pass": true
+    },
+    {
+      "vector": 6,
+      "name": "policy_drift_prevention",
+      "verdict": "BLOCK",
+      "pass": true
+    }
+  ]
+}

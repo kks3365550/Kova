@@ -1,0 +1,9 @@
+{
+  "run_id": "run_20261003_010600_goal12_file_not_found",
+  "failure_class": "file_not_found",
+  "parent_event_status": "FAIL",
+  "final_run_status": "ABORTED_SAFE",
+  "quarantine_invoked": false,
+  "arbitrary_creation_prevented": true,
+  "evidence_preserved": true
+}

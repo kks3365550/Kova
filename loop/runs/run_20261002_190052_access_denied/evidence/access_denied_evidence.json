@@ -1,0 +1,11 @@
+{
+  "error_detail": "Failed files: [{'rel_path': 'perm_doc1.txt', 'error': \"[Errno 13] Permission denied: 'C:\\\\\\\\Users\\\\\\\\kksjmj\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\loop_access_fixture_7b2zu_cq\\\\\\\\repo\\\\\\\\blobs\\\\\\\\25\\\\\\\\25b8f2b38cd545d6947622512e94b17f3f41d40ac5c246b2493ce5371fc7079d.blob'\"}]",
+  "target_blob": "25b8f2b38cd545d6947622512e94b17f3f41d40ac5c246b2493ce5371fc7079d.blob",
+  "original_hash": "5a872d2b5ca074c5b46e264aba621d7dbbfc343a04a69a193be482502d7d9ec7",
+  "current_hash": "5a872d2b5ca074c5b46e264aba621d7dbbfc343a04a69a193be482502d7d9ec7",
+  "policy_verdict": {
+    "quarantine": "BLOCK",
+    "action": "abort",
+    "action_decision": "ALLOW"
+  }
+}

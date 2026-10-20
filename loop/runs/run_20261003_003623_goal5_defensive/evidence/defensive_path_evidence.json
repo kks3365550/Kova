@@ -1,0 +1,10 @@
+{
+  "run_id": "run_20261003_003623_goal5_defensive",
+  "parent_event_id": "evt_run_20261003_003623_goal5_defensive_001",
+  "retry_blocked": true,
+  "inv_enforced": "INV-2",
+  "quarantine_verdict": "ALLOW",
+  "isolation_type": "safe_isolation_copy",
+  "original_preserved": true,
+  "suspect_blob": "6f00d6014795448537f9391cf49bffa83de035bcf11f368bc7b77dd57f2e9cd8.blob"
+}

@@ -1,0 +1,63 @@
+policy_version: "0.3"
+
+invariants:
+  - id: "INV-1"
+    name: "Bounded Retry"
+    rule: "모든 retry 액션은 유한한 max_attempts 상한선이 있어야 함"
+  - id: "INV-2"
+    name: "Integrity / Security Non-Retryable"
+    rule: "traits에 integrity_critical 또는 security_critical이 포함된 경우 retry는 BLOCK"
+  - id: "INV-3"
+    name: "Idempotency Proof"
+    rule: "비멱등 작업의 재시도는 idempotent: true 보장 필요"
+  - id: "INV-4"
+    name: "Fallback Privilege Bounding"
+    rule: "fallback 액션은 상위 권한 상승 불가"
+  - id: "INV-5"
+    name: "No Quarantine on Access Denial"
+    rule: "traits에 access_restricted가 포함된 경우 quarantine은 BLOCK (권한 오류는 데이터 손상이 아니므로 격리 금지)"
+  - id: "INV-6"
+    name: "No Quarantine on Existence Failure"
+    rule: "traits에 missing_resource가 포함된 경우 quarantine은 BLOCK (존재하지 않는 리소스는 격리 대상이 아님)"
+
+rules:
+  - error_class: "data_integrity_violation"
+    traits:
+      - "integrity_critical"
+    action: "quarantine"
+    quarantine_type: "safe_isolation"
+    allowed_actions:
+      - "quarantine"
+      - "stop"
+      - "escalate"
+    forbidden_actions:
+      - "retry"
+    description: "무결성 오류 감지 시 재시도를 차단하고 의심 블롭/스냅샷을 비파괴적으로 격리"
+
+  - error_class: "access_denied"
+    traits:
+      - "access_restricted"
+    action: "abort"
+    retry_allowed: true
+    max_attempts: 2
+    allowed_actions:
+      - "retry"
+      - "abort"
+      - "escalate"
+    forbidden_actions:
+      - "quarantine"
+    description: "스토리지 접근 권한 오류 시 격리를 금지하고, 2회 한정 재시도 후 명시적 Abort/Escalate 수행"
+
+  - error_class: "file_not_found"
+    traits:
+      - "missing_resource"
+    action: "abort"
+    retry_allowed: true
+    max_attempts: 1
+    allowed_actions:
+      - "retry"
+      - "abort"
+      - "escalate"
+    forbidden_actions:
+      - "quarantine"
+    description: "리소스 존재 실패 시 격리를 금지하고, 1회 한정 재시도 후 명시적 Abort/Escalate 수행"

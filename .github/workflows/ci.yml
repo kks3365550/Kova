@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+# 같은 브랜치에 연속 push 시 이전 실행 취소
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  secret-scan:
+    name: 비밀 스캔
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # 2026-10-08: 공개 저장소의 이력에서 실제 credential 5종이 발견됐다.
+      #   - 배포 서명 Ed25519 개인키 (지금 사용 중, 서명 위조 실증)
+      #   - 마스터 비밀번호 해시 + salt 2종
+      #   - 살아있는 Firebase API 키
+      #   - 사내 계정 (release_admin_test@sunhang.internal)
+      #   - 테스트 저장소 개인키
+      #
+      # 여기서는 '추적 파일'만 검사한다. 비밀을 커밋하면 그 파일이 추적되므로
+      # 이 검사만으로 새 유출은 전부 막힌다.
+      #
+      # 이력 전체 검사는 하지 않는다. 기존 유출 31건 때문에 CI 가 영구히
+      # 실패하고, 그 빨간 상태는 아무도 보지 않게 된다. 이미 알고 있는
+      # 문제는 이미 알고 있고(키 회전 절차 진행 중), CI 는 앞으로 오는
+      # 실수만 막는 용도로 쓴다.
+      # 전체 이력 감사: python tools/scan_secrets.py --history
+      #
+      # PYTHONIOENCODING 을 명시한다. windows-latest 러너의 표준출력은 cp1252 라서
+      # 한국어 print 가 UnicodeEncodeError 로 죽고 exit code 1 이 된다.
+      # 그러면 "비밀 발견" 과 "도구 자체가 죽음" 이 구분되지 않는다.
+      # 스캐너 안에서도 stdout 을 재설정하지만, CI 와 로컬 양쪽을 막으려면
+      # 환경변수 쪽이 확실하다.
+      - name: 추적 파일에서 비밀 탐지
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python tools/scan_secrets.py
+
+  static-analysis:
+    name: 정적 분석 (pyflakes)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: pyflakes 정적 분석
+        run: |
+          python -m pip install --upgrade pip pyflakes
+          # 미사용 import / 정의되지 않은 이름 / 미사용 변수를 차단한다.
+          # 백업 시스템은 정상 경로에서 드러나지 않는 NameError 가 Operational 리스크다.
+          python -m pyflakes core web cli_backup.py cli.py run.py disaster_recovery.py
+
+  test:
+    name: 회귀 테스트
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pytest
+
+      # 한 줄로 적는다. PowerShell 에서 '\' 로 줄을 잇는 것은 Linux 셸 문법이라
+      # 백슬래시가 그대로 인자로 전달되고 pytest 가 드라이브 루트(D:\)까지
+      # 수집하려 한다 -> "PermissionError: D:\System Volume Information".
+      # 2026-10-07 CI 1차 실행이 이 두 가지로 실패했다.
+      #
+      # PYTHONIOENCODING 을 명시한다. windows-latest 러너의 표준출력은 cp1252
+      # 라서 한국어 print 가 UnicodeEncodeError 로 죽는다. 2026-10-08 에
+      # tools/rotate_release_key.py 가 이 이유로 CI 에서 죽었다.
+      - name: 빠른 회귀 테스트 (CI 게이트)
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m pytest -q tests/test_api_contract.py tests/test_backup_logging.py tests/test_critical_fixes.py tests/test_offsite.py tests/test_p0_fail_closed.py tests/test_disaster_scenarios.py tests/test_crypto_at_rest.py tests/test_auth.py tests/test_web_auth_api.py tests/test_replication_torace.py tests/test_repository_chaos.py tests/test_encryption_chaos.py tests/test_updater.py tests/test_key_rotation.py
+
+      - name: 전체 테스트 스위트
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -m pytest -q
+        continue-on-error: true
+        # 장시간 테스트가 포함될 수 있어 실패를 관찰용으로만 기록한다.
+        # 게이트(위 단계)는 반드시 통과해야 한다.
+
+      - name: 테스트 로그 아티팩트 업로드 (실패 시)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-logs
+          path: |
+            logs/
+            **/pytest*.log
+          retention-days: 7
+
+  build:
+    name: 배포 산출물 빌드
+    runs-on: windows-latest
+    needs: [ secret-scan, static-analysis, test ]
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 의존성 설치
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: 배포 매니페스트 생성
+        run: python tools/release.py --dry-run
+        continue-on-error: true
+          # 빌드 산출물은 운영 사내 배포 기준이며, 공개 배포는 별도 승인 절차다.

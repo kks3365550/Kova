@@ -1,0 +1,55 @@
+[package]
+name = "kova_fast_engine"
+version = "0.1.0"
+edition = "2021"
+authors = ["Kova Backup Project"]
+description = "High-speed native backup engine using NTFS USN Journal, FastCDC, and Rayon Zstd/BLAKE3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dependencies]
+# ── 해싱 (BLAKE3 SIMD AVX2/AVX-512) ──
+blake3 = { version = "1.5", features = ["rayon", "mmap"] }
+
+# ── 압축 (Zstandard 멀티스레드 스트리밍) ──
+zstd = "0.13"
+
+# ── 가변 블록 청킹 (Fast Content-Defined Chunking) ──
+fastcdc = "1.0"
+
+# ── 16코어 병렬 처리 풀 ──
+rayon = "1.10"
+
+# ── CLI 인터페이스 ──
+clap = { version = "4.5", features = ["derive"] }
+
+# ── 직렬화 (CAS v3 매니페스트) ──
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# ── Zero-Copy 메모리 매핑 ──
+memmap2 = "0.9"
+
+# ── 안전 폴백용 디렉토리 스캐너 ──
+walkdir = "2.5"
+
+# ── 시간 및 타임스탬프 ──
+chrono = { version = "0.4", features = ["serde"] }
+
+# ── Windows Win32 API (NTFS USN 저널 / 볼륨 제어) ──
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Ioctl",
+    "Win32_Security",
+    "Win32_System_SystemServices",
+    "Win32_System_IO",
+    "Win32_System_Memory",
+]

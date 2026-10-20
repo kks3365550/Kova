@@ -1,0 +1,21 @@
+{
+  "run_id": "run_20261003_010600_goal12_file_not_found",
+  "contract_version": "0.3",
+  "policy_version": "0.3",
+  "raw_restore_result": {
+    "snapshot_id": "snap_20261003_100603_37d84f",
+    "target_dir": "C:\\Users\\kksjmj\\AppData\\Local\\Temp\\g12_fnf_sbx_zjlrb991",
+    "total_files": 2,
+    "restored_files": 1,
+    "skipped_files": 0,
+    "failed_files": [
+      {
+        "rel_path": "doc1.txt",
+        "error": "Blob not found in repository: c3431ec5864fedbccc7b2f35368c43f135a701b1291887d57405edae9b503d8b"
+      }
+    ],
+    "restored_bytes": 26,
+    "duration_seconds": 0.42
+  },
+  "wall_clock_ms": 421.63
+}

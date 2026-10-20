@@ -1,0 +1,90 @@
+# ==========================================
+# [Kova v2.17.13] Git Ignore Configuration
+# ==========================================
+
+# 1. Python Environment & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+.venv/
+venv/
+env/
+
+# 2. Local Backup Testing Repositories
+backup_repository/
+test_sandbox/
+sandbox/
+tests/test_repo/
+tests/test_repo2/
+scratch/test_backup_repo/
+scratch/
+backup/v2.9.10/
+
+# 3. Temporary Files & Logs
+*.tmp
+*.temp
+*.log
+@AutomationLog.txt
+*raw_response*
+*cross_review*
+desktop_qwen_*.txt
+gpt_perspective_cross_review.txt
+real_gpt_*.md
+
+# 4. Sensitive Credentials & Keys (Keep private keys local, track ONLY public keys)
+keys/*.key
+keys/*.json
+keys/*cred*
+keys/*private*
+keys/*.pem
+keys/*.p12
+keys/*.pfx
+!keys/*.pub
+
+# 5. Sensitive Data & Machine-Specific State
+config/deep_scan_state.json
+client_secret*.json
+project-*.json
+*token*.json
+*credential*.json
+data/*token*.json
+data/gdrive_oauth_token.json
+data/auth_config.json
+data/profiles.json
+data/active_port.txt
+data/rclone.conf
+data/app_settings.json
+!data/app_settings.json.example
+!data/profiles.json.example
+
+# 6. Build Artifacts & Binaries (External/GitHub Releases)
+build/
+dist/
+*.spec
+installer/Output/
+installer/runtime/
+emergency_restore/python/
+target/
+engine_rust/target/
+target_rust/
+
+# Executable binaries tracked separately via GitHub Releases
+*.exe
+*.dll
+*.sys
+tools/bin/rclone.exe
+tools/wimlib-imagex.exe
+kova_fast_engine.exe
+engine_rust/kova_fast_engine.exe
+web/static/*.exe
+
+# 7. Local AI Working Directory
+.ai/
+
+# 8. OS & Editor Specific
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/

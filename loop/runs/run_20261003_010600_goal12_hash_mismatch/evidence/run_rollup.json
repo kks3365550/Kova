@@ -1,0 +1,9 @@
+{
+  "run_id": "run_20261003_010600_goal12_hash_mismatch",
+  "failure_class": "data_integrity_violation",
+  "parent_event_status": "FAIL",
+  "final_run_status": "COMPLETED_SAFE",
+  "quarantine_invoked": true,
+  "non_destructive_isolation": true,
+  "evidence_preserved": true
+}

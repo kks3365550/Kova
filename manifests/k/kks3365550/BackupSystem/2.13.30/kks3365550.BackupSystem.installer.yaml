@@ -1,0 +1,24 @@
+# Created using wingetcreate 1.6.5.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: kks3365550.BackupSystem
+PackageVersion: 2.13.30
+InstallerLocale: en-US
+MinimumOSVersion: 10.0.17763.0
+InstallerType: inno
+InstallModes:
+  - interactive
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+Commands:
+  - BackupSystem
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/kks3365550/BackupSystem/releases/download/v2.13.30/BackupSystem_Setup_v2.13.30.exe
+    InstallerSha256: 46E11BD31847455F6F9F6AD7502679E70AD1149E97ECFFD322A3EB0590D1A562
+    InstallerSwitches:
+      Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+      SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART
+ManifestType: installer
+ManifestVersion: 1.6.0

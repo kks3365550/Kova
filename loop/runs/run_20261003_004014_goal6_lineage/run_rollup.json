@@ -1,0 +1,26 @@
+{
+  "run_id": "run_20261003_004014_goal6_lineage",
+  "contract_version": "0.3",
+  "policy_version": "0.3",
+  "run_status": "COMPLETED_SAFE",
+  "total_events": 2,
+  "parent_event_id": "evt_run_20261003_004014_goal6_lineage_001",
+  "terminal_event_id": "evt_run_20261003_004014_goal6_lineage_002",
+  "terminal_action": "quarantine",
+  "action_budget_initial": 2,
+  "action_budget_remaining": 1,
+  "chain_terminated": true,
+  "status_separation_verified": true,
+  "events_summary": [
+    {
+      "event_id": "evt_run_20261003_004014_goal6_lineage_001",
+      "stage": "observe",
+      "status": "FAIL"
+    },
+    {
+      "event_id": "evt_run_20261003_004014_goal6_lineage_002",
+      "stage": "action",
+      "status": "SUCCESS"
+    }
+  ]
+}
