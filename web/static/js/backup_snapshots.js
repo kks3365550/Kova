@@ -24,6 +24,11 @@ function renderSnapshotsTable() {
         const sum = s.summary || {};
         const isFull = s.backup_type === 'full';
         const isVerified = s.is_verified;
+        const totalFiles = (sum.total_files !== undefined && sum.total_files !== null && sum.total_files > 0) ? sum.total_files : (s.total_files || 0);
+        const totalBytes = (sum.total_bytes !== undefined && sum.total_bytes !== null && sum.total_bytes > 0) ? sum.total_bytes : (s.total_bytes || 0);
+        const dedupBytes = (sum.dedup_saved_bytes !== undefined && sum.dedup_saved_bytes !== null && sum.dedup_saved_bytes > 0) ? sum.dedup_saved_bytes : (s.dedup_bytes || s.dedup_saved_bytes || 0);
+        const isoTime = s.iso_time || (typeof s.created_at === 'string' ? s.created_at : '');
+        const profName = s.profile_name || (s.id && s.id.startsWith('snap_custom') ? '선택 백업' : '-');
         return `
             <tr class="border-b border-slate-800 hover:bg-slate-800/40 text-sm transition">
                 <td class="py-3 px-4 font-mono text-xs text-blue-400">
@@ -44,15 +49,15 @@ function renderSnapshotsTable() {
                         })()}
                     </div>
                 </td>
-                <td class="py-3 px-4 font-medium text-slate-200">${s.profile_name || '-'}</td>
+                <td class="py-3 px-4 font-medium text-slate-200">${profName}</td>
                 <td class="py-3 px-4">
                     <span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${isFull ? 'bg-blue-900/60 text-blue-300 border border-blue-700' : 'bg-emerald-900/60 text-emerald-300 border border-emerald-700'}">
                         ${isFull ? '전체 (Full)' : '증분 (Incremental)'}
                     </span>
                 </td>
-                <td class="py-3 px-4 text-slate-300">${formatDate(s.iso_time)}</td>
-                <td class="py-3 px-4 text-slate-300">${sum.total_files || 0}개 <span class="text-xs text-slate-500">(${formatBytes(sum.total_bytes)})</span></td>
-                <td class="py-3 px-4 text-emerald-400 font-medium">${formatBytes(sum.dedup_saved_bytes || 0)}</td>
+                <td class="py-3 px-4 text-slate-300">${formatDate(isoTime)}</td>
+                <td class="py-3 px-4 text-slate-300">${totalFiles}개 <span class="text-xs text-slate-500">(${formatBytes(totalBytes)})</span></td>
+                <td class="py-3 px-4 text-emerald-400 font-medium">${formatBytes(dedupBytes)}</td>
                 <td class="py-3 px-4 text-right space-x-2">
                     <button onclick="inspectSnapshot('${s.id}')" class="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs" title="파일 탐색">
                         <i data-lucide="folder-search" class="w-4 h-4"></i>
@@ -94,6 +99,9 @@ async function inspectSnapshot(snapshotId) {
 
         document.getElementById('explorer-modal-title').innerText = `스냅샷 파일 탐색: ${snapshotId}`;
         const sum = snapData.summary || {};
+        const totalFiles = (sum.total_files !== undefined && sum.total_files !== null && sum.total_files > 0) ? sum.total_files : (snapData.total_files || 0);
+        const totalBytes = (sum.total_bytes !== undefined && sum.total_bytes !== null && sum.total_bytes > 0) ? sum.total_bytes : (snapData.total_bytes || 0);
+        const isoTime = snapData.iso_time || (typeof snapData.created_at === 'string' ? snapData.created_at : '');
         const offBadge = (snapData.is_offsite_protected || snapData.offsite_status === 'COMMITTED')
             ? '<span class="text-blue-400 font-semibold">🌐 3-2-1 원격보호 완료</span>'
             : ((snapData.offsite_status === 'TRANSFERRING' || snapData.offsite_status === 'PENDING')
@@ -102,8 +110,8 @@ async function inspectSnapshot(snapshotId) {
                     ? '<span class="text-amber-400 font-semibold">⏸️ 원격미복제</span>'
                     : '<span class="text-slate-400">로컬전용</span>'));
         document.getElementById('explorer-modal-meta').innerHTML = `
-            <span>생성 일시: <b>${formatDate(snapData.iso_time)}</b></span> · 
-            <span>총 파일: <b>${sum.total_files}개 (${formatBytes(sum.total_bytes)})</b></span> · 
+            <span>생성 일시: <b>${formatDate(isoTime)}</b></span> · 
+            <span>총 파일: <b>${totalFiles}개 (${formatBytes(totalBytes)})</b></span> · 
             <span>신규/수정: <b>${(sum.new_files || 0) + (sum.modified_files || 0)}개</b></span> · 
             <span>3-2-1 복제: <b>${offBadge}</b></span>
         `;

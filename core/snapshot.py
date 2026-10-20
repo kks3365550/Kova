@@ -935,16 +935,29 @@ class SnapshotEngine:
                     try:
                         with open(snap_path, "r", encoding="utf-8") as f:
                             data = json.load(f)
+                            summary = data.get("summary") or {}
+                            tot_files = summary.get("total_files") or data.get("total_files", 0)
+                            tot_bytes = summary.get("total_bytes") or data.get("total_bytes", 0)
+                            dedup_bytes = summary.get("dedup_saved_bytes") or data.get("dedup_bytes", 0)
+                            iso_t = data.get("iso_time") or (data.get("created_at") if isinstance(data.get("created_at"), str) else "")
                             snapshots.append({
                                 "id": data.get("id"),
                                 "created_at": data.get("created_at"),
-                                "iso_time": data.get("iso_time"),
-                                "profile_id": data.get("profile_id"),
-                                "profile_name": data.get("profile_name"),
-                                "backup_type": data.get("backup_type"),
+                                "iso_time": iso_t,
+                                "profile_id": data.get("profile_id") or ("prof_custom_selected" if filename.startswith("snap_custom") else ""),
+                                "profile_name": data.get("profile_name") or ("선택 백업" if filename.startswith("snap_custom") else "-"),
+                                "backup_type": data.get("backup_type") or "full",
                                 "base_snapshot_id": data.get("base_snapshot_id"),
                                 "sources": data.get("sources", []),
-                                "summary": data.get("summary", {})
+                                "summary": {
+                                    "total_files": tot_files,
+                                    "total_bytes": tot_bytes,
+                                    "new_files": summary.get("new_files") or data.get("new_files", tot_files),
+                                    "modified_files": summary.get("modified_files") or data.get("modified_files", 0),
+                                    "unmodified_files": summary.get("unmodified_files") or data.get("unmodified_files", 0),
+                                    "dedup_saved_bytes": dedup_bytes,
+                                    "duration_seconds": summary.get("duration_seconds") or data.get("duration_seconds", 0)
+                                }
                             })
                     except Exception:
                         pass
@@ -1161,7 +1174,7 @@ class SnapshotEngine:
         if entries is None:
             with open(snap_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            entries = data.get("entries", [])
+            entries = data.get("entries") or data.get("files") or []
             with cls._BROWSE_CACHE_LOCK:
                 # Keep max 5 snapshots cached in memory
                 if len(cls._BROWSE_CACHE) >= 5:
@@ -1175,7 +1188,7 @@ class SnapshotEngine:
         files = []
 
         for e in entries:
-            rp = e.get("rel_path", "").replace('\\', '/').strip('/')
+            rp = (e.get("rel_path") or e.get("path") or "").replace('\\', '/').strip('/')
             if prefix:
                 if not rp.startswith(prefix):
                     continue
@@ -1189,7 +1202,7 @@ class SnapshotEngine:
                     "name": parts[0],
                     "type": "file",
                     "size": e.get("size", 0),
-                    "mtime": e.get("mtime", 0),
+                    "mtime": e.get("mtime") or e.get("modified", 0),
                     "rel_path": rp,
                     "status": e.get("status", "unmodified"),
                     "chunk_strategy": e.get("chunk_strategy"),

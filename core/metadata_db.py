@@ -222,7 +222,8 @@ class MetadataDB:
     def sync_snapshots(self) -> List[Dict[str, Any]]:
         """
         Synchronizes snapshot JSON metadata into SQLite.
-        Only parses files that are new or whose mtime has changed.
+        Parses new/modified files, and also heals cached rows whose total_files/total_bytes are 0.
+        Supports both Python legacy summary schema and Rust native top-level schema.
         """
         if not os.path.exists(self.snapshots_dir):
             return []
@@ -237,8 +238,11 @@ class MetadataDB:
                     pass
 
         with self._lock, self._get_connection() as conn:
-            cached_rows = conn.execute("SELECT id, file_mtime FROM snapshots_meta;").fetchall()
-            cached_map = {row["id"]: row["file_mtime"] for row in cached_rows}
+            cached_rows = conn.execute("SELECT id, file_mtime, total_files, total_bytes FROM snapshots_meta;").fetchall()
+            cached_map = {
+                row["id"]: (row["file_mtime"], row["total_files"], row["total_bytes"])
+                for row in cached_rows
+            }
 
             # Delete snapshots that no longer exist on disk
             for cid in list(cached_map.keys()):
@@ -247,19 +251,36 @@ class MetadataDB:
                     conn.execute("DELETE FROM snapshots_meta WHERE id = ?;", (cid,))
                     del cached_map[cid]
 
-            # Insert/Update new or modified snapshots
+            # Insert/Update new or modified snapshots, and heal zero-cached stats from disk JSON.
             for fname, (full_p, mtime) in disk_files.items():
                 sid = fname[:-5]
-                if sid not in cached_map or abs(cached_map[sid] - mtime) > 0.001:
+                cached = cached_map.get(sid)
+                if cached is None:
+                    needs_update = True
+                else:
+                    cached_mtime, cached_total_files, cached_total_bytes = cached
+                    needs_update = (
+                        abs(cached_mtime - mtime) > 0.001
+                        or cached_total_files == 0
+                        or cached_total_bytes == 0
+                    )
+
+                if needs_update:
                     try:
                         with open(full_p, "r", encoding="utf-8") as fp:
                             data = json.load(fp)
-                            summary = data.get("summary", {})
+                            summary = data.get("summary") or {}
                             sources = json.dumps(data.get("sources", []), ensure_ascii=False)
                             is_ver = 1 if data.get("is_verified") else 0
                             ver_ts = data.get("verify_timestamp", 0.0)
                             ver_err = data.get("verify_error_count", 0)
-                            created_at_val = data.get("created_at_ts") or data.get("created_at", 0)
+
+                            created_at_val = (
+                                data.get("created_at_ts")
+                                or data.get("created_at")
+                                or summary.get("created_at")
+                                or 0
+                            )
                             if isinstance(created_at_val, str):
                                 try:
                                     import datetime
@@ -267,6 +288,19 @@ class MetadataDB:
                                     created_at_val = dt.timestamp()
                                 except Exception:
                                     created_at_val = mtime
+
+                            total_files = summary.get("total_files") or data.get("total_files", 0)
+                            total_bytes = summary.get("total_bytes") or data.get("total_bytes", 0)
+                            dedup_saved_bytes = summary.get("dedup_saved_bytes") or data.get("dedup_bytes", 0)
+                            new_files = summary.get("new_files") or data.get("new_files", total_files)
+                            modified_files = summary.get("modified_files") or data.get("modified_files", 0)
+                            unmodified_files = summary.get("unmodified_files") or data.get("unmodified_files", 0)
+                            duration_seconds = summary.get("duration_seconds") or data.get("duration_seconds", 0)
+
+                            iso_time = data.get("iso_time") or (data.get("created_at") if isinstance(data.get("created_at"), str) else "")
+                            profile_name = data.get("profile_name") or ("선택 백업" if sid.startswith("snap_custom") else "-")
+                            profile_id = data.get("profile_id") or ("prof_custom_selected" if sid.startswith("snap_custom") else "rust_fast_engine")
+
                             conn.execute("""
                                 INSERT OR REPLACE INTO snapshots_meta (
                                     id, created_at, iso_time, profile_id, profile_name,
@@ -278,18 +312,18 @@ class MetadataDB:
                             """, (
                                 sid,
                                 float(created_at_val),
-                                data.get("iso_time", ""),
-                                data.get("profile_id", ""),
-                                data.get("profile_name", ""),
+                                iso_time,
+                                profile_id,
+                                profile_name,
                                 data.get("backup_type", "full"),
                                 data.get("base_snapshot_id"),
-                                summary.get("total_files", 0),
-                                summary.get("total_bytes", 0),
-                                summary.get("new_files", 0),
-                                summary.get("modified_files", 0),
-                                summary.get("unmodified_files", 0),
-                                summary.get("dedup_saved_bytes", 0),
-                                summary.get("duration_seconds", 0),
+                                total_files,
+                                total_bytes,
+                                new_files,
+                                modified_files,
+                                unmodified_files,
+                                dedup_saved_bytes,
+                                duration_seconds,
                                 sources,
                                 mtime,
                                 is_ver,

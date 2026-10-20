@@ -196,21 +196,39 @@ def get_snapshot(snapshot_id: str, repo_dir: Optional[str] = None, include_entri
     except Exception:
         pass
 
+    summary = data.get("summary") or {
+        "total_files": data.get("total_files", 0),
+        "total_bytes": data.get("total_bytes", 0),
+        "new_files": data.get("new_files", data.get("total_files", 0)),
+        "modified_files": data.get("modified_files", 0),
+        "unmodified_files": data.get("unmodified_files", 0),
+        "dedup_saved_bytes": data.get("dedup_bytes", 0),
+        "duration_seconds": data.get("duration_seconds", 0)
+    }
+    iso_time = data.get("iso_time") or (data.get("created_at") if isinstance(data.get("created_at"), str) else "")
+    prof_name = data.get("profile_name") or ("선택 백업" if snapshot_id.startswith("snap_custom") else "-")
+    prof_id = data.get("profile_id") or ("prof_custom_selected" if snapshot_id.startswith("snap_custom") else "rust_fast_engine")
+
     if not include_entries:
         # Strip massive entries array to send lightweight metadata (0.001s response, ~500 bytes)
         return {
             "id": data.get("id"),
             "created_at": data.get("created_at"),
-            "iso_time": data.get("iso_time"),
-            "profile_id": data.get("profile_id"),
-            "profile_name": data.get("profile_name"),
-            "backup_type": data.get("backup_type"),
+            "iso_time": iso_time,
+            "profile_id": prof_id,
+            "profile_name": prof_name,
+            "backup_type": data.get("backup_type") or "full",
             "base_snapshot_id": data.get("base_snapshot_id"),
             "sources": data.get("sources", []),
-            "summary": data.get("summary", {}),
+            "summary": summary,
             "is_offsite_protected": is_offsite_protected,
             "offsite_status": offsite_status
         }
+    data["summary"] = summary
+    data["iso_time"] = iso_time
+    data["profile_name"] = prof_name
+    data["profile_id"] = prof_id
+    data["backup_type"] = data.get("backup_type") or "full"
     data["is_offsite_protected"] = is_offsite_protected
     data["offsite_status"] = offsite_status
     return data
