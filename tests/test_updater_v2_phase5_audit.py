@@ -179,7 +179,7 @@ class TestPhase5TrustAnchorFailClosed(unittest.TestCase):
 
     def test_09_corrupted_public_key_fails_closed(self):
         """공개키 파일 내용이 손상되었거나 유효하지 않은 포맷일 때 즉시 거부"""
-        pub_path = os.path.join(self.keys_dir, "release_ed25519.pub")
+        pub_path = os.path.join(self.keys_dir, "release_ed25519_v2.pub")
         with open(pub_path, "wb") as f:
             f.write(b"NOT A VALID PUBLIC KEY PEM DATA")
 
@@ -195,7 +195,7 @@ class TestPhase5TrustAnchorFailClosed(unittest.TestCase):
             encoding=Encoding.PEM,
             format=PublicFormat.SubjectPublicKeyInfo
         )
-        pub_path = os.path.join(self.keys_dir, "release_ed25519.pub")
+        pub_path = os.path.join(self.keys_dir, "release_ed25519_v2.pub")
         with open(pub_path, "wb") as f:
             f.write(attacker_pub_pem)
 

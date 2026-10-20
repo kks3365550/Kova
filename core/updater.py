@@ -34,7 +34,7 @@ from typing import Dict, Any, Optional, Tuple
 logger = logging.getLogger("core.updater")
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-PUBLIC_KEY_PATH = os.path.join(BASE_DIR, "keys", "release_ed25519.pub")
+PUBLIC_KEY_PATH = os.path.join(BASE_DIR, "keys", "release_ed25519_v2.pub")
 PUBLIC_KEY_DIR = os.path.join(BASE_DIR, "keys")
 
 

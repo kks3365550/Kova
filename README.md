@@ -1,7 +1,7 @@
-# Kova (v2.17.11)
+# Kova (v2.17.13)
 > **Local-First Windows Backup & Instant Disaster Recovery Engine**
 
-[![Version](https://img.shields.io/badge/version-v2.17.11-blue.svg?style=flat-square)](https://github.com/kks3365550/Kova/releases)
+[![Version](https://img.shields.io/badge/version-v2.17.13-blue.svg?style=flat-square)](https://github.com/kks3365550/Kova/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Server-0078D6.svg?style=flat-square&logo=windows)](https://microsoft.com/windows)
 [![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 [![Engine](https://img.shields.io/badge/engine-Python%203.10%2B%20%7C%20Rust-orange.svg?style=flat-square)](#architecture-overview)
@@ -20,7 +20,7 @@
   - [2. Track 2 Pack Container & Crash-Consistent Storage](#2-track-2-pack-container--crash-consistent-storage)
   - [3. Zero-Lock Live Backups via Windows VSS](#3-zero-lock-live-backups-via-windows-vss)
   - [4. Ghost / Silent Background Execution](#4-ghost--silent-background-execution)
-  - [5. 3-2-1 Offsite Replication (Optional Cloud/NAS)](#5-3-2-1-offsite-replication-optional-cloudnas)
+  - [5. 3-2-1 Offsite Replication & Cloud Encryption](#5-3-2-1-offsite-replication--cloud-encryption)
   - [6. Granular & Bare-Metal Recovery](#6-granular--bare-metal-recovery)
 - [Installation & Deployment](#-installation--deployment)
   - [Method 1: Windows Installer (Inno Setup)](#method-1-windows-installer-inno-setup)
@@ -28,7 +28,7 @@
   - [Method 3: Portable / Developer Setup](#method-3-portable--developer-setup)
 - [Web Management Dashboard](#-web-management-dashboard)
 - [CLI Reference](#-cli-reference)
-- [Security & Privacy](#-security--privacy)
+- [Security & Encryption Architecture](#-security--encryption-architecture)
 - [License](#-license)
 
 ---
@@ -52,7 +52,7 @@ flowchart TD
         VSS["Windows VSS Snapshot (vssadmin)"]
     end
 
-    subgraph CoreEngine["Kova Engine (v2.17.11)"]
+    subgraph CoreEngine["Kova Engine (v2.17.13)"]
         Scanner["Rust Fast Scanner (mtime fast-path)"]
         Compressor["Zstandard Parallel Compression (Full-Core)"]
         Packer["Track 2 Pack Container & Deduplication"]
@@ -100,10 +100,13 @@ flowchart TD
 ### 4. Ghost / Silent Background Execution
 - Scheduled backups run invisibly using `start_silent.vbs` or `pythonw.exe`. No black command prompt windows pop up to disrupt active gaming or workflow sessions.
 
-### 5. 3-2-1 Offsite Replication (Optional Cloud/NAS)
-- Follows the industry-standard 3-2-1 backup strategy.
-- Built-in integration with `rclone` allows mirroring local snapshots to private NAS (SMB), WebDAV, or Google Drive.
-- Excludes transient files (`backup.lock`, temporary buffers) and supports remote chunk pruning (`prune_storage`).
+### 5. 3-2-1 Offsite Replication & Cloud Encryption
+- **3-2-1 Compliance**: Mirrors snapshots to a secondary destination (private NAS via SMB/NFS, or cloud destinations like Google Drive via `rclone`).
+- **Transport Security**: All remote communications to Google Drive or WebDAV endpoints are encrypted via TLS 1.3 / HTTPS.
+- **Clean Ingestion Filter**: Transient runtime locks (`backup.lock`) and temp buffers are strictly filtered out; remote chunk pruning (`prune_storage`) maintains cloud parity.
+- **Client-Side At-Rest Encryption (Zero-Trust Cloud)**:
+  - By default, raw backup chunks stored on local repositories are compressed (Zstandard) and verified with SHA-256, but left unencrypted at rest to maximize block-level deduplication across machines.
+  - When replicating to untrusted cloud providers (e.g. Google Drive), users can configure an **rclone `crypt` overlay remote** (`rclone config` -> `crypt`). When active, all chunks, pack containers, and snapshot metadata files are transparently encrypted on the client side with **AES-256-GCM** before upload.
 
 ### 6. Granular & Bare-Metal Recovery
 - **Snapshot Time Machine**: Browse filesystem states at any historical snapshot point.
@@ -116,7 +119,7 @@ flowchart TD
 
 ### Method 1: Windows Installer (Inno Setup)
 The recommended deployment method for standard Windows PCs:
-1. Download `BackupSystem_Setup_v2.17.11.exe` from [GitHub Releases](https://github.com/kks3365550/Kova/releases).
+1. Download `Kova_Setup_v2.17.13.exe` from [GitHub Releases](https://github.com/kks3365550/Kova/releases).
 2. Run the installer. It bundles an embedded CPython runtime, so no prior Python installation is required.
 3. The installer automatically terminates any previous instances, registers the background service, and creates Desktop/Start Menu shortcuts.
 
@@ -181,11 +184,12 @@ python cli.py restore <snapshot_id> --target C:\Restore_Target
 
 ---
 
-## 🔒 Security & Privacy
+## 🔒 Security & Encryption Architecture
 
-- **Data Privacy**: No telemetry, analytics, or external phone-home requests.
-- **Credential Safety**: Master authentication credentials, tokens, and local profile configurations are stored locally in `data/` and excluded from version control (`.gitignore`).
-- **Signature Verification**: Release artifacts and updates are digitally verified using Ed25519 signatures (`keys/release_ed25519_v2.pub`).
+- **Zero-Cloud Air-Gapped by Default**: All backups and catalog databases stay strictly on-premises. Zero phone-home requests, zero telemetry.
+- **Root Trust Anchor**: Update payloads and self-extracting release bundles are cryptographically verified using active **Ed25519 v2 public key signatures** (`keys/release_ed25519_v2.pub`). Legacy v1 signatures are rejected.
+- **Credential Isolation**: Master password hashes, session salts, and OAuth tokens are stored exclusively in local untracked files (`data/auth_config.json`, `data/app_settings.json`) and ignored by git (`.gitignore`).
+- **Cloud At-Rest Encryption**: Optional client-side AES-256 encryption via rclone `crypt` ensures zero-knowledge privacy when syncing offsite to third-party cloud providers.
 
 ---
 

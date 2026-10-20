@@ -1,5 +1,5 @@
 # ==========================================
-# [Kova v2.17.11] Git Ignore Configuration
+# [Kova v2.17.13] Git Ignore Configuration
 # ==========================================
 
 # 1. Python Environment & Cache
@@ -54,20 +54,27 @@ data/auth_config.json
 data/profiles.json
 data/active_port.txt
 data/rclone.conf
-!data/app_settings.json
+data/app_settings.json
+!data/app_settings.json.example
 !data/profiles.json.example
 
-# 6. Build Artifacts & Binaries
+# 6. Build Artifacts & Binaries (External/GitHub Releases)
 build/
 dist/
 *.spec
 installer/Output/
 installer/runtime/
 emergency_restore/python/
+target/
 engine_rust/target/
 target_rust/
 
-# Binaries tracked separately via GitHub Releases
+# Executable binaries tracked separately via GitHub Releases
+*.exe
+*.dll
+*.sys
+tools/bin/rclone.exe
+tools/wimlib-imagex.exe
 kova_fast_engine.exe
 engine_rust/kova_fast_engine.exe
 web/static/*.exe

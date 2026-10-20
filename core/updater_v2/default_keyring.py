@@ -22,10 +22,10 @@ from .keyring import KeyRing, TrustedKey, KeyStatus
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_KEY_ID = "release_2026_default"
+DEFAULT_KEY_ID = "release_2026_v2"
 
-# kks3365550 공식 배포 Root Key 지문 (SHA-256 of keys/release_ed25519.pub)
-EXPECTED_ROOT_KEY_SHA256 = "5b4796560c4feca1a0d85f96dcf0bd9ee23bf595da9ac917e4876291bd73eb30"
+# kks3365550 공식 배포 Root Key 지문 (SHA-256 of keys/release_ed25519_v2.pub)
+EXPECTED_ROOT_KEY_SHA256 = "b621a2b26a166b9f6b9f09f2764339eda7d07f1b44fc6a0492291dfb9b6256eb"
 
 
 class TrustAnchorError(Exception):
@@ -39,7 +39,7 @@ def load_default_keyring(
     enforce_fingerprint: bool = True
 ) -> KeyRing:
     """
-    base_dir/keys/release_ed25519.pub 로부터 Root Key를 로드하여 KeyRing을 구성합니다.
+    base_dir/keys/release_ed25519_v2.pub 로부터 Root Key를 로드하여 KeyRing을 구성합니다.
 
     보안 보장:
     - 파일 부재 시: TrustAnchorError 발생 (Fail-Closed)
@@ -47,7 +47,7 @@ def load_default_keyring(
     - 지문 불일치(변조/바꿔치기) 시: TrustAnchorError 발생 (Fail-Closed)
     """
     abs_base = os.path.abspath(base_dir)
-    pub_path = os.path.abspath(os.path.join(abs_base, "keys", "release_ed25519.pub"))
+    pub_path = os.path.abspath(os.path.join(abs_base, "keys", "release_ed25519_v2.pub"))
 
     # 1. 파일 존재성 검증 (CWD 무관 절대 경로)
     if not os.path.exists(pub_path):
