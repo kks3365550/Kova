@@ -1,0 +1,12 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Ensure crypto keys and public keys always retain LF line endings
+keys/* text eol=lf
+*.pub text eol=lf
+*.key text eol=lf
+
+# Windows scripts
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.vbs text eol=crlf

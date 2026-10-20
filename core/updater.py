@@ -54,7 +54,7 @@ def get_trusted_public_key_paths() -> list:
     try:
         import hashlib
         with open(v2_path, "rb") as f:
-            digest = hashlib.sha256(f.read()).hexdigest().lower()
+            digest = hashlib.sha256(f.read().replace(b"\r\n", b"\n")).hexdigest().lower()
         if digest == V2_KEY_SHA256.lower():
             return [v2_path]
         logger.error(
