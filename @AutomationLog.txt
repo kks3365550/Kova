@@ -1,1 +1,0 @@
-2026-10-17 13:14:18.483 <string>[5] <module> -> Find Control Timeout(10s): {ClassName: 'Chrome_WidgetWin_1', ControlType: WindowControl}

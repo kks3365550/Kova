@@ -1,354 +1,194 @@
-# Kova: Enterprise Zero-Cloud Hybrid Backup & 3-Tier Disaster Recovery Engine
-> **Local Backup. Instant Recovery.**
+# Kova (v2.17.11)
+> **Local-First Windows Backup & Instant Disaster Recovery Engine**
 
-[![Version](https://img.shields.io/badge/version-v2.13.34-blue.svg?style=flat-square)](https://github.com/kks3365550/Kova/releases)
+[![Version](https://img.shields.io/badge/version-v2.17.11-blue.svg?style=flat-square)](https://github.com/kks3365550/Kova/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011%20%7C%20Server-0078D6.svg?style=flat-square&logo=windows)](https://microsoft.com/windows)
-[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB.svg?style=flat-square&logo=python)](https://www.python.org/)
-[![Architecture](https://img.shields.io/badge/architecture-x86__64-informational.svg?style=flat-square)](#architecture-overview)
-[![License](https://img.shields.io/badge/license-Enterprise%20Proprietary-red.svg?style=flat-square)](#license)
-[![Zero Cloud Dependency](https://img.shields.io/badge/dependency-Zero--Cloud%20Air--Gapped-success.svg?style=flat-square)](#deterministic-content-addressed-storage-cas)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
+[![Engine](https://img.shields.io/badge/engine-Python%203.10%2B%20%7C%20Rust-orange.svg?style=flat-square)](#architecture-overview)
+[![Packaging](https://img.shields.io/badge/installer-Inno%20Setup%206-purple.svg?style=flat-square)](#installation--deployment)
 
-An enterprise-grade, deterministic Windows backup orchestration and disaster recovery system designed for air-gapped, zero-cloud, and compliance-sensitive environments. **Kova** combines immutable Content-Addressed Storage (CAS), multi-chunk ingestion, high-speed offsite replication (SMB/NAS), non-intrusive Volume Shadow Copy Service (VSS) live captures, Windows Bare-Metal Recovery (BMR), and cryptographically verified self-updating pipelines.
-
----
-
-## Table of Contents
-
-- [Executive Summary](#executive-summary)
-- [Architecture Overview](#architecture-overview)
-- [Core Architectural Pillars](#core-architectural-pillars)
-  - [1. Deterministic Content-Addressed Storage (CAS)](#1-deterministic-content-addressed-storage-cas)
-  - [2. Zero-Lock Live Backups via Volume Shadow Copy (VSS)](#2-zero-lock-live-backups-via-volume-shadow-copy-vss)
-  - [3. 3-Tier Disaster Recovery Architecture](#3-3-tier-disaster-recovery-architecture)
-  - [4. Non-Elevated Least-Privilege Runtime & Hardened ACL](#4-non-elevated-least-privilege-runtime--hardened-acl)
-  - [5. Sub-15ms Invalidation-Driven Metadata Caching](#5-sub-15ms-invalidation-driven-metadata-caching)
-  - [6. Ghost/Silent Background Automation (Zero Window Flickering)](#6-ghostsilent-background-automation-zero-window-flickering)
-  - [7. Cryptographically Verified Over-the-Air (OTA) Updates](#7-cryptographically-verified-over-the-air-ota-updates)
-  - [8. Lifecycle-Aware Inno Setup 6+ Installer Engine](#8-lifecycle-aware-inno-setup-6-installer-engine)
-- [Directory Structure](#directory-structure)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Enterprise Installer Deployment](#enterprise-installer-deployment)
-  - [Developer / Portable CLI Execution](#developer--portable-cli-execution)
-- [Web Management Dashboard](#web-management-dashboard)
-- [Configuration Specification (`profiles.json`)](#configuration-specification-profilesjson)
-- [Disaster Recovery Runbooks](#disaster-recovery-runbooks)
-- [Release Verification & Integrity](#release-verification--integrity)
-- [License & Support](#license--support)
+**Kova** is a high-performance, deterministic Windows backup orchestration and disaster recovery system. Built for developer workstations, production PCs, and on-premises Windows servers, Kova delivers instantaneous incremental snapshots, crash-consistent containerized storage, and seamless bare-metal disaster recovery without external cloud dependencies.
 
 ---
 
-## Executive Summary
+## 📑 Table of Contents
 
-Standard enterprise backup tools often introduce external cloud dependencies, complex license servers, or severe performance overhead during file enumeration. **Kova** was engineered to solve these challenges in mission-critical industrial and enterprise environments:
-
-- **100% On-Premises & Air-Gapped**: Zero telemetry or cloud dependencies; all snapshots reside on local repositories or private network-attached storage.
-- **Enterprise Windows Compliance**: Full native integration with Windows VSS (`vssadmin`), Bare-Metal Recovery (`wbadmin`), Task Scheduler (`Register-ScheduledTask`), and Windows Credential/UAC isolation.
-- **Microsecond Precision & Storage Efficiency**: Block-level chunking, Zstandard compression, and SHA-256 deduplication reduce repository footprint by 60–85% across daily incremental snapshots.
-- **1-Second Disaster Recovery Drill & Pre-flight Estimator**: Instant verification of backup restoreability with cryptographic certificates and pre-backup disk overflow prevention.
+- [Key Highlights](#-key-highlights)
+- [Architecture Overview](#-architecture-overview)
+- [Core Features](#-core-features)
+  - [1. High-Speed Incremental Engine (Rust + Python)](#1-high-speed-incremental-engine-rust--python)
+  - [2. Track 2 Pack Container & Crash-Consistent Storage](#2-track-2-pack-container--crash-consistent-storage)
+  - [3. Zero-Lock Live Backups via Windows VSS](#3-zero-lock-live-backups-via-windows-vss)
+  - [4. Ghost / Silent Background Execution](#4-ghost--silent-background-execution)
+  - [5. 3-2-1 Offsite Replication (Optional Cloud/NAS)](#5-3-2-1-offsite-replication-optional-cloudnas)
+  - [6. Granular & Bare-Metal Recovery](#6-granular--bare-metal-recovery)
+- [Installation & Deployment](#-installation--deployment)
+  - [Method 1: Windows Installer (Inno Setup)](#method-1-windows-installer-inno-setup)
+  - [Method 2: Windows Package Manager (winget)](#method-2-windows-package-manager-winget)
+  - [Method 3: Portable / Developer Setup](#method-3-portable--developer-setup)
+- [Web Management Dashboard](#-web-management-dashboard)
+- [CLI Reference](#-cli-reference)
+- [Security & Privacy](#-security--privacy)
+- [License](#-license)
 
 ---
 
-## Architecture Overview
+## ⚡ Key Highlights
 
-```
-                               ┌──────────────────────────────────────────────┐
-                               │             Operator Interfaces              │
-                               │  ┌──────────────────────┐  ┌──────────────┐  │
-                               │  │ Modern HTML5 Web UI  │  │ Windows Tray │  │
-                               │  │   (Port 8765, SSE)   │  │ (pystray)    │  │
-                               │  └──────────┬───────────┘  └──────┬───────┘  │
-                               └─────────────┼─────────────────────┼──────────┘
-                                             │ HTTP REST / SSE     │ Native RPC
-                                             ▼                     ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                       Kova Host Runtime (Non-Elevated)                      │
-│                                                                             │
-│  ┌───────────────────────┐  ┌───────────────────────┐  ┌─────────────────┐  │
-│  │ SnapshotMetadataCache │  │  Profile & Auth Guard │  │  OTA Engine     │  │
-│  │ (~11ms on 220k files) │  │  (HMAC SHA-256, RBAC) │  │  (GitHub API)   │  │
-│  └──────────┬────────────┘  └──────────┬────────────┘  └────────┬────────┘  │
-│             │                          │                        │           │
-│             ▼                          ▼                        ▼           │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                     Core Backup & Snapshot Engine                     │  │
-│  │   - Worker Pool (Multi-threaded SHA-256 Hashing & Chunk Deduplication)│  │
-│  │   - Exclusion Evaluator (Regex, Glob, System Directory Blacklist)     │  │
-│  └──────────────────────────────────┬────────────────────────────────────┘  │
-└─────────────────────────────────────┼───────────────────────────────────────┘
-                                      │
-              ┌───────────────────────┴───────────────────────┐
-              ▼                                               ▼
-┌───────────────────────────┐                   ┌───────────────────────────┐
-│ Windows VSS Bridge (UAC)  │                   │ Immutable Repository      │
-│ - Live open-file locks    │                   │ - Content-Addressed Blobs │
-│ - Volume snapshot shadow  │                   │ - Metadata Manifests JSON │
-│ - Windows wbadmin (BMR)   │                   │ - Zstandard Compression   │
-└───────────────────────────┘                   └───────────────────────────┘
+- **Local-First & Air-Gapped Ready**: Operates 100% on-premises with zero telemetry. Repository stays on your local NVMe/SSD, secondary disk, or private NAS.
+- **Hybrid Core Engine**: Leverages a compiled Rust binary (`engine_rust`) for microsecond metadata scanning and multithreaded Zstandard compression (`threads=-1`), coordinated by Python core management.
+- **Windows-Native Integration**: Full support for Volume Shadow Copy Service (VSS), Windows Image Bare-Metal Backup (`wbadmin`), Windows Task Scheduler, and System Tray (`tray_app.py`).
+- **Zero Console Window Flickering**: Background scheduled tasks execute invisibly via VBScript/`CREATE_NO_WINDOW` wrappers without popping up CMD windows.
+- **Deterministic Crash Consistency**: Pack container architecture with atomic journals, SHA-256 integrity verification, and automatic transaction rollback on sudden power loss.
+
+---
+
+## 🏗️ Architecture Overview
+
+```mermaid
+flowchart TD
+    subgraph Sources["Local Workstation / Server"]
+        SourceFiles["Active Files & Locked DBs"]
+        VSS["Windows VSS Snapshot (vssadmin)"]
+    end
+
+    subgraph CoreEngine["Kova Engine (v2.17.11)"]
+        Scanner["Rust Fast Scanner (mtime fast-path)"]
+        Compressor["Zstandard Parallel Compression (Full-Core)"]
+        Packer["Track 2 Pack Container & Deduplication"]
+        Manifest["Atomic Manifest & Multi-Snapshot Index"]
+    end
+
+    subgraph Storage["Backup Repository"]
+        LocalRepo["Local Repository (D:\\MyBackup_Repository)"]
+        PackBlobs["Pack Files (.pack) + Metadata Index"]
+    end
+
+    subgraph Offsite["Optional 3-2-1 Replication"]
+        RcloneSync["Rclone Sync Service"]
+        CloudNAS["Private NAS (SMB) / Google Drive"]
+    end
+
+    SourceFiles -->|Live Lock Detection| VSS
+    VSS --> Scanner
+    SourceFiles -->|Normal Files| Scanner
+    Scanner --> Compressor
+    Compressor --> Packer
+    Packer --> PackBlobs
+    Manifest --> LocalRepo
+    PackBlobs --> LocalRepo
+    LocalRepo -->|Optional Background Sync| RcloneSync
+    RcloneSync --> CloudNAS
 ```
 
 ---
 
-## Core Architectural Pillars
+## 🛡️ Core Features
 
-### 1. Deterministic Content-Addressed Storage (CAS)
-Every ingested file is processed through a deterministic streaming hash pipeline (SHA-256). Files sharing identical bitstreams are stored as a single immutable compressed blob (`.blob`), drastically minimizing storage requirements across overlapping snapshot trees.
-- **Immutable Storage**: Snapshots are metadata manifests referencing immutable content hashes.
-- **Atomic Commits**: Snapshot entries are staged in temporary transaction buffers before being committed to the manifest database, preventing corrupt index states upon power failure or process termination.
+### 1. High-Speed Incremental Engine (Rust + Python)
+- **mtime Fast-Path Scan**: Bypasses heavy full-file re-reading for unchanged files by comparing metadata cache against current disk states.
+- **5ms Timestamp Tolerance & Index Union**: Prevents false modified/new file alerts caused by FAT32/NTFS microsecond rounding differences.
+- **Full-Core Multithreading**: Utilizes all available CPU cores for Zstandard chunk compression without throttling disk NVMe throughput.
 
-### 2. Zero-Lock Live Backups via Volume Shadow Copy (VSS)
-Enterprise workloads inevitably maintain exclusive write locks on production databases, PST files, and active system logs.
-- Kova delegates live snapshot requests to the Windows Volume Shadow Copy Service subsystem.
-- Captures point-in-time volume snapshots (`\\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy*`), allowing 100% read consistency without interrupting running host services or database engines.
+### 2. Track 2 Pack Container & Crash-Consistent Storage
+- **Pack Ingestion**: Small files and chunk streams are packed into contiguous container files to minimize filesystem inode/file-handle fragmentation.
+- **Power Loss Self-Healing**: Write-Ahead Logging (WAL) and atomic journal commits prevent repository corruption if power cuts out mid-backup.
 
-### 3. 3-Tier Disaster Recovery Architecture
-Disasters vary from accidental file deletion to total hardware incineration. Kova enforces a tiered recovery matrix:
+### 3. Zero-Lock Live Backups via Windows VSS
+- Files actively locked by databases, SQLite WALs, running IDEs, or Microsoft Office are captured cleanly via native Windows VSS snapshots without terminating user processes.
 
-| Recovery Tier | Scenario | Recovery Mechanism | Typical RTO |
-| :--- | :--- | :--- | :--- |
-| **Tier 1: Point-in-Time CAS Rollback** | Accidental deletion, file corruption, or ransomware | Web Dashboard / CLI file-tree rollback directly from CAS manifests | **< 3 Minutes** |
-| **Tier 2: Bare-Metal Recovery (BMR)** | Windows OS corruption, registry failure, unbootable disk | Integration with Windows Native `wbadmin` system state images via Windows Recovery Environment (WinRE) | **15–30 Minutes** |
-| **Tier 3: Standalone Emergency DR** | Total application corruption or environment isolation | Self-contained zero-dependency Python script (`tools/disaster_recovery.py`) capable of parsing raw blobs without the server running | **Immediate** |
+### 4. Ghost / Silent Background Execution
+- Scheduled backups run invisibly using `start_silent.vbs` or `pythonw.exe`. No black command prompt windows pop up to disrupt active gaming or workflow sessions.
 
-### 4. Non-Elevated Least-Privilege Runtime & Hardened ACL
-Prior to version `v2.10.4`, running background services in `C:\Program Files` frequently encountered `WinError 5 (Access is Denied)` unless granted full administrative privileges. Kova resolves this through precise Windows Discretionary Access Control Lists (DACL):
-- **Binaries & Core (`C:\Program Files\Kova`)**: Read-and-Execute only for standard `Users`; modifications restricted strictly to `Administrators` and `SYSTEM`.
-- **Mutable State (`{app}\data` & `{app}\logs`)**: Explicit `Users: Modify` inheritance configured directly at the Inno Setup filesystem layer:
-  ```iss
-  [Dirs]
-  Name: "{app}\data"; Permissions: users-modify
-  Name: "{app}\logs"; Permissions: users-modify
-  ```
-- Protects binary integrity against tampering while enabling normal non-elevated user execution for daily scheduled backups and system tray operation.
+### 5. 3-2-1 Offsite Replication (Optional Cloud/NAS)
+- Follows the industry-standard 3-2-1 backup strategy.
+- Built-in integration with `rclone` allows mirroring local snapshots to private NAS (SMB), WebDAV, or Google Drive.
+- Excludes transient files (`backup.lock`, temporary buffers) and supports remote chunk pruning (`prune_storage`).
 
-### 5. Sub-15ms Invalidation-Driven Metadata Caching
-In repositories containing over 220,000 files and deep directory hierarchies, naive recursive scanning causes severe disk I/O bottlenecks and high UI latency.
-- Kova features an in-memory `SnapshotMetadataCache` with timestamp- and size-driven invalidation.
-- Warm-cache manifest resolution benchmarks at **~11ms** across 220,000+ indexed files, delivering instant response times across the Web Dashboard.
-
-### 6. Ghost/Silent Background Automation (Zero Window Flickering)
-Windows batch scripts (`.bat`) invoked by the Windows Task Scheduler (`schtasks`) frequently produce brief black console popups that interrupt active users.
-- **Ghost Invocation Protocol**: All scheduled background tasks are executed through custom VBScript wrappers (`wscript.exe`) utilizing `SW_HIDE (Window Style 0)`:
-  ```vbs
-  Set WshShell = CreateObject("WScript.Shell")
-  WshShell.Run "pythonw.exe run.py --backup-profile default", 0, False
-  ```
-- External subprocess invocations within Python strictly enforce `creationflags=subprocess.CREATE_NO_WINDOW`, eliminating desktop interruptions.
-
-### 7. Cryptographically Verified Over-the-Air (OTA) Updates
-The auto-update engine communicates securely with the official GitHub Releases API without depending on peer-to-peer relay nodes:
-1. **Manifest Validation**: Release manifests are checked for semantic version progression (`semver`).
-2. **Cryptographic Checksumming**: SHA-256 hashes of incoming installer payloads (`Setup.exe`) are validated before staging.
-3. **UAC Boundary Isolation**: Update payload execution explicitly triggers Windows UAC elevation, preserving strict separation between runtime operation and binary replacement.
-
-### 8. Lifecycle-Aware Inno Setup 6+ Installer Engine
-Version `v2.10.6+` implements advanced installer lifecycle hooks to eliminate Windows "File in Use" locks during upgrades and uninstalls:
-- **`InitializeSetup` Win32 Detection**: Custom Pascal scripting scans for listening ports (8765) and processes before initiating file copies.
-- **Targeted Process Termination**: Gracefully signals system tray and web worker processes, terminating only processes matching the application's unique executable path.
-- **Directive Enforcement**: Configured with `CloseApplications=force` and `RestartApplications=no` for deterministic enterprise deployment.
-
-### 9. High-Speed Offsite Replication (3-2-1 Rule)
-- Native multi-threaded network replication (SMB/NAS) using optimized Robocopy pipelines with sub-second pre-flight health checks.
-- Guarantees complete fault isolation: offsite network timeouts or offline target hosts never degrade local snapshot success.
-
-### 10. Multi-Chunk Ingestion & Containerized Pack Storage
-- Advanced split-chunk pipeline with deduplication support for ultra-large files and containerized pack storage to eliminate filesystem inode/metadata exhaustion.
+### 6. Granular & Bare-Metal Recovery
+- **Snapshot Time Machine**: Browse filesystem states at any historical snapshot point.
+- **Selective Restore**: Restore individual files, directories, or entire volume roots.
+- **Standalone Emergency Kit**: `emergency_restore/` contains standalone scripts and offline tools to restore files even if the main Kova installation or Python environment is damaged.
 
 ---
 
-## Directory Structure
+## 🚀 Installation & Deployment
 
-```text
-백업시스템/
-├── core/                         # Core backup & snapshot engine
-│   ├── backup.py                 # Core orchestration & worker dispatch
-│   ├── cas.py                    # Content-Addressed Storage & blob indexing
-│   ├── vss.py                    # Windows Volume Shadow Copy Service wrapper
-│   ├── scheduler.py              # Windows Task Scheduler automation
-│   ├── metadata_cache.py         # Sub-15ms in-memory manifest cache
-│   └── crypto.py                 # Streaming SHA-256 & integrity checkers
-├── web/                          # Web UI server & API backend
-│   ├── app.py                    # FastAPI/Starlette dashboard server (Port 8765)
-│   ├── sse.py                    # Real-time Server-Sent Events stream
-│   ├── static/                   # CSS, Vanilla JS, and UI assets
-│   └── templates/                # Responsive HTML5 dashboards
-├── tray/                         # Windows system tray integration
-│   ├── tray_app.py               # pystray integration & notification hooks
-│   └── icon.ico                  # Application system tray asset
-├── tools/                        # Operational tooling & release utilities
-│   ├── disaster_recovery.py      # Tier 3 standalone recovery CLI
-│   ├── release.py                # Zero-touch semantic release pipeline
-│   ├── update_checker.py         # Direct GitHub Releases API client
-│   └── verify_integrity.py       # Snapshot manifest verification suite
-├── scripts/                      # Windows automation & launcher scripts
-│   ├── start_silent.vbs          # Ghost background launcher (SW_HIDE)
-│   ├── start_tray.vbs            # System tray launcher
-│   └── stop_backup_system.bat    # Safe process-tree terminator
-├── installer/                    # Inno Setup compilation sources
-│   └── BackupSystem.iss          # Inno Setup 6+ manifest with DACL config
-├── data/                         # Mutable user state (DACL: Users Modify)
-│   ├── profiles.json             # Backup targets & exclusion rules
-│   └── auth.json                 # Dashboard credentials & HMAC salts
-├── logs/                         # Rolling execution logs (DACL: Users Modify)
-│   └── backup_system.log
-├── run.py                        # Unified CLI and application bootstrap
-└── VERSION                       # Semantic version descriptor (v2.10.6)
-```
+### Method 1: Windows Installer (Inno Setup)
+The recommended deployment method for standard Windows PCs:
+1. Download `BackupSystem_Setup_v2.17.11.exe` from [GitHub Releases](https://github.com/kks3365550/Kova/releases).
+2. Run the installer. It bundles an embedded CPython runtime, so no prior Python installation is required.
+3. The installer automatically terminates any previous instances, registers the background service, and creates Desktop/Start Menu shortcuts.
 
----
-
-## Getting Started
-
-### Prerequisites
-- **Operating System**: Windows 10 (1809+), Windows 11, or Windows Server 2016/2019/2022 (x86_64).
-- **Runtimes**: Python 3.10+ (included in standard enterprise installer package).
-- **Privileges**: Standard user permissions for daily operation; Administrator elevation required only during initial installer setup.
-
-### Enterprise & Windows winget Deployment
-#### Option 1: Microsoft winget (Recommended)
-```cmd
+### Method 2: Windows Package Manager (winget)
+```powershell
+# Install via winget (Official package submission: microsoft/winget-pkgs#450485)
 winget install kks3365550.BackupSystem
 ```
 
-#### Option 2: Standalone Inno Setup Installer
-1. Download the latest `Kova_Setup_vX.Y.Z.exe` from [GitHub Releases](https://github.com/kks3365550/Kova/releases).
-2. Execute the installer with standard administrator rights:
-   ```cmd
-   Kova_Setup_v2.13.34.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
-   ```
-3. The installer automatically configures:
-   - File permission inheritance (`Users: Modify` for `data/` and `logs/`).
-   - Windows Startup registration (`HKCU\Software\Microsoft\Windows\CurrentVersion\Run`).
-   - Default backup schedule in Windows Task Scheduler.
-
-#### 🛡️ Windows SmartScreen & Security Notice
-When running the installer on Windows 10/11 for the first time, Microsoft Defender SmartScreen may display a blue dialog stating **"Windows protected your PC" (인식할 수 없는 앱)**:
-- **Why it appears**: Windows SmartScreen displays this temporary warning for newly released, independent/open-source binaries until sufficient download reputation accumulates across Microsoft networks. It does **not** indicate malware.
-- **How to proceed**:
-  1. Click **More info (추가 정보)** on the blue dialog.
-  2. Click **Run anyway (실행)** to proceed with the verified installation.
-- **Binary Integrity Verification**: Always verify the cryptographic SHA-256 hash published in the official GitHub Release:
-  ```powershell
-  Get-FileHash .\Kova_Setup_v2.13.34.exe -Algorithm SHA256
-  ```
-  Expected SHA-256: `46e11bd31847455f6f9f6ad7502679e70ad1149e97ecffd322a3eb0590d1a562`
-- **VirusTotal Clean Certification**: All releases are verified 100% clean (0 detections) across 60+ antivirus engines. Check the SHA-256 hash directly on [VirusTotal](https://www.virustotal.com).
-
-### Developer / Portable CLI Execution
-For portable environments or source installations:
-
+### Method 3: Portable / Developer Setup
+Clone the repository and run directly:
 ```powershell
 # 1. Clone repository
 git clone https://github.com/kks3365550/Kova.git
 cd Kova
 
-# 2. Install production dependencies
+# 2. Set up virtual environment
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 
-# 3. Initialize default profiles and DACL permissions
-python run.py --init
-
-# 4. Execute an immediate backup using the default profile
-python run.py --backup --profile default
-
-# 5. Launch the Web Management Dashboard
-python run.py --server --port 8765
+# 3. Launch Web Dashboard
+python run.py
 ```
 
 ---
 
-## Web Management Dashboard
+## 🖥️ Web Management Dashboard
 
-The integrated dashboard runs locally at `http://127.0.0.1:8765` and provides full administrative control without external internet dependencies:
-
-- **Live Progress Tracking**: Server-Sent Events (SSE) broadcast real-time throughput (MB/s), file ingestion count, and deduplication efficiency.
-- **Point-in-Time Explorer**: Browse previous snapshot generations, search by filename or pattern, and initiate single-file or recursive directory restorations.
-- **Storage Metrics**: Visual breakdown of raw dataset size versus compressed, deduplicated CAS repository footprint.
-- **Audit Logs**: Filterable execution traces, VSS allocation notices, and task scheduler completion statuses.
-
----
-
-## Configuration Specification (`profiles.json`)
-
-Backup targets and schedules are managed deterministically via `data/profiles.json`:
-
-```json
-{
-  "profiles": {
-    "default": {
-      "name": "Production Data & Documents",
-      "sources": [
-        "C:\\Users\\Administrator\\Documents",
-        "D:\\ProductionDB"
-      ],
-      "destination": "E:\\Backups\\Repository",
-      "vss_enabled": true,
-      "compression": "zstd",
-      "compression_level": 3,
-      "exclusions": {
-        "patterns": ["*.tmp", "~$*", "*.cache"],
-        "directories": ["node_modules", ".git", "AppData\\Local\\Temp"]
-      },
-      "retention": {
-        "keep_daily": 7,
-        "keep_weekly": 4,
-        "keep_monthly": 12
-      }
-    }
-  }
-}
+Kova includes a local web management dashboard accessible at:
+```text
+http://localhost:8765
 ```
 
+- **Real-Time SSE Streaming**: Live progress bars, transfer throughput (MB/s), and real-time logs via Server-Sent Events.
+- **Interactive File Explorer**: Explore snapshot trees and download individual files directly in the browser.
+- **Profile Manager**: Configure backup sources, retention policies (daily/weekly/monthly), compression levels, and excluded patterns.
+- **System Health & Storage Metrics**: Monitor repository storage consumption, deduplication ratios, and offsite sync status.
+
 ---
 
-## Disaster Recovery Runbooks
+## 💻 CLI Reference
 
-### Runbook 1: Tier 1 Single File or Folder Rollback
-1. Open the Web Dashboard (`http://127.0.0.1:8765`).
-2. Navigate to **Snapshots** and select the desired point-in-time timestamp.
-3. Locate the target file or directory in the manifest browser.
-4. Click **Restore**, choose target path (in-place or alternate directory), and confirm.
-
-### Runbook 2: Tier 3 Standalone CLI Emergency Restore
-In the event of complete application or database corruption where the Web UI cannot be served:
+Kova can be managed fully from the terminal:
 
 ```powershell
-# Syntax: python tools/disaster_recovery.py --repo <REPO_DIR> --snapshot <SNAPSHOT_ID> --target <RESTORE_DIR>
-python tools/disaster_recovery.py `
-  --repo "E:\Backups\Repository" `
-  --snapshot "latest" `
-  --target "C:\RestoredData"
-```
-*The standalone recovery tool operates with standard Python library modules and has zero external dependencies.*
+# Run immediate backup using the default profile
+python cli.py backup
 
----
+# Run backup with a specific profile
+python cli.py backup --profile prof_default
 
-## Release Verification & Integrity
+# List all available snapshots
+python cli.py list
 
-All official release binaries are compiled via clean-room GitHub Actions workflows and signed with cryptographic checksums.
+# Verify repository integrity
+python cli.py verify
 
-To verify the integrity of your local deployment:
-
-```powershell
-# Compute SHA-256 hash of downloaded installer
-Get-FileHash -Algorithm SHA256 .\BackupSystem_Setup_v2.13.6.exe
-
-# Compare with published release manifest
-python tools/verify_integrity.py --binary .\BackupSystem_Setup_v2.13.6.exe
+# Restore a specific snapshot to target directory
+python cli.py restore <snapshot_id> --target C:\Restore_Target
 ```
 
 ---
 
-## Windows Enterprise Compliance
+## 🔒 Security & Privacy
 
-- **Line Ending Integrity**: All scripts (`.bat`, `.cmd`, `.vbs`, `.py`, `.json`, `.iss`) strictly enforce Windows Standard CRLF (`\r\n`) line endings.
-- **UAC Isolation**: Clear boundary separation between unprivileged runtime execution (`data/`, `logs/`) and administrative setup/update operations (`Program Files`).
-- **Telemetry Free**: No data packets leave the host boundary; zero external API calls except when explicitly checking for updates via GitHub.
+- **Data Privacy**: No telemetry, analytics, or external phone-home requests.
+- **Credential Safety**: Master authentication credentials, tokens, and local profile configurations are stored locally in `data/` and excluded from version control (`.gitignore`).
+- **Signature Verification**: Release artifacts and updates are digitally verified using Ed25519 signatures (`keys/release_ed25519_v2.pub`).
 
 ---
 
-## License & Support
+## 📄 License
 
-Distributed under an **Enterprise Proprietary License**. Unauthorized distribution, reverse engineering, or cloud hosting is prohibited.
-
-For technical inquiries, bug reports, and deployment audits, please open an issue in the official [GitHub Issue Tracker](https://github.com/kks3365550/Kova/issues).
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.

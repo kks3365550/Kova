@@ -1,4 +1,8 @@
-# Python
+# ==========================================
+# [Kova v2.17.11] Git Ignore Configuration
+# ==========================================
+
+# 1. Python Environment & Cache
 __pycache__/
 *.py[cod]
 *$py.class
@@ -7,18 +11,38 @@ __pycache__/
 venv/
 env/
 
-# Local backup repository testing
+# 2. Local Backup Testing Repositories
 backup_repository/
+test_sandbox/
+sandbox/
+tests/test_repo/
+tests/test_repo2/
+scratch/test_backup_repo/
+scratch/
+backup/v2.9.10/
 
-# Emergency restore binary runtime (track scripts, ignore heavy python binaries)
-emergency_restore/python/
-
-# Temporary files & logs
+# 3. Temporary Files & Logs
 *.tmp
 *.temp
 *.log
+@AutomationLog.txt
+*raw_response*
+*cross_review*
+desktop_qwen_*.txt
+gpt_perspective_cross_review.txt
+real_gpt_*.md
 
-# Sensitive credentials & runtime states
+# 4. Sensitive Credentials & Keys (Keep private keys local, track ONLY public keys)
+keys/*.key
+keys/*.json
+keys/*cred*
+keys/*private*
+keys/*.pem
+keys/*.p12
+keys/*.pfx
+!keys/*.pub
+
+# 5. Sensitive Data & Machine-Specific State
 config/deep_scan_state.json
 client_secret*.json
 project-*.json
@@ -26,58 +50,34 @@ project-*.json
 *credential*.json
 data/*token*.json
 data/gdrive_oauth_token.json
+data/auth_config.json
+data/profiles.json
+data/active_port.txt
+data/rclone.conf
+!data/app_settings.json
+!data/profiles.json.example
 
-# OS specific
-Thumbs.db
-Desktop.ini
-.DS_Store
-
-# Build artifacts
+# 6. Build Artifacts & Binaries
 build/
 dist/
 *.spec
 installer/Output/
 installer/runtime/
-# Keys & Secrets (Keep private keys local, only track public keys)
-keys/*.key
-keys/*.json
-keys/*cred*
-keys/*private*
-
-# Local AI working artifacts
-.ai/
-
-# Test sandboxes & temporary test repositories
-test_sandbox/
-sandbox/
-tests/test_repo/
-tests/test_repo2/
-scratch/test_backup_repo/
-scratch/
-
-# 런타임 상태 파일 - 매 백업마다 last_run / last_snapshot_id 가 갱신된다.
-# 머신마다 경로가 다르고 값이 계속 바뀌므로 추적하면 커밋 노이즈가 된다.
-# 예시 설정은 data/profiles.json.example 을 사용한다.
-data/profiles.json
-
-# 마스터 비밀번호 해시와 salt. 파일이 유출되면 오프라인 크래킹의 대상이 되고,
-# git 이력은 "한 번 유출되면 되돌릴 수 없다". 로컬에만 둔다.
-# 2026-10-07 이전 커밋(1813a21 등 3건)에 이미 남아 있으므로 필요하면
-# git filter-repo 로 이력을 정리해야 한다.
-data/auth_config.json
-data/active_port.txt
-
-# Legacy snapshot (v2.9.10) - 구버전 아카이브라 빌드/검증에서 참조하지 않는다.
-# 하위 개인키는 tools/build_v2921_release.py 가 서명용으로 찾으므로
-# 로컬에는 남겨 두되 git 에서는 제외한다.
-backup/v2.9.10/
-
-# 빌드/배포 산출물
-dist/
-installer/runtime/
-
-data/rclone.conf
-
-# Rust target directories
+emergency_restore/python/
 engine_rust/target/
 target_rust/
+
+# Binaries tracked separately via GitHub Releases
+kova_fast_engine.exe
+engine_rust/kova_fast_engine.exe
+web/static/*.exe
+
+# 7. Local AI Working Directory
+.ai/
+
+# 8. OS & Editor Specific
+Thumbs.db
+Desktop.ini
+.DS_Store
+.vscode/
+.idea/

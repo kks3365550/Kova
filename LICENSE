@@ -1,74 +1,21 @@
-Enterprise Proprietary License
+MIT License
+
 Copyright (c) 2026 kks3365550
 
-NOTICE: This software is proprietary and confidential. Unauthorized copying,
-distribution, modification, sublicensing, reverse engineering, or cloud hosting
-of this software, in whole or in part, is strictly prohibited without prior
-written authorization from the copyright holder.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-1. GRANT OF LICENSE
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
 
-   Internal use only. Permission is granted to employees and authorized
-   contractors of the copyright holder to install, execute, and operate this
-   software solely for the copyright holder's internal business purposes on
-   hardware or infrastructure owned or controlled by the copyright holder.
-
-   Any use beyond internal business purposes requires a separate written
-   agreement with the copyright holder.
-
-2. RESTRICTIONS
-
-   The following are prohibited without prior written authorization:
-
-   (a) Distribution, sublicensing, or sale of this software, in whole or in part
-   (b) Hosting or making this software available to third parties over a network
-   (c) Reverse engineering, decompilation, or disassembly, except to the extent
-       such restriction is prohibited by applicable law
-   (d) Removing, altering, or obscuring any copyright, trademark, or proprietary
-       notice in the software
-   (e) Using the software to develop a competing product or service
-
-3. CONFIDENTIALITY
-
-   This software contains trade secrets and confidential business information.
-   Users shall not disclose such information to any third party and shall use
-   the same degree of care to protect it as they use their own confidential
-   information, and in no event less than reasonable care.
-
-4. DATA AND BACKUP RESPONSIBILITY
-
-   This software performs data backup operations. The copyright holder makes no
-   warranty regarding the completeness, accuracy, or recoverability of any
-   backup created by this software. It is the user's sole responsibility to
-   verify backup integrity and test restoration procedures on a regular basis.
-
-5. TERMINATION
-
-   Any breach of this license terminates all rights granted hereunder
-   immediately. Upon termination, all copies of the software must be destroyed.
-
-6. NO WARRANTY
-
-   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-   FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
-
-7. LIMITATION OF LIABILITY
-
-   IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY DIRECT, INDIRECT,
-   INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
-   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
-   OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-   EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-
-8. GOVERNING LAW
-
-   This license shall be governed by and construed in accordance with the laws
-   of the Republic of Korea.
-
----
-
-BackupSystem: Enterprise Zero-Cloud Hybrid Backup & Disaster Recovery Engine
-Repository: https://github.com/kks3365550/BackupSystem
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
