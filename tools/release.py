@@ -696,11 +696,18 @@ def main():
     parser.add_argument('-m', '--message', type=str, default="Automated engine build and bugfix release", help="Commit and changelog message")
     parser.add_argument('--skip-restart', action="store_true", help="Skip local server restart after release")
     parser.add_argument('--skip-remote', action="store_true", help="Skip remote git push and GitHub Release upload")
+    parser.add_argument('--dry-run', action="store_true", help="Build and audit the update package for the current version only (no version bump, git, installer, sync or publish)")
     args = parser.parse_args()
 
     print("=" * 60)
     print("   Backup System Release & Versioning Pipeline")
     print("=" * 60)
+
+    if args.dry_run:
+        # CI 용: 현재 버전으로 업데이트 패키지를 만들고 개인키 유출 감사를 통과하는지만 확인한다.
+        build_self_extracting_updater(get_current_version())
+        print("DRY-RUN OK: update package built and audited (nothing was published).")
+        return
 
     # 릴리즈 착수 전 보안 감사(scan_secrets), 정적 분석(pyflakes), 스마트 게이트키퍼(수명주기/UI계약), 4대 회귀 및 레이턴시 SLA 사전 검증
     run_preflight_security_gate()

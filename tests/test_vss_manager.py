@@ -69,7 +69,9 @@ class TestVSSManager(unittest.TestCase):
             device_path="\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy1"
         )
 
-        with patch.object(VSSContext, "_delete_shadow", return_value=True) as mock_del:
+        # _setup 을 막는다. 관리자 권한 러너(CI)에서는 실제 섀도 복사본이 생성되어
+        # 위에서 주입한 shadows 가 덮어써지고 검증이 환경에 의존하게 된다.
+        with patch.object(VSSContext, "_setup"),                 patch.object(VSSContext, "_delete_shadow", return_value=True) as mock_del:
             try:
                 with ctx:
                     raise RuntimeError("Simulated unexpected crash during backup")

@@ -91,6 +91,14 @@ jobs:
       # PYTHONIOENCODING 을 명시한다. windows-latest 러너의 표준출력은 cp1252
       # 라서 한국어 print 가 UnicodeEncodeError 로 죽는다. 2026-10-08 에
       # tools/rotate_release_key.py 가 이 이유로 CI 에서 죽었다.
+      # tests/test_rust_adapter.py 가 실제 엔진 실행 파일을 요구한다.
+      # 저장소에는 빌드 산출물을 두지 않으므로 CI 에서 직접 빌드한다.
+      - name: Rust 엔진 빌드
+        env:
+          # engine_rust/.cargo/config.toml 의 target-dir 은 개발 PC 절대 경로라서 덮어쓴다.
+          CARGO_TARGET_DIR: engine_rust/target
+        run: cargo build --release --locked --manifest-path engine_rust/Cargo.toml
+
       - name: 빠른 회귀 테스트 (CI 게이트)
         env:
           PYTHONIOENCODING: utf-8
@@ -100,8 +108,6 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: python -m pytest -q
-        continue-on-error: true
-        # 장시간 테스트가 포함될 수 있어 실패를 관찰용으로만 기록한다.
         # 게이트(위 단계)는 반드시 통과해야 한다.
 
       - name: 테스트 로그 아티팩트 업로드 (실패 시)
@@ -131,7 +137,8 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: 배포 매니페스트 생성
+      - name: 업데이트 패키지 빌드·감사 (dry-run)
+        env:
+          PYTHONIOENCODING: utf-8
         run: python tools/release.py --dry-run
-        continue-on-error: true
           # 빌드 산출물은 운영 사내 배포 기준이며, 공개 배포는 별도 승인 절차다.
