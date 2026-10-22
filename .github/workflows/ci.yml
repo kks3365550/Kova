@@ -86,7 +86,7 @@ jobs:
       - name: 의존성 설치
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.txt
+          python -m pip install -c constraints.txt -r requirements-dev.txt
 
       # 한 줄로 적는다. PowerShell 에서 '\' 로 줄을 잇는 것은 Linux 셸 문법이라
       # 백슬래시가 그대로 인자로 전달되고 pytest 가 드라이브 루트(D:\)까지
@@ -145,7 +145,7 @@ jobs:
       - name: 의존성 설치
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          python -m pip install -c constraints.txt -r requirements.txt
 
       - name: 업데이트 패키지 빌드·감사 (dry-run)
         env:
