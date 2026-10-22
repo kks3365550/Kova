@@ -446,8 +446,8 @@ class GoogleDriveOffsiteReplicator:
                     creds = g_service_account.Credentials.from_service_account_file(
                         default_cand, scopes=self.GDRIVE_SCOPES
                     )
-                except Exception:
-                    pass
+                except Exception as e_cred:
+                    logger.warning("기본 자격 증명 파일 로드 실패 (%s): %s", default_cand, e_cred)
 
         if not creds:
             env_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
@@ -456,8 +456,8 @@ class GoogleDriveOffsiteReplicator:
                     creds = g_service_account.Credentials.from_service_account_file(
                         env_path, scopes=self.GDRIVE_SCOPES
                     )
-                except Exception:
-                    pass
+                except Exception as e_cred:
+                    logger.warning("GOOGLE_APPLICATION_CREDENTIALS 로드 실패 (%s): %s", env_path, e_cred)
 
         if not creds:
             raise FileNotFoundError(

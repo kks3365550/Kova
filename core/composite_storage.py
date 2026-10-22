@@ -7,10 +7,13 @@ Production Composite Storage Facade providing unified logical interface over:
 Dual-Read: Pack in-memory index first -> Individual Blob fallback
 """
 
+import logging
 import zlib
 import hashlib
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
+
+logger = logging.getLogger("BackupSystem")
 
 from core.pack_format import (
     PackContainerReader,
@@ -83,7 +86,8 @@ class CompositeStorageFacade:
                     new_pack_readers[pack_id] = reader
                     for chunk_hash in reader.index.keys():
                         new_pack_index_map[chunk_hash.lower()] = pack_id
-                except Exception:
+                except Exception as e_rec:
+                    logger.warning("팩 인덱스 복구 실패, 팩 제외 (%s): %s", pack_file, e_rec)
                     continue
 
         # 2. Atomic Swap: Replace references only after full scan is complete

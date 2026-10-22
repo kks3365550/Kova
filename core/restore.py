@@ -234,10 +234,10 @@ class RestoreEngine:
                 for rf in reg_files_to_import:
                     try:
                         import_registry_file(rf)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
+                    except Exception as e_reg:
+                        log.warning("레지스트리 파일 복원 실패 (%s): %s", rf, e_reg)
+            except Exception as e_reg_mod:
+                log.warning("레지스트리 복원 모듈 로드 실패: %s", e_reg_mod)
 
         # Post-restore: Refresh desktop shortcuts & links to guarantee no broken links
         try:

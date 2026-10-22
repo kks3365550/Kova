@@ -848,8 +848,8 @@ class SnapshotEngine:
             try:
                 from core.worm import WORMManager
                 WORMManager().protect_file(snapshot_file, use_ntfs_acl=True)
-            except Exception:
-                pass
+            except Exception as e_worm:
+                log.warning("스냅샷 WORM 보호 실패 (%s): %s", snapshot_id, e_worm)
 
         # 9. Durable Offsite Replication Queue Registration (Durable Queue + Auto Worker)
         if offsite_repo_dir:
@@ -859,14 +859,14 @@ class SnapshotEngine:
                 rq.enqueue(snapshot_id, repo_dir, offsite_repo_dir)
                 rq.start_background_worker()
             except Exception as e_rq:
-                _ = e_rq  # 예외 무시 (폴백 경로로 진행)
+                log.warning("복제 큐 등록 실패, 직접 복제로 대체 (%s): %s", snapshot_id, e_rq)
                 def _async_replicate_task():
                     try:
                         from core.replication import ReplicationManager
                         rm = ReplicationManager(repo_dir, offsite_repo_dir)
                         rm.replicate_snapshot(snapshot_id)
-                    except Exception:
-                        pass
+                    except Exception as e_rep:
+                        log.error("오프사이트 복제 실패 (%s): %s", snapshot_id, e_rep)
                 threading.Thread(
                     target=_async_replicate_task,
                     daemon=True,
