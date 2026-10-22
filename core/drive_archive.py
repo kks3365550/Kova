@@ -1129,8 +1129,8 @@ class DriveArchiveManager:
                 profiles = ConfigManager.get_profiles()
                 if profiles and profiles[0].get("repo_dir"):
                     repo_base = os.path.join(profiles[0]["repo_dir"], "archives")
-            except Exception:
-                pass
+            except Exception as e_cfg:
+                logger.warning(f"프로필에서 아카이브 저장 경로를 읽지 못해 대체 경로 사용: {e_cfg}")
 
             if not repo_base:
                 try:
@@ -1139,8 +1139,8 @@ class DriveArchiveManager:
                         if not part.device.upper().startswith("C:") and os.path.exists(part.mountpoint):
                             repo_base = os.path.join(part.mountpoint, "MyBackup_Repository", "archives")
                             break
-                except Exception:
-                    pass
+                except Exception as e_psu:
+                    logger.warning(f"디스크 파티션 탐색 실패, 임시 폴더로 대체: {e_psu}")
 
             if not repo_base:
                 repo_base = os.path.join(tempfile.gettempdir(), "BackupSystem_Archives")
@@ -1379,8 +1379,8 @@ class DriveArchiveManager:
             try:
                 with open(meta_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)
-            except Exception:
-                pass
+            except Exception as e_meta:
+                logger.warning(f"아카이브 메타 읽기 실패, 기본값으로 진행 ({meta_path}): {e_meta}")
 
         backup_type = meta.get("backup_type")
         vhdx_path = meta.get("vhdx_path")
@@ -1486,8 +1486,8 @@ class DriveArchiveManager:
             self.append_log(f"❌ [검증 실패] {err_str}")
             try:
                 dismount_vhdx_volume(vhdx_path)
-            except Exception:
-                pass
+            except Exception as e_dm:
+                logger.warning(f"검증 실패 후 VHDX 분리 실패 ({vhdx_path}): {e_dm}")
 
         with self.state_lock:
             self.last_verification_result = result
@@ -1653,8 +1653,8 @@ class DriveArchiveManager:
             try:
                 with open(meta_path, "r", encoding="utf-8") as f:
                     meta = json.load(f)
-            except Exception:
-                pass
+            except Exception as e_meta:
+                logger.warning(f"아카이브 메타 읽기 실패, 기본값으로 진행 ({meta_path}): {e_meta}")
 
         backup_type = meta.get("backup_type")
         vhdx_path = meta.get("vhdx_path")
@@ -2071,8 +2071,8 @@ class DriveArchiveManager:
                         try:
                             with open(meta_path, "r", encoding="utf-8") as f:
                                 meta_data = json.load(f)
-                        except Exception:
-                            pass
+                        except Exception as e_meta:
+                            logger.warning(f"아카이브 메타 읽기 실패, 기본값으로 진행 ({meta_path}): {e_meta}")
 
                     vhdx_path = meta_data.get("vhdx_path") or (file_path if file_path.lower().endswith(".vhdx") else None)
                     size_bytes = meta_data.get("size_bytes")
@@ -2191,8 +2191,8 @@ class DriveArchiveManager:
                 os.makedirs(os.path.dirname(cp), exist_ok=True)
                 with open(cp, "w", encoding="utf-8") as f_c:
                     json.dump({"archives": archives, "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")}, f_c, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
+            except Exception as e_cache:
+                logger.warning(f"아카이브 캐시 갱신 실패 ({cp}): {e_cache}")
 
         archives.sort(key=lambda x: x["modified_at"], reverse=True)
         return archives
@@ -2246,8 +2246,8 @@ class DriveArchiveManager:
                         freed_bytes += os.path.getsize(mp)
                         os.remove(mp)
                         deleted_files.append(mp)
-                    except Exception:
-                        pass
+                    except Exception as e_del:
+                        logger.warning(f"아카이브 메타 파일 삭제 실패 ({mp}): {e_del}")
 
             # 캐시 파일들(.archives_cache.json, .ai/archives_cache.json, .ai/vhdx_cache.json)에서 삭제된 경로 즉시 제거
             deleted_norm = norm_path.lower()
@@ -2278,8 +2278,8 @@ class DriveArchiveManager:
                             ]
                             with open(cf, "w", encoding="utf-8") as f_c:
                                 json.dump(filtered, f_c, ensure_ascii=False, indent=2)
-                    except Exception:
-                        pass
+                    except Exception as e_cf:
+                        logger.warning(f"삭제된 아카이브 캐시 정리 실패 ({cf}): {e_cf}")
 
             self.append_log(f"🗑️ [통백업 아카이브 삭제 완료] {norm_path} (확보된 용량: {round(freed_bytes / (1024**3), 2)} GB)")
             return {
