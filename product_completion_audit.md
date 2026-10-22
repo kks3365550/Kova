@@ -1,5 +1,7 @@
 # 🛡️ 백업시스템 v2.9.20 완제품 마감 감사 보고서 (Product Completion Audit)
 
+> **보관 문서**: 이 문서는 v2.9.20 시점의 스냅샷이다. 현재 상태는 `CHANGELOG.md`, GitHub Releases, `SECURITY.md` 를 따른다.
+
 > **기준 일자**: 2026-09-30  
 > **대상 버전**: v2.9.20  
 > **판정 요약**: **RELEASE FIX = 0** (출시 차단 결함 0건, 완제품 마감 기준 충족)

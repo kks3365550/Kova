@@ -1,5 +1,7 @@
 # 📋 백업시스템 v2.10.3 릴리즈 빌드 매니페스트 (Release Build Manifest)
 
+> **보관 문서**: 이 문서는 v2.10.3 시점의 스냅샷이다. 현재 상태는 `CHANGELOG.md`, GitHub Releases, `SECURITY.md` 를 따른다.
+
 > **빌드 일자**: 2026-10-01  
 > **공식 버전**: `2.10.3`  
 > **Git 태그**: `v2.10.3`  
