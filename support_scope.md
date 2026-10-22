@@ -25,7 +25,7 @@
 ## 3. 네트워크 및 포트 (Network & Firewall)
 - **로컬 웹 UI & REST API 포트**: TCP `8765` (인스톨러에서 Windows 방화벽 자동 등록)
 - **외부 연동**:
-  - Firebase/Firestore 자동 업데이트 확인: HTTPS 아웃바운드 포트 `443`
+  - GitHub Releases 자동 업데이트 확인: HTTPS 아웃바운드 포트 `443`
   - Tailscale 사설망 P2P 동기화 지원
 
 ---

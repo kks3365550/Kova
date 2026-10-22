@@ -8,6 +8,11 @@ from typing import Dict, Any, Optional, Callable, List
 from core.config import ConfigManager
 from core.snapshot import SnapshotEngine
 
+# 자동 백업 실패 시 재시도 정책 (최대 3회, 실패 후 30분 간격)
+MAX_AUTO_RETRIES = 3
+RETRY_COOLDOWN_SEC = 1800
+
+
 class BackupScheduler:
     _instance = None
     _lock = threading.Lock()
@@ -59,6 +64,13 @@ class BackupScheduler:
     def _should_run_profile(self, profile: Dict[str, Any]) -> bool:
         if not profile.get("auto_backup_enabled", False):
             return False
+
+        # 실패 직후 재시도 (일정 간격, 최대 횟수 제한). 한도를 넘으면 정상 스케줄을 따른다.
+        if profile.get("last_status") == "failed":
+            retry_count = int(profile.get("retry_count", 0) or 0)
+            failed_at = profile.get("last_run") or 0
+            if retry_count < MAX_AUTO_RETRIES and (time.time() - failed_at) >= RETRY_COOLDOWN_SEC:
+                return True
 
         last_run = profile.get("last_run")
         sched_type = profile.get("schedule_type", "interval_hours")
@@ -130,6 +142,7 @@ class BackupScheduler:
                     self.active_jobs[profile_id]["progress"] = p_data
 
             manifest = None
+            used_rust_manifest = False
             use_rust = (ConfigManager.get_settings().get("backup_engine", "rust") == "rust")
 
             if use_rust:
@@ -149,6 +162,7 @@ class BackupScheduler:
                         )
                         with open(res.manifest_path, "r", encoding="utf-8") as fp:
                             manifest = json.load(fp)
+                        used_rust_manifest = True
                 except Exception as e_rust:
                     self._log(profile_name, f"[경고] Rust 엔진 오류 ({e_rust}), Python 엔진으로 자동 폴백합니다.", level="WARNING")
 
@@ -164,6 +178,10 @@ class BackupScheduler:
                     cancel_event=cancel_evt
                 )
 
+            # Rust 엔진 결과에도 자동 복원 검증 적용 (Python 엔진 경로는 SnapshotEngine이 이미 수행)
+            if used_rust_manifest:
+                self._verify_rust_snapshot(profile_name, repo_dir, manifest)
+
             # Prune old snapshots
             pruned = SnapshotEngine.prune_snapshots(
                 repo_dir=repo_dir,
@@ -175,6 +193,7 @@ class BackupScheduler:
             # Update profile info
             profile["last_run"] = time.time()
             profile["last_status"] = "success"
+            profile["retry_count"] = 0
             profile["last_snapshot_id"] = manifest["id"]
             ConfigManager.save_profile(profile)
 
@@ -230,12 +249,44 @@ class BackupScheduler:
             self._log(profile_name, f"백업 중 오류 발생: {str(e)}", level="ERROR")
             profile["last_status"] = "failed"
             profile["last_run"] = time.time()
+            # 사용자 취소는 재시도하지 않고, 알림도 보내지 않는다
+            if cancel_evt.is_set() or isinstance(e, InterruptedError):
+                profile["retry_count"] = MAX_AUTO_RETRIES
+            else:
+                profile["retry_count"] = int(profile.get("retry_count", 0) or 0) + 1
+                self._notify_failure(profile_name, str(e))
             ConfigManager.save_profile(profile)
 
         finally:
             if profile_id in self.active_jobs:
                 self.active_jobs[profile_id]["running"] = False
                 self.active_jobs[profile_id]["end_time"] = time.time()
+
+    def _notify_failure(self, profile_name: str, message: str) -> None:
+        try:
+            from core.windows_toast import notify_backup_failed
+            notify_backup_failed(profile_name, message)
+        except Exception:
+            pass
+
+    def _verify_rust_snapshot(self, profile_name: str, repo_dir: str, manifest: Dict[str, Any]) -> None:
+        from core.verify import IntegrityVerifier, RestoreVerificationError
+        if not manifest.get("entries"):
+            self._log(profile_name, "[경고] Rust 매니페스트에 entries가 없어 자동 복원 검증을 생략했습니다.", level="WARNING")
+            return
+        try:
+            verifier = IntegrityVerifier(repo_dir)
+            res = verifier.verify_restore_sampling(manifest, sample_count=20)
+        except RestoreVerificationError:
+            raise
+        except Exception as e:
+            self._log(profile_name, f"[경고] 자동 복원 검증을 수행하지 못했습니다: {e}", level="WARNING")
+            return
+        if res.get("status") != "passed":
+            raise RestoreVerificationError(
+                f"자동 복원 검증 실패 (Rust 엔진 백업): {res.get('status')} {res.get('detail', '')}".strip()
+            )
+        self._log(profile_name, "[자동 복원 검증] 샘플 복원 대조 통과")
 
     def _load_audit_state(self) -> Dict[str, Any]:
         if os.path.exists(self.audit_state_file):
