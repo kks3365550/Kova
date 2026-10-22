@@ -1,0 +1,15 @@
+# 개발·CI 전용 의존성 (설치: pip install -r requirements-dev.txt)
+# 운영 의존성은 requirements.txt 에 두고, 설치 PC 에는 검증 도구를 배포하지 않는다.
+-r requirements.txt
+
+# 검증 도구
+# 회귀 테스트와 정적 분석에 필요하다. 프로덕션 실행에는 쓰이지 않는다.
+pytest>=8.0.0
+pyflakes>=3.2.0
+
+# starlette.testclient 가 요구하는 HTTP 클라이언트.
+# 2026-10-07 CI 1차 실행이 이 누락으로 실패했다:
+#   RuntimeError: The starlette.testclient module requires the httpx2 package
+# 로컬 .venv 에는 httpx 가 있어 우연히 통과했기 때문에 드러나지 않았다.
+# 정적 파일/HTML 을 서버 없이 검증하려면 이 의존성이 필수다.
+httpx2>=2.0.0
