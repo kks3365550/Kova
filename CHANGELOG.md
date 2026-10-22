@@ -6,6 +6,30 @@
 
 ---
 
+## [2.17.18] - 2026-10-23
+
+### 수정
+- 조용히 무시되던 오류에 로그 추가: 스냅샷 WORM 보호·복제 큐·오프사이트 복제,
+  복원 시 레지스트리 가져오기, 팩 인덱스 복구, 드라이브 인증 정보 로드,
+  통백업 아카이브 메타 읽기·저장 경로 대체·캐시 갱신·VHDX 분리
+
+### 테스트
+- 설치/업그레이드 E2E (서명 검증, 사용자 데이터 보존, 업그레이드 후 기동)
+- Rust 엔진 단위 테스트 9건, `hasher`·`snapshot_cache`·`archive_worker`·
+  `windows_task`·`registry_backup` 단위 테스트
+- 시스템 호출을 건드리던 테스트(VSS 등) 격리, 서명 키가 없는 환경에서도 통과
+
+### 빌드·CI
+- CI: Python 3.11/3.12/3.14 매트릭스, Rust `cargo test`, 업데이트 패키지 dry-run 빌드,
+  실패를 가리던 `continue-on-error` 제거, 액션 버전 갱신
+- 의존성: 운영/개발 분리(`requirements-dev.txt`), 검증된 버전 고정(`constraints.txt`)
+- `tools/release.py --dry-run` 추가
+
+### 문서
+- TRACK2 설계 문서를 `docs/` 로 이동, `release_notes.md`·`known_issues.md` 보관 표시
+
+---
+
 ## [2.17.17] - 2026-10-22
 
 ### 추가
