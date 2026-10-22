@@ -104,6 +104,11 @@ jobs:
           CARGO_TARGET_DIR: engine_rust/target
         run: cargo build --release --locked --manifest-path engine_rust/Cargo.toml
 
+      - name: Rust 엔진 단위 테스트
+        env:
+          CARGO_TARGET_DIR: engine_rust/target
+        run: cargo test --release --locked --manifest-path engine_rust/Cargo.toml
+
       - name: 빠른 회귀 테스트 (CI 게이트)
         env:
           PYTHONIOENCODING: utf-8

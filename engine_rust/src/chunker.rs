@@ -62,3 +62,60 @@ pub fn chunk_file(path: &Path) -> io::Result<Vec<Chunk>> {
     let mmap = unsafe { Mmap::map(&file)? };
     Ok(chunk_slice(&mmap))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pseudo_random(len: usize) -> Vec<u8> {
+        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+        (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 24) as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn empty_input_has_no_chunks() {
+        assert!(chunk_slice(&[]).is_empty());
+    }
+
+    #[test]
+    fn small_input_is_single_chunk() {
+        let data = pseudo_random(1000);
+        let chunks = chunk_slice(&data);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0].offset, 0);
+        assert_eq!(chunks[0].data, data);
+    }
+
+    #[test]
+    fn chunks_are_contiguous_and_reassemble() {
+        let data = pseudo_random(12 * ONE_MIB + 12345);
+        let chunks = chunk_slice(&data);
+        assert!(chunks.len() > 1);
+
+        let mut expected_offset = 0u64;
+        let mut rebuilt = Vec::with_capacity(data.len());
+        for c in &chunks {
+            assert_eq!(c.offset, expected_offset);
+            assert_eq!(c.length, c.data.len());
+            assert_eq!(c.hash, blake3::hash(&c.data).to_hex().to_string());
+            expected_offset += c.length as u64;
+            rebuilt.extend_from_slice(&c.data);
+        }
+        assert_eq!(rebuilt, data);
+    }
+
+    #[test]
+    fn chunking_is_deterministic() {
+        let data = pseudo_random(5 * ONE_MIB);
+        let a: Vec<String> = chunk_slice(&data).into_iter().map(|c| c.hash).collect();
+        let b: Vec<String> = chunk_slice(&data).into_iter().map(|c| c.hash).collect();
+        assert_eq!(a, b);
+    }
+}
