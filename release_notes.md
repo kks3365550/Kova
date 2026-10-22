@@ -1,5 +1,8 @@
 # CAS BackupSystem 릴리즈 노트
 
+> **보관 문서**: 이 문서는 v2.10.3 시점에서 갱신이 중단되었다. 최신 변경 이력은 `CHANGELOG.md` 와 GitHub Releases 를 따른다.
+
+
 ## [v2.10.3] - 2026-10-01 (아키텍처 정밀 교정 및 Firebase 완전 제거)
 
 ### 🧹 클린 아키텍처 (Clean Purge)
