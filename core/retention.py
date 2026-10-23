@@ -97,7 +97,8 @@ class RetentionManager:
         if retention_days and retention_days > 0:
             cutoff_ts = time.time() - (retention_days * 86400)
             for s in snapshots[1:]: # 최신 스냅샷 제외
-                if _parse_timestamp(s.get("created_at")) < cutoff_ts:
+                ts = _parse_timestamp(s.get("created_at"))
+                if ts > 0.0 and ts < cutoff_ts:
                     sid = s.get("id")
                     if sid:
                         deleted_ids.add(sid)
