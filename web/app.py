@@ -47,6 +47,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 )
+from core.logging_setup import install_namespace_logging  # noqa: E402
+install_namespace_logging()  # 모든 프로젝트 로거를 logs/backup.log 에도 기록
 
 # Fix #13: Background CPU monitor — samples every 0.5s so /api/system-info returns instantly
 _cpu_percent_cache = [0.0]

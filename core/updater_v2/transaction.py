@@ -37,7 +37,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Callable, Dict, Optional, Tuple, Any
 
-logger = logging.getLogger("updater_v2.transaction")
+logger = logging.getLogger(__name__)
 
 MARKER_FILENAME = ".update_transaction.json"
 BACKUP_MANIFEST_FILENAME = "backup_manifest.json"

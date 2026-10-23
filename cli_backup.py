@@ -23,8 +23,9 @@ sys.path.insert(0, BASE_DIR)
 # pythonw 에는 콘솔이 없어 print() 출력이 어디에도 남지 않는다.
 # 2026-10-07 09:00 백업이 Result=0 으로 "정상" 이어도 로그가 없었던 것이 그 때문이다.
 # 따라서 파일 로그를 먼저 구성하고, 그 뒤에 print 를 남긴다(수동 실행 시 콘솔용).
-from core.logging_setup import get_logger, log_path  # noqa: E402
+from core.logging_setup import get_logger, install_namespace_logging, log_path  # noqa: E402
 
+install_namespace_logging()
 log = get_logger("cli.backup")
 
 

@@ -109,6 +109,28 @@ def get_logger(name: str = "backup", level: int = logging.INFO) -> logging.Logge
     """모듈 로거를 얻는다. 요청된 로거에 공유 파일 핸들러가 부착된다."""
     return setup_file_logging(name, level)
 
+# 파일 핸들러를 붙일 최상위 로거 이름. 하위 로거(core.verify, BackupSystem.VSS ...)는
+# 전파(propagate)로 여기 도달해 logs/backup.log 에 기록된다.
+LOG_NAMESPACES = ("BackupSystem", "core", "web", "cli")
+
+
+def install_namespace_logging(level: int = logging.INFO) -> None:
+    """프로젝트 전체 로거(logging.getLogger(__name__) 포함)를 logs/backup.log 에 연결한다.
+
+    get_logger() 를 거치지 않은 모듈 로거는 지금까지 pythonw 일정 실행에서 어디에도
+    기록되지 않았다. 진입점(cli_backup, web.app)에서 한 번 호출한다. 여러 번 불러도 안전하다.
+    """
+    handler = _get_shared_handler()
+    if handler is None:
+        return
+    for ns in LOG_NAMESPACES:
+        lg = logging.getLogger(ns)
+        if lg.level == logging.NOTSET:
+            lg.setLevel(level)
+        if handler not in lg.handlers:
+            lg.addHandler(handler)
+
+
 
 def log_path() -> str:
     """현재 백업 로그 파일 경로 (UI 표시용)."""

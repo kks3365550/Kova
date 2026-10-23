@@ -3,6 +3,7 @@
 web/api_rescue.py - 긴급 재해 복구(Rescue DR) UEFI 부팅 USB 제작 API 라우터
 """
 
+import logging
 import os
 import sys
 import time
@@ -86,7 +87,7 @@ def scan_removable_drives() -> List[Dict[str, Any]]:
             except Exception:
                 pass
     except Exception as e:
-        print(f"[!] 드라이브 스캔 오류: {e}")
+        logging.getLogger("BackupSystem").warning("드라이브 스캔 오류: %s", e)
     return res
 
 
