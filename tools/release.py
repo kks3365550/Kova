@@ -237,7 +237,12 @@ def run_git_release(version: str, message: str):
     print(f"[2/5] Running Git commit and tagging v{version}...")
     try:
         subprocess.run(['git', 'add', '-A'], cwd=BASE_DIR, check=True)
-        commit_msg = f"release: v{version} - {message}" if message else f"release: v{version}"
+        # -m 이 이미 "release: vX.Y.Z -" 로 시작하면 접두어를 다시 붙이지 않는다.
+        _msg = (message or "").strip()
+        _prefix = f"release: v{version}"
+        if _msg.lower().startswith(_prefix.lower()):
+            _msg = _msg[len(_prefix):].lstrip(" -:")
+        commit_msg = f"{_prefix} - {_msg}" if _msg else _prefix
         subprocess.run(['git', 'commit', '-m', commit_msg], cwd=BASE_DIR, check=True)
         tag_name = f"v{version}"
         subprocess.run(['git', 'tag', '-a', tag_name, '-m', f"Release {tag_name}"], cwd=BASE_DIR, check=True)
