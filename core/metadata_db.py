@@ -5,7 +5,7 @@ import sqlite3
 import threading
 import contextlib
 import logging
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Optional, Tuple
 
 logger = logging.getLogger("core.metadata_db")
 
@@ -219,6 +219,83 @@ class MetadataDB:
 
         return total_blobs, total_blob_bytes
 
+    def _upsert_snapshot_row(self, conn, sid: str, data: Dict[str, Any], mtime: float) -> None:
+        """Insert/replace one snapshots_meta row from an already-parsed manifest."""
+        summary = data.get("summary") or {}
+        sources = json.dumps(data.get("sources", []), ensure_ascii=False)
+        is_ver = 1 if data.get("is_verified") else 0
+        ver_ts = data.get("verify_timestamp", 0.0)
+        ver_err = data.get("verify_error_count", 0)
+
+        created_at_val = (
+            data.get("created_at_ts")
+            or data.get("created_at")
+            or summary.get("created_at")
+            or 0
+        )
+        if isinstance(created_at_val, str):
+            try:
+                import datetime
+                dt = datetime.datetime.fromisoformat(created_at_val.replace("Z", "+00:00"))
+                created_at_val = dt.timestamp()
+            except Exception:
+                created_at_val = mtime
+
+        total_files = summary.get("total_files") or data.get("total_files", 0)
+        total_bytes = summary.get("total_bytes") or data.get("total_bytes", 0)
+        dedup_saved_bytes = summary.get("dedup_saved_bytes") or data.get("dedup_bytes", 0)
+        new_files = summary.get("new_files") or data.get("new_files", total_files)
+        modified_files = summary.get("modified_files") or data.get("modified_files", 0)
+        unmodified_files = summary.get("unmodified_files") or data.get("unmodified_files", 0)
+        duration_seconds = summary.get("duration_seconds") or data.get("duration_seconds", 0)
+
+        iso_time = data.get("iso_time") or (data.get("created_at") if isinstance(data.get("created_at"), str) else "")
+        profile_name = data.get("profile_name") or ("선택 백업" if sid.startswith("snap_custom") else "-")
+        profile_id = data.get("profile_id") or ("prof_custom_selected" if sid.startswith("snap_custom") else "rust_fast_engine")
+
+        conn.execute("""
+            INSERT OR REPLACE INTO snapshots_meta (
+                id, created_at, iso_time, profile_id, profile_name,
+                backup_type, base_snapshot_id, total_files, total_bytes,
+                new_files, modified_files, unmodified_files,
+                dedup_saved_bytes, duration_seconds, sources_json, file_mtime,
+                is_verified, verify_timestamp, verify_error_count
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+        """, (
+            sid,
+            float(created_at_val),
+            iso_time,
+            profile_id,
+            profile_name,
+            data.get("backup_type", "full"),
+            data.get("base_snapshot_id"),
+            total_files,
+            total_bytes,
+            new_files,
+            modified_files,
+            unmodified_files,
+            dedup_saved_bytes,
+            duration_seconds,
+            sources,
+            mtime,
+            is_ver,
+            ver_ts,
+            ver_err
+        ))
+
+    def upsert_snapshot_from_data(self, sid: str, data: Dict[str, Any], mtime: float) -> None:
+        """Register a manifest that the caller already parsed (avoids re-reading a huge JSON)."""
+        with self._lock, self._get_connection() as conn:
+            self._upsert_snapshot_row(conn, sid, data, mtime)
+            conn.commit()
+
+    def get_snapshot_meta(self, sid: str) -> Optional[Dict[str, Any]]:
+        """Single-row metadata lookup (same shape as list_snapshots items), or None."""
+        for item in self.list_snapshots():
+            if item["id"] == sid:
+                return item
+        return None
+
     def sync_snapshots(self) -> List[Dict[str, Any]]:
         """
         Synchronizes snapshot JSON metadata into SQLite.
@@ -269,67 +346,7 @@ class MetadataDB:
                     try:
                         with open(full_p, "r", encoding="utf-8") as fp:
                             data = json.load(fp)
-                            summary = data.get("summary") or {}
-                            sources = json.dumps(data.get("sources", []), ensure_ascii=False)
-                            is_ver = 1 if data.get("is_verified") else 0
-                            ver_ts = data.get("verify_timestamp", 0.0)
-                            ver_err = data.get("verify_error_count", 0)
-
-                            created_at_val = (
-                                data.get("created_at_ts")
-                                or data.get("created_at")
-                                or summary.get("created_at")
-                                or 0
-                            )
-                            if isinstance(created_at_val, str):
-                                try:
-                                    import datetime
-                                    dt = datetime.datetime.fromisoformat(created_at_val.replace("Z", "+00:00"))
-                                    created_at_val = dt.timestamp()
-                                except Exception:
-                                    created_at_val = mtime
-
-                            total_files = summary.get("total_files") or data.get("total_files", 0)
-                            total_bytes = summary.get("total_bytes") or data.get("total_bytes", 0)
-                            dedup_saved_bytes = summary.get("dedup_saved_bytes") or data.get("dedup_bytes", 0)
-                            new_files = summary.get("new_files") or data.get("new_files", total_files)
-                            modified_files = summary.get("modified_files") or data.get("modified_files", 0)
-                            unmodified_files = summary.get("unmodified_files") or data.get("unmodified_files", 0)
-                            duration_seconds = summary.get("duration_seconds") or data.get("duration_seconds", 0)
-
-                            iso_time = data.get("iso_time") or (data.get("created_at") if isinstance(data.get("created_at"), str) else "")
-                            profile_name = data.get("profile_name") or ("선택 백업" if sid.startswith("snap_custom") else "-")
-                            profile_id = data.get("profile_id") or ("prof_custom_selected" if sid.startswith("snap_custom") else "rust_fast_engine")
-
-                            conn.execute("""
-                                INSERT OR REPLACE INTO snapshots_meta (
-                                    id, created_at, iso_time, profile_id, profile_name,
-                                    backup_type, base_snapshot_id, total_files, total_bytes,
-                                    new_files, modified_files, unmodified_files,
-                                    dedup_saved_bytes, duration_seconds, sources_json, file_mtime,
-                                    is_verified, verify_timestamp, verify_error_count
-                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                            """, (
-                                sid,
-                                float(created_at_val),
-                                iso_time,
-                                profile_id,
-                                profile_name,
-                                data.get("backup_type", "full"),
-                                data.get("base_snapshot_id"),
-                                total_files,
-                                total_bytes,
-                                new_files,
-                                modified_files,
-                                unmodified_files,
-                                dedup_saved_bytes,
-                                duration_seconds,
-                                sources,
-                                mtime,
-                                is_ver,
-                                ver_ts,
-                                ver_err
-                            ))
+                        self._upsert_snapshot_row(conn, sid, data, mtime)
                     except Exception:
                         pass
 

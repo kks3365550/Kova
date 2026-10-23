@@ -181,6 +181,9 @@ def sync_rust_manifest_to_sqlite(
         # Commit to MetadataDB (SQLite)
         from core.metadata_db import MetadataDB
         db = MetadataDB(str(repo_path))
+        # Register the manifest we already hold in memory so sync_snapshots()
+        # does not parse the (hundreds of MB) JSON a second time.
+        db.upsert_snapshot_from_data(session_id, standard_manifest, os.path.getmtime(rust_manifest_file))
         db.sync_snapshots()
         if new_stored > 0:
             db.record_new_blob(stored_size=new_stored, count=total_count)

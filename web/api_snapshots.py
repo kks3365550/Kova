@@ -169,13 +169,38 @@ def list_snapshots(repo_dir: Optional[str] = None):
     return all_snaps
 
 
+def _snapshot_meta_from_db(repo: str, snapshot_id: str) -> Optional[dict]:
+    """Metadata from metadata.db if its row is in sync with the manifest file, else None."""
+    try:
+        from core.metadata_db import MetadataDB
+        snap_file = os.path.join(repo, "snapshots", f"{snapshot_id}.json")
+        file_mtime = os.path.getmtime(snap_file)
+        db = MetadataDB(repo)
+        with db._get_connection() as conn:
+            row = conn.execute(
+                "SELECT file_mtime, total_files, total_bytes FROM snapshots_meta WHERE id = ?;",
+                (snapshot_id,),
+            ).fetchone()
+        if not row or abs((row["file_mtime"] or 0) - file_mtime) > 0.001 or not row["total_files"] or not row["total_bytes"]:
+            return None
+        return db.get_snapshot_meta(snapshot_id)
+    except Exception:
+        return None
+
+
 @router.get("/api/snapshots/{snapshot_id}")
 def get_snapshot(snapshot_id: str, repo_dir: Optional[str] = None, include_entries: bool = False):
     snapshot_id = _validate_snapshot_id(snapshot_id)
     r = _find_snapshot_repo(snapshot_id, repo_dir)
     if not r:
         raise HTTPException(status_code=404, detail="Snapshot not found")
-    data = SnapshotEngine.get_snapshot(r, snapshot_id)
+    data = None
+    if not include_entries:
+        # Fast path: metadata.db already holds everything the light response needs,
+        # so skip parsing the (hundreds of MB) manifest JSON.
+        data = _snapshot_meta_from_db(r, snapshot_id)
+    if data is None:
+        data = SnapshotEngine.get_snapshot(r, snapshot_id)
     if not data:
         raise HTTPException(status_code=404, detail="Snapshot not found")
 

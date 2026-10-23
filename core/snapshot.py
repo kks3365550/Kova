@@ -1148,8 +1148,41 @@ class SnapshotEngine:
         return dict_to_list(root)
 
     # In-memory snapshot cache for sub-millisecond on-demand directory navigation
-    _BROWSE_CACHE: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+    # snapshot_id -> (mtime, directory index): {dir_path: ({child: [count, size]}, [file tuples])}
+    _BROWSE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
     _BROWSE_CACHE_LOCK = threading.Lock()
+
+    @staticmethod
+    def _build_browse_index(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """One pass over all entries -> {dir_path: ({child: [count, size]}, [file tuples])}."""
+        index: Dict[str, Any] = {}
+        for e in entries:
+            rp = (e.get("rel_path") or e.get("path") or "").replace('\\', '/').strip('/')
+            parts = rp.split('/')
+            size = e.get("size", 0)
+            chunk_ids = e.get("chunk_ids")
+            file_t = (
+                parts[-1], size, e.get("mtime") or e.get("modified", 0), rp,
+                e.get("status", "unmodified"), e.get("chunk_strategy"),
+                len(chunk_ids) if chunk_ids else 1,
+            )
+            parent = ""
+            for i in range(len(parts) - 1):
+                node = index.get(parent)
+                if node is None:
+                    node = index[parent] = ({}, [])
+                child = node[0].get(parts[i])
+                if child is None:
+                    node[0][parts[i]] = [1, size]
+                else:
+                    child[0] += 1
+                    child[1] += size
+                parent = parent + "/" + parts[i] if parent else parts[i]
+            node = index.get(parent)
+            if node is None:
+                node = index[parent] = ({}, [])
+            node[1].append(file_t)
+        return index
 
     @classmethod
     def browse_snapshot_directory(cls, repo_dir: str, snapshot_id: str, subpath: str = "") -> Dict[str, Any]:
@@ -1164,65 +1197,46 @@ class SnapshotEngine:
             raise FileNotFoundError(f"Snapshot {snapshot_id} not found.")
 
         mtime = os.path.getmtime(snap_path)
-        entries = None
+        index = None
 
         with cls._BROWSE_CACHE_LOCK:
             cached = cls._BROWSE_CACHE.get(snapshot_id)
             if cached and cached[0] == mtime:
-                entries = cached[1]
+                index = cached[1]
 
-        if entries is None:
+        if index is None:
             with open(snap_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             entries = data.get("entries") or data.get("files") or []
+            index = cls._build_browse_index(entries)
+            del data, entries
             with cls._BROWSE_CACHE_LOCK:
-                # Keep max 5 snapshots cached in memory
-                if len(cls._BROWSE_CACHE) >= 5:
+                # Keep max 3 snapshot indexes cached in memory
+                while len(cls._BROWSE_CACHE) >= 3:
                     cls._BROWSE_CACHE.pop(next(iter(cls._BROWSE_CACHE)))
-                cls._BROWSE_CACHE[snapshot_id] = (mtime, entries)
+                cls._BROWSE_CACHE[snapshot_id] = (mtime, index)
 
         subpath_norm = subpath.replace('\\', '/').strip('/')
         prefix = subpath_norm + '/' if subpath_norm else ''
 
-        dirs = {}
-        files = []
-
-        for e in entries:
-            rp = (e.get("rel_path") or e.get("path") or "").replace('\\', '/').strip('/')
-            if prefix:
-                if not rp.startswith(prefix):
-                    continue
-                remain = rp[len(prefix):]
-            else:
-                remain = rp
-
-            parts = remain.split('/')
-            if len(parts) == 1:
-                files.append({
-                    "name": parts[0],
-                    "type": "file",
-                    "size": e.get("size", 0),
-                    "mtime": e.get("mtime") or e.get("modified", 0),
-                    "rel_path": rp,
-                    "status": e.get("status", "unmodified"),
-                    "chunk_strategy": e.get("chunk_strategy"),
-                    "chunk_count": len(e.get("chunk_ids", [])) if e.get("chunk_ids") else 1
-                })
-            else:
-                dirname = parts[0]
-                if dirname not in dirs:
-                    dirs[dirname] = {
-                        "name": dirname,
-                        "type": "directory",
-                        "rel_path": prefix + dirname,
-                        "file_count": 0,
-                        "size": 0
-                    }
-                dirs[dirname]["file_count"] += 1
-                dirs[dirname]["size"] += e.get("size", 0)
-
-        dir_list = sorted(dirs.values(), key=lambda x: x["name"].lower())
-        file_list = sorted(files, key=lambda x: x["name"].lower())
+        dir_map, file_tuples = index.get(subpath_norm, ({}, []))
+        dir_list = sorted(
+            (
+                {"name": n, "type": "directory", "rel_path": prefix + n,
+                 "file_count": v[0], "size": v[1]}
+                for n, v in dir_map.items()
+            ),
+            key=lambda x: x["name"].lower(),
+        )
+        file_list = sorted(
+            (
+                {"name": t[0], "type": "file", "size": t[1], "mtime": t[2],
+                 "rel_path": t[3], "status": t[4], "chunk_strategy": t[5],
+                 "chunk_count": t[6]}
+                for t in file_tuples
+            ),
+            key=lambda x: x["name"].lower(),
+        )
 
         return {
             "snapshot_id": snapshot_id,
