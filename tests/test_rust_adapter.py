@@ -112,3 +112,16 @@ def test_exclude_and_single_file_source_with_new_engine(temp_workspace, monkeypa
                            exclude_patterns=["node_modules"])
     assert (res2.raw_summary or {}).get("new_files", -1) == 0
     assert (res2.raw_summary or {}).get("modified_files", -1) == 0
+
+
+def test_second_run_is_labeled_incremental_with_profile(temp_workspace):
+    import json
+    src_dir, repo_dir, _ = temp_workspace
+    kw = dict(sources=[src_dir], repo_dir=repo_dir, profile_name="내 프로필", profile_id="prof_x")
+    r1 = run_rust_backup(session_id="inc1", **kw)
+    r2 = run_rust_backup(session_id="inc2", **kw)
+    m1 = json.load(open(r1.manifest_path, encoding="utf-8"))
+    m2 = json.load(open(r2.manifest_path, encoding="utf-8"))
+    assert m1["backup_type"] == "full"
+    assert m2["backup_type"] == "incremental"
+    assert m2["profile_name"] == "내 프로필" and m2["profile_id"] == "prof_x"

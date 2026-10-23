@@ -266,7 +266,9 @@ def _background_custom_backup_task(params: Dict[str, Any]):
                         zstd_level=effective_compress,
                         progress_callback=_rust_progress,
                         cancel_event=current_task.get("cancel_event"),
-                        exclude_patterns=excludes
+                        exclude_patterns=excludes,
+                        profile_name=profile_name,
+                        profile_id=profile_id
                     )
 
                     raw_sum = res.raw_summary or {}
@@ -529,7 +531,9 @@ def _background_backup_task(params: Dict[str, Any]):
                         zstd_level=compress,
                         progress_callback=_rust_progress,
                         cancel_event=cancel_evt,
-                        exclude_patterns=excludes
+                        exclude_patterns=excludes,
+                        profile_name=profile_name,
+                        profile_id=profile_id
                     )
 
                     raw_sum = res.raw_summary or {}

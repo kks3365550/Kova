@@ -84,7 +84,8 @@ def sync_rust_manifest_to_sqlite(
     session_id: str,
     profile_name: str = "RustEngine",
     duration_seconds: float = 0.0,
-    summary_stats: Optional[Dict[str, Any]] = None
+    summary_stats: Optional[Dict[str, Any]] = None,
+    profile_id: str = "rust_fast_engine",
 ) -> bool:
     """
     Two-Phase Commit Sync:
@@ -141,9 +142,9 @@ def sync_rust_manifest_to_sqlite(
             "dedup_bytes": ded_bytes,
             "compressed_bytes": cmp_bytes,
             "files": files_list,
-            "profile_id": "rust_fast_engine",
+            "profile_id": profile_id,
             "profile_name": profile_name,
-            "backup_type": "full",
+            "backup_type": "incremental" if u_files else "full",
             "base_snapshot_id": None,
             "vss_enabled": False,
             "vss_warnings": [],
@@ -212,6 +213,8 @@ def run_rust_backup(
     cancel_event: Optional[threading.Event] = None,
     vss_mount_map: Optional[Dict[str, str]] = None,
     exclude_patterns: Optional[Sequence[str]] = None,
+    profile_name: str = "RustEngine",
+    profile_id: str = "rust_fast_engine",
 ) -> RustBackupResult:
     """
     Executes native Rust backup engine with unbuffered JSON progress streaming,
@@ -316,7 +319,10 @@ def run_rust_backup(
     elapsed = time.time() - start_t
 
     # Step 2: Synchronize with MetadataDB (Two-Phase Commit)
-    is_synced = sync_rust_manifest_to_sqlite(repo_dir, sid, duration_seconds=elapsed, summary_stats=summary_data)
+    is_synced = sync_rust_manifest_to_sqlite(
+        repo_dir, sid, profile_name=profile_name, duration_seconds=elapsed,
+        summary_stats=summary_data, profile_id=profile_id
+    )
 
     manifest_path = str(Path(repo_dir).resolve() / "snapshots" / f"{sid}.json")
 
