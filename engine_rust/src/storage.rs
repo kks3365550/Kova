@@ -215,30 +215,39 @@ impl CasStorage {
 
         entries.sort_by(|a, b| b.0.cmp(&a.0));
 
+        // Parse candidate manifests in parallel batches (newest first, order preserved).
+        use rayon::prelude::*;
+        let paths: Vec<PathBuf> = entries.into_iter().map(|(_, p)| p).collect();
         let mut manifests: Vec<SnapshotManifest> = Vec::new();
-        for (_mtime, path) in entries {
-            match File::open(&path) {
-                Ok(file) => {
-                    let reader = BufReader::new(file);
-                    match serde_json::from_reader::<_, SnapshotManifest>(reader) {
-                        Ok(manifest) => {
-                            let count = manifest.files.as_ref().map_or(0, |f| f.len())
-                                + manifest.entries.as_ref().map_or(0, |e| e.len());
-                            if count > 0 {
-                                manifests.push(manifest);
-                                if manifests.len() >= limit {
-                                    break;
-                                }
-                            }
+        for batch in paths.chunks(limit) {
+            let parsed: Vec<Option<SnapshotManifest>> = batch
+                .par_iter()
+                .map(|path| match File::open(path) {
+                    Ok(file) => match serde_json::from_reader::<_, SnapshotManifest>(BufReader::new(file)) {
+                        Ok(m) => {
+                            let count = m.files.as_ref().map_or(0, |f| f.len())
+                                + m.entries.as_ref().map_or(0, |e| e.len());
+                            if count > 0 { Some(m) } else { None }
                         }
                         Err(e) => {
                             eprintln!("[KOVA-FAST-DEBUG] Failed to parse manifest {}: {}", path.display(), e);
+                            None
                         }
+                    },
+                    Err(e) => {
+                        eprintln!("[KOVA-FAST-DEBUG] Failed to open manifest file {}: {}", path.display(), e);
+                        None
                     }
+                })
+                .collect();
+            for m in parsed.into_iter().flatten() {
+                manifests.push(m);
+                if manifests.len() >= limit {
+                    break;
                 }
-                Err(e) => {
-                    eprintln!("[KOVA-FAST-DEBUG] Failed to open manifest file {}: {}", path.display(), e);
-                }
+            }
+            if manifests.len() >= limit {
+                break;
             }
         }
 

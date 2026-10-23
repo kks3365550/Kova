@@ -265,13 +265,14 @@ def _background_custom_backup_task(params: Dict[str, Any]):
                         session_id=session_id,
                         zstd_level=effective_compress,
                         progress_callback=_rust_progress,
-                        cancel_event=current_task.get("cancel_event")
+                        cancel_event=current_task.get("cancel_event"),
+                        exclude_patterns=excludes
                     )
 
                     raw_sum = res.raw_summary or {}
                     manifest = {
                         "id": res.session_id,
-                        "vss_enabled": True,
+                        "vss_enabled": False,
                         "summary": {
                             "total_files": res.total_files,
                             "total_bytes": res.total_bytes,
@@ -527,13 +528,14 @@ def _background_backup_task(params: Dict[str, Any]):
                         session_id=session_id,
                         zstd_level=compress,
                         progress_callback=_rust_progress,
-                        cancel_event=cancel_evt
+                        cancel_event=cancel_evt,
+                        exclude_patterns=excludes
                     )
 
                     raw_sum = res.raw_summary or {}
                     manifest = {
                         "id": res.session_id,
-                        "vss_enabled": True,
+                        "vss_enabled": False,
                         "summary": {
                             "total_files": res.total_files,
                             "total_bytes": res.total_bytes,

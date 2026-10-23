@@ -41,6 +41,10 @@ enum Commands {
 
         #[arg(long)]
         json: bool,
+
+        /// Exclude patterns (same semantics as core/filter.py)
+        #[arg(long, num_args = 1..)]
+        exclude: Vec<String>,
     },
     /// Restore files from a specific snapshot session
     Restore {
@@ -93,7 +97,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             session_id,
             zstd_level,
             json,
-        } => run_backup(&source, &repo, session_id, zstd_level, json)?,
+            exclude,
+        } => run_backup(&source, &repo, session_id, zstd_level, json, &exclude)?,
 
         Commands::Restore {
             session_id,
@@ -131,6 +136,7 @@ fn run_backup(
     session_id: Option<String>,
     zstd_level: i32,
     json_mode: bool,
+    exclude: &[String],
 ) -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
     let sid = session_id.unwrap_or_else(|| {
@@ -151,10 +157,14 @@ fn run_backup(
         println!("[KOVA-FAST] Scanning source tree in parallel...");
     }
     let scan_start = Instant::now();
-    let mut items = Vec::new();
-    for src in sources {
-        items.extend(scanner::scan_directory(src));
-    }
+    let exclude_filter = scanner::ExcludeFilter::new(exclude);
+    let items: Vec<scanner::ScannedItem> = sources
+        .par_iter()
+        .map(|src| scanner::scan_directory(src, &exclude_filter))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .flatten()
+        .collect();
     let scan_elapsed = scan_start.elapsed().as_secs_f64();
     if !json_mode {
         println!(
@@ -231,7 +241,7 @@ fn run_backup(
                     false
                 };
 
-                if prev.size == item.size && mtime_match && !prev.chunks.is_empty() {
+                if prev.size == item.size && mtime_match && (!prev.chunks.is_empty() || prev.size == 0) {
                     total_bytes.fetch_add(prev.size, Ordering::Relaxed);
                     dedup_bytes.fetch_add(prev.size, Ordering::Relaxed);
                     unmodified_files.fetch_add(1, Ordering::Relaxed);

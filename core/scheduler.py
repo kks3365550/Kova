@@ -158,7 +158,8 @@ class BackupScheduler:
                             session_id=session_id,
                             zstd_level=compress,
                             progress_callback=on_progress,
-                            cancel_event=cancel_evt
+                            cancel_event=cancel_evt,
+                            exclude_patterns=excludes
                         )
                         with open(res.manifest_path, "r", encoding="utf-8") as fp:
                             manifest = json.load(fp)

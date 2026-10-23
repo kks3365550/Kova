@@ -80,3 +80,35 @@ def test_sync_rust_manifest_missing_file(temp_workspace):
     _, repo_dir, _ = temp_workspace
     ok = sync_rust_manifest_to_sqlite(repo_dir, "non_existent_session")
     assert ok is False
+
+
+def test_build_exclude_list_merges_defaults_and_profile():
+    from core.rust_adapter import _build_exclude_list
+    lst = _build_exclude_list(["node_modules", "  *.foo  ", ""])
+    assert "node_modules" in lst and "*.foo" in lst
+    assert lst.count("node_modules") == 1
+
+
+def test_exclude_and_single_file_source_with_new_engine(temp_workspace, monkeypatch):
+    new_exe = os.environ.get("KOVA_TEST_NEW_ENGINE")
+    if not new_exe or not os.path.isfile(new_exe):
+        import pytest
+        pytest.skip("KOVA_TEST_NEW_ENGINE not set")
+    monkeypatch.setenv("KOVA_RUST_ENGINE_PATH", new_exe)
+    src_dir, repo_dir, _ = temp_workspace
+    nm = os.path.join(src_dir, "node_modules", "pkg")
+    os.makedirs(nm, exist_ok=True)
+    with open(os.path.join(nm, "x.js"), "w") as f:
+        f.write("x")
+    with open(os.path.join(src_dir, "empty.txt"), "w"):
+        pass
+    single = os.path.join(src_dir, "empty.txt")
+    res1 = run_rust_backup(sources=[src_dir, single], repo_dir=repo_dir, session_id="s1",
+                           exclude_patterns=["node_modules"])
+    import json
+    names = [e["path"] for e in json.load(open(res1.manifest_path, encoding="utf-8"))["files"]]
+    assert not any("node_modules" in n for n in names)
+    res2 = run_rust_backup(sources=[src_dir, single], repo_dir=repo_dir, session_id="s2",
+                           exclude_patterns=["node_modules"])
+    assert (res2.raw_summary or {}).get("new_files", -1) == 0
+    assert (res2.raw_summary or {}).get("modified_files", -1) == 0

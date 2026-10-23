@@ -145,7 +145,7 @@ def sync_rust_manifest_to_sqlite(
             "profile_name": profile_name,
             "backup_type": "full",
             "base_snapshot_id": None,
-            "vss_enabled": True,
+            "vss_enabled": False,
             "vss_warnings": [],
             "manifest_signature": None,
             "ed25519_signature": None,
@@ -192,6 +192,17 @@ def sync_rust_manifest_to_sqlite(
         return False
 
 
+def _build_exclude_list(exclude_patterns: Optional[Sequence[str]]) -> List[str]:
+    """Default exclude patterns + profile patterns, de-duplicated (mirrors PathFilter)."""
+    from core.filter import DEFAULT_EXCLUDE_PATTERNS
+    result: List[str] = list(DEFAULT_EXCLUDE_PATTERNS)
+    for p in exclude_patterns or []:
+        p = (p or "").strip()
+        if p and p not in result:
+            result.append(p)
+    return result
+
+
 def run_rust_backup(
     sources: Sequence[str],
     repo_dir: str,
@@ -200,6 +211,7 @@ def run_rust_backup(
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     cancel_event: Optional[threading.Event] = None,
     vss_mount_map: Optional[Dict[str, str]] = None,
+    exclude_patterns: Optional[Sequence[str]] = None,
 ) -> RustBackupResult:
     """
     Executes native Rust backup engine with unbuffered JSON progress streaming,
@@ -233,6 +245,12 @@ def run_rust_backup(
     ]
     for s in actual_sources:
         cmd.extend(["--source", s])
+
+    # Same exclusion rules as the Python engine (defaults + profile patterns)
+    excl = _build_exclude_list(exclude_patterns)
+    if excl:
+        cmd.append("--exclude")
+        cmd.extend(excl)
 
     # Windows No Window Flag
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
