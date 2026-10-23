@@ -6,6 +6,21 @@
 
 ---
 
+## [2.17.19] - 2026-10-23
+
+### 수정
+- 휴지통 정리(GC): 스냅샷 매니페스트에 `"chunks": null` 이 있으면 GC 전체가 중단되던 문제
+- 로깅: `logging.getLogger()` 로 만든 모듈 로거(`core.verify`, `BackupSystem.VSS` 등)가
+  `logs/backup.log` 에 기록되지 않아 일정(pythonw) 실행에서 오류가 사라지던 문제.
+  진입점(`cli_backup`, `web.app`)에서 전체 로거를 파일에 연결
+- `tools/release.py`: 커밋 메시지에 `release:` 접두어가 두 번 붙던 문제
+
+### 테스트
+- 테스트 실행이 실제 `logs/backup.log` 에 가짜 오류를 쌓던 문제 수정 (`tests/conftest.py`)
+- GC null chunks, 로깅 연결, 로그 격리, 릴리즈 커밋 메시지 테스트 추가
+
+---
+
 ## [2.17.18] - 2026-10-23
 
 ### 수정
