@@ -1072,7 +1072,7 @@ class SnapshotEngine:
                                 blob_id = entry.get("blob_id") or entry.get("sha256")
                                 if blob_id:
                                     active_hashes.add(blob_id)
-                                for c in entry.get("chunks", []):
+                                for c in entry.get("chunks") or []:
                                     ch = c.get("hash")
                                     if ch:
                                         active_hashes.add(ch)
