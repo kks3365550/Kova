@@ -7,6 +7,7 @@ import datetime
 from typing import Dict, Any, Optional, Callable, List
 from core.config import ConfigManager
 from core.snapshot import SnapshotEngine
+from core.lock import BackupAlreadyRunningError
 
 # 자동 백업 실패 시 재시도 정책 (최대 3회, 실패 후 30분 간격)
 MAX_AUTO_RETRIES = 3
@@ -152,20 +153,24 @@ class BackupScheduler:
                         session_id = f"snap_sched_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}_{os.urandom(2).hex()}"
                         self._log(profile_name, f"[초고속 Rust 네이티브 엔진 가동] 세션: {session_id}")
 
-                        res = run_rust_backup(
-                            sources=sources,
-                            repo_dir=repo_dir,
-                            session_id=session_id,
-                            zstd_level=compress,
-                            progress_callback=on_progress,
-                            cancel_event=cancel_evt,
-                            exclude_patterns=excludes,
-                            profile_name=profile_name,
-                            profile_id=profile_id
-                        )
+                        from core.lock import BackupLock
+                        with BackupLock(repo_dir, timeout_sec=1, process_desc="스케줄러 Rust 백업"):
+                            res = run_rust_backup(
+                                sources=sources,
+                                repo_dir=repo_dir,
+                                session_id=session_id,
+                                zstd_level=compress,
+                                progress_callback=on_progress,
+                                cancel_event=cancel_evt,
+                                exclude_patterns=excludes,
+                                profile_name=profile_name,
+                                profile_id=profile_id
+                            )
                         with open(res.manifest_path, "r", encoding="utf-8") as fp:
                             manifest = json.load(fp)
                         used_rust_manifest = True
+                except BackupAlreadyRunningError:
+                    raise
                 except Exception as e_rust:
                     self._log(profile_name, f"[경고] Rust 엔진 오류 ({e_rust}), Python 엔진으로 자동 폴백합니다.", level="WARNING")
 
@@ -186,12 +191,16 @@ class BackupScheduler:
                 self._verify_rust_snapshot(profile_name, repo_dir, manifest)
 
             # Prune old snapshots
-            pruned = SnapshotEngine.prune_snapshots(
-                repo_dir=repo_dir,
-                retention_count=retention_count,
-                max_age_days=retention_days,
-                authorized=True
-            )
+            try:
+                pruned = SnapshotEngine.prune_snapshots(
+                    repo_dir=repo_dir,
+                    retention_count=retention_count,
+                    max_age_days=retention_days,
+                    authorized=True
+                )
+            except Exception as e_prune:
+                pruned = []
+                self._log(profile_name, f"[경고] 만료 스냅샷 정리를 건너뜁니다(백업은 성공): {e_prune}", level="WARNING")
 
             # Update profile info
             profile["last_run"] = time.time()
@@ -245,6 +254,8 @@ class BackupScheduler:
                                 self._log(profile_name, f"[3-2-1 오프사이트] 동기화 성공: 복사 {off_res.get('files_copied', 0)}개 / 스킵 {off_res.get('files_skipped', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
                             elif not off_res.get("skipped"):
                                 self._log(profile_name, f"[3-2-1 오프사이트] 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARN")
+                            else:
+                                self._log(profile_name, f"[3-2-1 오프사이트] 동기화 건너뜀: {off_res.get('reason') or off_res.get('error') or '원인 불명'}", level="WARN")
             except Exception as e_off:
                 self._log(profile_name, f"[3-2-1 오프사이트] 동기화 오류: {e_off}", level="WARN")
 
@@ -274,16 +285,36 @@ class BackupScheduler:
 
     def _verify_rust_snapshot(self, profile_name: str, repo_dir: str, manifest: Dict[str, Any]) -> None:
         from core.verify import IntegrityVerifier, RestoreVerificationError
-        if not manifest.get("entries"):
-            self._log(profile_name, "[경고] Rust 매니페스트에 entries가 없어 자동 복원 검증을 생략했습니다.", level="WARNING")
+        entries = manifest.get("entries")
+        if not entries:
+            # Rust 엔진은 files(path, chunks[{hash}]) 형식으로 기록하므로 검증용 entries로 변환한다
+            entries = []
+            for f in manifest.get("files") or []:
+                chunks = f.get("chunks") or []
+                if f.get("is_dir") or not chunks:
+                    continue
+                hashes = [c.get("hash") for c in chunks if c.get("hash")]
+                if not hashes:
+                    continue
+                entries.append({
+                    "rel_path": f.get("path", ""),
+                    "blob_id": hashes[0],
+                    "chunk_ids": hashes,
+                    "size": f.get("size", -1),
+                })
+        if not entries:
+            self._log(profile_name, "[경고] Rust 매니페스트에 검증할 파일이 없어 자동 복원 검증을 생략했습니다.", level="WARNING")
             return
         try:
             verifier = IntegrityVerifier(repo_dir)
-            res = verifier.verify_restore_sampling(manifest, sample_count=20)
+            res = verifier.verify_restore_sampling({**manifest, "entries": entries}, sample_count=20)
         except RestoreVerificationError:
             raise
         except Exception as e:
             self._log(profile_name, f"[경고] 자동 복원 검증을 수행하지 못했습니다: {e}", level="WARNING")
+            return
+        if res.get("status") == "skipped":
+            self._log(profile_name, f"[경고] 자동 복원 검증 생략: {res.get('detail', '')}", level="WARNING")
             return
         if res.get("status") != "passed":
             raise RestoreVerificationError(

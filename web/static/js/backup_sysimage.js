@@ -143,11 +143,14 @@ function updateSystemImageRunningUI(isRunning, data = null) {
 async function startSystemImageBackup() {
     const driveSelect = document.getElementById('sysimg-drive-select');
     const targetDrive = driveSelect ? driveSelect.value : 'D:';
+    const engineSelect = document.getElementById('sysimg-engine-select');
+    const engine = engineSelect && engineSelect.value === 'kimg' ? 'kimg' : 'wbadmin';
 
     const msg = `윈도우 베어메탈(전체) 시스템 이미지 백업을 시작하시겠습니까?\n\n` +
         `• 대상: C: 전체 (부팅 EFI 파티션, 복구 파티션, OS 전체)\n` +
-        `• 저장 위치: ${targetDrive}\\WindowsImageBackup\n\n` +
-        `※ 초고속 블록 스트림(wbadmin) 엔진으로 5~8분 내에 생성됩니다.`;
+        (engine === 'kimg'
+            ? `• 저장 위치: ${targetDrive}\\KovaImages\n\n※ kimg 고속 엔진(실험)입니다. 검증에 실패하면 wbadmin으로 자동 대체됩니다.\n※ 부팅 불가 시 복원 도구(WinPE)가 아직 없으므로 wbadmin 백업을 함께 유지하세요.`
+            : `• 저장 위치: ${targetDrive}\\WindowsImageBackup\n\n※ 초고속 블록 스트림(wbadmin) 엔진으로 5~8분 내에 생성됩니다.`);
 
     if (!confirm(msg)) return;
 
@@ -168,7 +171,7 @@ async function startSystemImageBackup() {
     try {
         const res = await fetchAPI('/api/system-image/start', {
             method: 'POST',
-            body: JSON.stringify({ target_drive: targetDrive })
+            body: JSON.stringify({ target_drive: targetDrive, engine: engine })
         });
 
         if (res && res.success) {

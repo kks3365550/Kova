@@ -1,0 +1,7 @@
+create vdisk file=D:\kova_probe\p.vhdx maximum=1024 type=expandable
+select vdisk file=D:\kova_probe\p.vhdx
+attach vdisk
+convert gpt
+create partition primary
+format fs=ntfs unit=65536 quick label=PROBE
+assign letter=P

@@ -1,0 +1,7 @@
+﻿"scenario","write","verify","restore","compare","chkdsk","files","negative","snap1","snap2","sec","result"
+"gpt-4k-mixed#1","0","0","0","0","0","329 files, 0 diff","detected","0","0","30","PASS"
+"gpt-64k-large#1","0","0","0","0","0","4 files, 0 diff","detected","0","0","65","PASS"
+"mbr-4k-small#1","0","0","0","0","0","4000 files, 0 diff","detected","0","0","76","PASS"
+"gpt-4k-frag#1","0","0","0","0","0","330 files, 0 diff","detected","0","0","34","PASS"
+"gpt-4k-empty#1","0","0","0","0","0","1 files, 0 diff","detected","0","0","21","PASS"
+"gpt-4k-full#1","0","0","0","0","0","103 files, 0 diff","detected","0","0","32","PASS"

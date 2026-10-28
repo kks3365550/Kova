@@ -434,6 +434,7 @@ from core.system_image import SystemImageManager
 
 class SystemImageStartRequest(BaseModel):
     target_drive: str = "D:"
+    engine: str = "wbadmin"  # "kimg"는 선택 옵션. 검증 실패 시 wbadmin으로 대체
 
 @app.get("/api/system-image/status")
 def get_system_image_status(target_drive: str = "D:"):
@@ -443,7 +444,8 @@ def get_system_image_status(target_drive: str = "D:"):
 def start_system_image(req: SystemImageStartRequest):
     res = SystemImageManager.start_backup(
         req.target_drive,
-        log_callback=lambda msg: append_task_log(f"[시스템이미지] {msg}")
+        log_callback=lambda msg: append_task_log(f"[시스템이미지] {msg}"),
+        engine=req.engine
     )
     return res
 
@@ -697,16 +699,48 @@ def test_offsite_connection(req: OffsiteTestRequest):
                 if creds and os.path.exists(creds):
                     break
 
-        needs_oauth = False
-        if creds and os.path.exists(creds) and not os.path.exists(token_path):
+        is_oauth_client = False
+        if creds and os.path.exists(creds):
             try:
                 import json
                 with open(creds, "r", encoding="utf-8") as f_cred:
                     cdata = json.load(f_cred)
                 if "installed" in cdata or "web" in cdata:
-                    needs_oauth = True
+                    is_oauth_client = True
             except Exception:
                 pass
+
+        needs_oauth = False
+        if is_oauth_client:
+            if not os.path.exists(token_path):
+                needs_oauth = True
+            else:
+                # 기존 토큰의 연결 유효성 선검증
+                status = _check_gdrive_connection(creds, folder, interactive=False)
+                if status.get("reachable"):
+                    return {
+                        "success": True,
+                        "provider": "gdrive",
+                        "needs_oauth": False,
+                        "status": status
+                    }
+                # 토큰 만료/취소(invalid_grant/revoked/expired) 등 인증 실패 시 자동 재인증 플로우 개시
+                err_str = str(status.get("error", ""))
+                if any(k in err_str for k in ("invalid_grant", "expired", "revoked", "구글 로그인", "PermissionError")):
+                    logger.info("[Google Drive] 기존 OAuth 토큰 만료 또는 재인증 필요 감지 -> 브라우저 로그인 플로우 개시")
+                    try:
+                        if os.path.exists(token_path):
+                            os.remove(token_path)
+                    except Exception:
+                        pass
+                    needs_oauth = True
+                else:
+                    return {
+                        "success": False,
+                        "provider": "gdrive",
+                        "needs_oauth": False,
+                        "status": status
+                    }
 
         if needs_oauth:
             from google_auth_oauthlib.flow import InstalledAppFlow
@@ -1042,18 +1076,8 @@ async def api_clean_incomplete():
     """D: 드라이브 내 미완료 백업 및 불필요한 임시 파일 정리 (관리자 권한 프로세스)"""
     results = []
     
-    target_winimg = r"D:\WindowsImageBackup"
-    if os.path.exists(target_winimg):
-        try:
-            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            subprocess.run(["cmd.exe", "/c", f'takeown /f "{target_winimg}" /r /d y && icacls "{target_winimg}" /grant Administrators:F /t && rd /s /q "{target_winimg}"'], capture_output=True, creationflags=creationflags)
-            if not os.path.exists(target_winimg):
-                results.append("WindowsImageBackup 삭제 성공")
-            else:
-                shutil.rmtree(target_winimg, ignore_errors=True)
-                results.append("WindowsImageBackup rmtree 완료" if not os.path.exists(target_winimg) else "WindowsImageBackup 잔여")
-        except Exception as e:
-            results.append(f"WindowsImageBackup 오류: {e}")
+    # D:\WindowsImageBackup은 wbadmin 증분 백업의 기준 이미지이므로 삭제하지 않는다.
+    # (삭제하면 다음 백업이 매번 전체 백업이 된다.)
 
     tmp_path = r"D:\DumpStack.log.tmp"
     if os.path.exists(tmp_path):

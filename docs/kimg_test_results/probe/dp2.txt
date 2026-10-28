@@ -1,0 +1,2 @@
+select vdisk file=D:\kova_probe\p.vhdx
+detach vdisk

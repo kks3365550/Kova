@@ -88,3 +88,6 @@ Desktop.ini
 .DS_Store
 .vscode/
 .idea/
+
+*.bak*
+

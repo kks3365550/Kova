@@ -54,6 +54,7 @@ class BackupLock:
     """
 
     LOCK_FILE_NAME = "backup.lock"
+    _LOCK_OFFSET = 1 << 30
 
     def __init__(self, repo_dir: str, timeout_sec: float = 0.0, process_desc: str = "Backup Process"):
         self.repo_dir = os.path.abspath(repo_dir)
@@ -151,10 +152,14 @@ class BackupLock:
                 self.fd = os.open(self.lock_path, flags)
                 
                 if HAS_MSVCRT:
+                    # 0번 바이트를 잠그면 다른 프로세스가 lock JSON을 못 읽으므로 데이터 영역 밖에 잠근다
                     try:
+                        os.lseek(self.fd, self._LOCK_OFFSET, os.SEEK_SET)
                         msvcrt.locking(self.fd, msvcrt.LK_NBLCK, 1)
                     except (OSError, IOError):
                         pass
+                    finally:
+                        os.lseek(self.fd, 0, os.SEEK_SET)
 
                 info = {
                     "pid": os.getpid(),
@@ -209,6 +214,7 @@ class BackupLock:
             try:
                 if HAS_MSVCRT:
                     try:
+                        os.lseek(self.fd, self._LOCK_OFFSET, os.SEEK_SET)
                         msvcrt.locking(self.fd, msvcrt.LK_UNLCK, 1)
                     except (OSError, IOError):
                         pass

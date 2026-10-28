@@ -241,7 +241,12 @@ fn run_backup(
                     false
                 };
 
-                if prev.size == item.size && mtime_match && (!prev.chunks.is_empty() || prev.size == 0) {
+                // 이전 청크의 blob이 저장소에 실제로 있을 때만 재사용 (없으면 파일을 다시 읽어 blob 복구)
+                if prev.size == item.size
+                    && mtime_match
+                    && (!prev.chunks.is_empty() || prev.size == 0)
+                    && prev.chunks.iter().all(|c| cas.has_blob(&c.hash))
+                {
                     total_bytes.fetch_add(prev.size, Ordering::Relaxed);
                     dedup_bytes.fetch_add(prev.size, Ordering::Relaxed);
                     unmodified_files.fetch_add(1, Ordering::Relaxed);

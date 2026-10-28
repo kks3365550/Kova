@@ -747,7 +747,7 @@ class SnapshotEngine:
             verifier = IntegrityVerifier(repo_dir, crypto_engine=storage.crypto_engine)
             restore_res = verifier.verify_restore_sampling(snapshot_manifest, sample_count=20)
             snapshot_manifest["restore_verification"] = restore_res
-            snapshot_manifest["is_verified"] = (restore_res.get("status") == "passed")
+            snapshot_manifest["is_verified"] = (restore_res.get("status") in ("passed", "skipped"))
             snapshot_manifest["verify_timestamp"] = time.time()
             snapshot_manifest["verify_error_count"] = 0
 

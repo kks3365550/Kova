@@ -155,7 +155,7 @@ class SystemImageManager:
             }
 
     @classmethod
-    def start_backup(cls, target_drive: str = "D:", log_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+    def start_backup(cls, target_drive: str = "D:", log_callback: Optional[Callable[[str], None]] = None, engine: str = "wbadmin") -> Dict[str, Any]:
         with cls._lock:
             if cls._is_running:
                 return {"success": False, "error": "이미 윈도우 시스템 이미지 백업이 진행 중입니다."}
@@ -207,6 +207,13 @@ class SystemImageManager:
                             cls._current_phase = "볼륨 목록 검색 중"
 
             try:
+                if engine == "kimg":
+                    result = cls._run_kimg_backup(target_drive, t_start, log_callback)
+                    if result in ("ok", "cancelled"):
+                        return
+                    cls.append_log("kimg 백업이 검증을 통과하지 못해 wbadmin으로 대체합니다.", level="WARNING")
+                    if log_callback:
+                        log_callback("kimg 백업이 검증을 통과하지 못해 wbadmin으로 대체합니다.")
                 cls.append_log(f"윈도우 베어메탈 시스템 이미지 백업을 시작합니다 (대상: {target_drive})...")
                 cls.append_log("부팅(EFI) 파티션, 복구 파티션 및 C: 드라이브 전체 캡처를 준비합니다.")
 
@@ -346,6 +353,156 @@ class SystemImageManager:
         t = threading.Thread(target=_run_worker, daemon=True)
         t.start()
         return {"success": True, "message": "시스템 이미지 백업 작업이 시작되었습니다."}
+
+    @staticmethod
+    def _find_kimg_exe() -> Optional[str]:
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        for c in (os.environ.get("KOVA_KIMG_EXE"), os.path.join(base, "engine_rust", "kimg.exe")):
+            if c and os.path.isfile(c):
+                return c
+        return None
+
+    @staticmethod
+    def _collect_disk_layout() -> Optional[Dict[str, Any]]:
+        """C:가 있는 디스크의 파티션 구성·펌웨어 종류를 수집한다(복원 시 diskpart 레이아웃 결정용). 실패하면 None."""
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform.startswith("win") else 0
+        ps = ("$ErrorActionPreference='Stop';"
+              "$p=Get-Partition -DriveLetter C;$d=Get-Disk -Number $p.DiskNumber;"
+              "$parts=@(Get-Partition -DiskNumber $d.Number|ForEach-Object{[pscustomobject]@{"
+              "number=$_.PartitionNumber;size=[int64]$_.Size;type=[string]$_.Type;gpt_type=[string]$_.GptType;"
+              "drive=$(if($_.DriveLetter -and [int]$_.DriveLetter -gt 0){[string]$_.DriveLetter}else{''})}});"
+              "[pscustomobject]@{partition_style=[string]$d.PartitionStyle;disk_size=[int64]$d.Size;"
+              "c_partition_size=[int64]$p.Size;c_partition_number=$p.PartitionNumber;"
+              "firmware=[string]$env:firmware_type;partitions=$parts}|ConvertTo-Json -Depth 4 -Compress")
+        try:
+            cp = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True,
+                                creationflags=flags, timeout=60)
+            if cp.returncode != 0 or not (cp.stdout or "").strip():
+                return None
+            data = json.loads(cp.stdout)
+            return data if isinstance(data, dict) else None
+        except Exception:
+            return None
+
+    @staticmethod
+    def _write_kimg_meta(final_path: str, layout: Optional[Dict[str, Any]], exe: str) -> None:
+        """이미지 옆에 `<이미지>.json` 저장(원자적). 호출자가 예외를 처리한다."""
+        meta = {
+            "format": 1,
+            "created": datetime.datetime.now().isoformat(timespec="seconds"),
+            "source": "C:",
+            "layout": layout,
+            "image_bytes": os.path.getsize(final_path),
+            "verified_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        }
+        try:
+            st = os.stat(exe)
+            meta["kimg_exe_size"] = st.st_size
+            meta["kimg_exe_mtime"] = int(st.st_mtime)
+        except OSError:
+            pass
+        tmp = final_path + ".json.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, final_path + ".json")
+
+    @classmethod
+    def _run_kimg_backup(cls, target_drive: str, t_start: float, log_callback: Optional[Callable[[str], None]] = None) -> str:
+        """kimg로 C: 볼륨 이미지를 쓰고 verify까지 통과해야 'ok'. 실패는 'failed'(호출자가 wbadmin으로 대체), 중단은 'cancelled'."""
+        def log(msg, level="INFO"):
+            cls.append_log(msg, level=level)
+            if log_callback:
+                log_callback(msg)
+
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform.startswith("win") else 0
+        exe = cls._find_kimg_exe()
+        if not exe:
+            log("kimg.exe를 찾을 수 없습니다.", "WARNING")
+            return "failed"
+        if not cls.is_admin():
+            log("kimg는 관리자 권한이 필요합니다.", "WARNING")
+            return "failed"
+        try:
+            _, c_used, _ = shutil.disk_usage("C:\\")
+            _, _, free = shutil.disk_usage(target_drive + "\\")
+            if free < c_used * 0.7:
+                log("대상 드라이브 여유 공간이 부족합니다.", "WARNING")
+                return "failed"
+        except Exception as e:
+            log(f"디스크 공간 확인 실패: {e}", "WARNING")
+            return "failed"
+
+        out_dir = os.path.join(target_drive + "\\", "KovaImages")
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        final_path = os.path.join(out_dir, f"C_{stamp}.kimg")
+        part_path = final_path + ".part"
+        shadow_id = None
+        ok = False
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+            with cls._lock:
+                cls._current_phase = "VSS 스냅샷 생성 중 (kimg)"
+            ps = ("$r=(Get-WmiObject -List Win32_ShadowCopy).Create('C:\\','ClientAccessible');"
+                  "if($r.ReturnValue -ne 0){exit 2};"
+                  "$d=(Get-WmiObject Win32_ShadowCopy|Where-Object{$_.ID -eq $r.ShadowID}).DeviceObject.TrimEnd('\\');"
+                  "Write-Output ($r.ShadowID+'|'+$d)")
+            cp = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, creationflags=flags)
+            line = (cp.stdout or "").strip().splitlines()[-1] if (cp.stdout or "").strip() else ""
+            if cp.returncode != 0 or "|" not in line:
+                log(f"VSS 스냅샷 생성 실패 (코드 {cp.returncode}): {((cp.stderr or '').strip() or (cp.stdout or '').strip())[:200]}", "WARNING")
+                return "failed"
+            shadow_id, dev = line.split("|", 1)
+            log(f"스냅샷 생성: {dev}")
+
+            for step, args in (("이미지 쓰기", ["write", "--source", dev, "--target", part_path, "--threads", "4", "--chunk-mb", "4", "--level", "1"]),
+                               ("이미지 검증", ["verify", "--image", part_path, "--threads", "4"])):
+                with cls._lock:
+                    cls._current_phase = f"kimg {step} 중"
+                p = subprocess.Popen([exe] + args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags)
+                with cls._lock:
+                    cls._process = p
+                tail = []
+                for raw in p.stdout:
+                    t = raw.decode("utf-8", errors="replace").strip()
+                    if t:
+                        tail.append(t)
+                        del tail[:-3]
+                p.wait()
+                if cls._status == "cancelled":
+                    return "cancelled"
+                if p.returncode != 0:
+                    log(f"kimg {step} 실패 (코드 {p.returncode}): {' / '.join(tail)}", "WARNING")
+                    return "failed"
+                log(f"kimg {step} 성공")
+
+            os.replace(part_path, final_path)
+            ok = True
+            try:
+                cls._write_kimg_meta(final_path, cls._collect_disk_layout(), exe)
+            except Exception as e:
+                log(f"kimg 메타데이터(.json) 저장 실패 (이미지는 유효): {e}", "WARNING")
+            with cls._lock:
+                cls._progress_percent = 100.0
+                cls._current_phase = "백업 완료 (kimg)"
+                cls._status = "completed"
+            log(f"kimg 볼륨 이미지 백업 완료 (검증 통과): {final_path} (소요 {round((time.time() - t_start) / 60, 1)}분)", "SUCCESS")
+            return "ok"
+        except Exception as e:
+            log(f"kimg 백업 중 오류: {e}", "WARNING")
+            return "failed"
+        finally:
+            if shadow_id:
+                try:
+                    subprocess.run(["powershell", "-NoProfile", "-Command",
+                                    f"(Get-WmiObject Win32_ShadowCopy|Where-Object{{$_.ID -eq '{shadow_id}'}}).Delete()"],
+                                   capture_output=True, creationflags=flags)
+                except Exception:
+                    pass
+            if not ok and os.path.exists(part_path):
+                try:
+                    os.remove(part_path)
+                except Exception:
+                    pass
 
     @classmethod
     def stop_backup(cls) -> Dict[str, Any]:

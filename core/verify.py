@@ -186,7 +186,8 @@ class IntegrityVerifier:
         entries = snapshot_manifest.get("entries", [])
         if not entries:
             return {
-                "status": "passed",
+                "status": "skipped",
+                "detail": "검증할 항목(entries)이 없습니다",
                 "samples_verified": 0,
                 "total_verified_bytes": 0,
                 "sample_paths": []
