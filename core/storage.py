@@ -226,9 +226,25 @@ class BlobStorage:
     def bulk_add_blob_cache(self, blob_ids) -> None:
         """Pre-populates the in-memory blob cache to eliminate disk syscalls (os.path.exists) during diffing."""
         valid_ids = {b for b in blob_ids if b}
-        if valid_ids:
+        if not valid_ids:
+            return
+        # Only cache ids that really exist (pack map or blob file); a stale id
+        # would make has_blob() skip re-writing a missing blob forever.
+        pack_map = self.composite_facade.pack_index_map
+        confirmed = {b for b in valid_ids if b.lower() in pack_map}
+        by_prefix = {}
+        for b in valid_ids - confirmed:
+            by_prefix.setdefault(b[:2], []).append(b)
+        for prefix, ids in by_prefix.items():
+            try:
+                with os.scandir(os.path.join(self.blobs_dir, prefix)) as it:
+                    names = {e.name[:-5] for e in it if e.name.endswith(".blob")}
+            except OSError:
+                continue
+            confirmed.update(b for b in ids if b in names)
+        if confirmed:
             with self._cache_lock:
-                self._blob_cache.update(valid_ids)
+                self._blob_cache.update(confirmed)
 
     def put_file_blob(self, filepath: str, sha256_hash: Optional[str] = None, compress_level: int = DEFAULT_COMPRESS_LEVEL, read_path: Optional[str] = None) -> Tuple[str, int, int, bool]:
         """
@@ -468,11 +484,19 @@ class BlobStorage:
     def commit_active_pack(self):
         """Atomically commits index of active pack writer and reloads composite lookup."""
         with self._pack_writer_lock:
-            if hasattr(self, "_active_pack_writer") and self._active_pack_writer is not None:
-                self._active_pack_writer.commit_index()
-                self._active_pack_writer.close()
-                self._active_pack_writer = None
-                self.composite_facade.reload_packs()
+            writer = getattr(self, "_active_pack_writer", None)
+            if writer is None:
+                return
+            try:
+                writer.commit_index()
+            finally:
+                # Always release the writer and resync the map from on-disk idx
+                # files so chunks of a failed commit are not reported as present.
+                try:
+                    writer.close()
+                finally:
+                    self._active_pack_writer = None
+                    self.composite_facade.reload_packs()
 
     def put_chunk_to_pack(self, data: bytes, compress_level: int = 3) -> Tuple[str, int, int, bool]:
         """

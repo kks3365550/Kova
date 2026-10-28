@@ -418,8 +418,11 @@ def find_latest_wbadmin_vhdx(target_drive: str) -> Optional[Dict[str, Any]]:
     if not candidates:
         return None
 
-    # mtime 최신순, 동일 시 용량(가장 큰 C: 볼륨) 순 정렬
-    candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    # 최신 백업 폴더 우선(폴더 내 최대 mtime), 같은 폴더 안에서는 가장 큰 VHDX(C: 볼륨, Esp 제외)
+    folder_mtime = {}
+    for c in candidates:
+        folder_mtime[c[3]] = max(folder_mtime.get(c[3], 0), c[0])
+    candidates.sort(key=lambda x: (folder_mtime[x[3]], x[1]), reverse=True)
     best = candidates[0]
     return {
         "vhdx_path": best[2],

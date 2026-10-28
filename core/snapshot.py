@@ -281,22 +281,32 @@ class SnapshotEngine:
                         "percent": 0
                     })
 
-            return cls._execute_backup_pipeline(
-                repo_dir=repo_dir,
-                sources=sources,
-                profile_id=profile_id,
-                profile_name=profile_name,
-                exclude_patterns=exclude_patterns,
-                compress_level=compress_level,
-                progress_callback=progress_callback,
-                cancel_event=cancel_event,
-                start_time=start_time,
-                storage=storage,
-                path_filter=path_filter,
-                vss_ctx=vss_ctx,
-                offsite_repo_dir=offsite_repo_dir,
-                worm_protect=worm_protect
-            )
+            try:
+                return cls._execute_backup_pipeline(
+                    repo_dir=repo_dir,
+                    sources=sources,
+                    profile_id=profile_id,
+                    profile_name=profile_name,
+                    exclude_patterns=exclude_patterns,
+                    compress_level=compress_level,
+                    progress_callback=progress_callback,
+                    cancel_event=cancel_event,
+                    start_time=start_time,
+                    storage=storage,
+                    path_filter=path_filter,
+                    vss_ctx=vss_ctx,
+                    offsite_repo_dir=offsite_repo_dir,
+                    worm_protect=worm_protect
+                )
+            except BaseException:
+                # Aborted run: still write the pack idx so the in-memory map
+                # and disk agree for the next run in a long-lived process.
+                try:
+                    storage.commit_active_pack()
+                except Exception:
+                    import logging
+                    logging.getLogger("BackupSystem").exception("commit_active_pack after failed backup")
+                raise
 
     @classmethod
     def _load_snapshot_index_fast(
