@@ -6,6 +6,18 @@
 
 ---
 
+## [2.17.21] - 2026-10-28
+
+### 수정
+- 블롭 캐시(bulk_add_blob_cache)가 존재하지 않는 블롭을 "있음"으로 캐시해 누락이 이어지던 문제
+- 백업 중단 시 pack idx가 남지 않거나 commit_active_pack 실패 시 메모리 맵이 어긋나던 문제
+- wbadmin VHDX 탐색이 Esp.vhdx(EFI)를 C: 볼륨으로 잘못 고르던 문제
+
+### 테스트
+- test_storage_cache_pack_fix 추가
+
+---
+
 ## [2.17.19] - 2026-10-23
 
 ### 수정
