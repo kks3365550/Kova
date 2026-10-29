@@ -3,7 +3,7 @@
 ; =========================================================================
 
 #define MyAppName "Kova"
-#define MyAppVersion "2.17.25"
+#define MyAppVersion "2.17.26"
 #define MyAppPublisher "kks3365550"
 #define MyAppURL "http://127.0.0.1:8765"
 #define MyAppExeName "Kova.exe"

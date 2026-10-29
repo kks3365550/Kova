@@ -95,6 +95,28 @@ class TestStorageCachePackFix(unittest.TestCase):
         self.assertTrue(packs)
         self.assertEqual(len(packs), len(idxs))
 
+    def test_heal_orphan_pack_indices(self):
+        data = b"self healing orphan pack test data" * 15
+        h, _, _, _ = self.storage.put_bytes_blob(data, use_pack=True)
+        self.storage.commit_active_pack()
+        self.assertTrue(self.storage.has_blob(h))
+
+        # Simulate missing .idx file for the pack
+        pack_id = self.storage.composite_facade.pack_index_map.get(h.lower())
+        self.assertIsNotNone(pack_id)
+        idx_path = os.path.join(self.repo_dir, "packs", f"{pack_id}.idx")
+        self.assertTrue(os.path.exists(idx_path))
+        os.remove(idx_path)
+        self.storage.composite_facade.reload_packs()
+        # Without idx, pack is not loaded
+        self.assertNotIn(h.lower(), self.storage.composite_facade.pack_index_map)
+
+        # Heal orphan pack indices
+        healed = self.storage.composite_facade.heal_orphan_pack_indices()
+        self.assertEqual(healed, 1)
+        self.assertTrue(os.path.exists(idx_path))
+        self.assertTrue(self.storage.has_blob(h))
+
 
 if __name__ == "__main__":
     unittest.main()

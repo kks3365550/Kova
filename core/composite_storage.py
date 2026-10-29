@@ -94,6 +94,28 @@ class CompositeStorageFacade:
         self.pack_readers = new_pack_readers
         self.pack_index_map = new_pack_index_map
 
+    def heal_orphan_pack_indices(self) -> int:
+        """
+        Scans packs_dir for any valid .pack files that lack a matching .idx file,
+        rebuilds their index atomically, and reloads the pack readers.
+        Returns the number of healed packs.
+        """
+        if not self.packs_dir.exists():
+            return 0
+        healed = 0
+        for pack_file in self.packs_dir.glob("*.pack"):
+            idx_file = pack_file.with_suffix(".idx")
+            if not idx_file.exists():
+                try:
+                    logger.info("누락된 팩 인덱스 감지, 자동 셀프 힐링 재색인 수행 (%s)", pack_file.name)
+                    PackRecoveryEngine.rebuild_index_from_pack(pack_file, idx_file)
+                    healed += 1
+                except Exception as e_rebuild:
+                    logger.warning("팩 인덱스 자동 재색인 실패 (%s): %s", pack_file.name, e_rebuild)
+        if healed > 0:
+            self.reload_packs()
+        return healed
+
     def has_blob(self, blob_id: str) -> bool:
         """
         Dual-Read exists check:
