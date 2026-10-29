@@ -584,12 +584,13 @@ def create_block_stream_backup(
         out_fp.write(header)
 
         # ----------------------------------------------------------------------
-        # 3단계 초고속 비동기 Producer-Consumer 파이프라인
-        # Thread 1 (Reader): Direct DMA로 C: NVMe에서 8~12개 블록 선독(Pre-read, QD 12)
-        # Thread 2 (Compressor): zstd 풀코어(threads=-1) 병렬 압축 + CRC32
-        # Thread 3 (Writer): D: NVMe로 비동기 순차 Direct I/O 쓰기
+        # 3단계 초고속 비동기 Producer-Consumer 파이프라인 (16코어 풀가동 병렬 워커 풀)
+        # Thread 1 (Reader): Direct DMA로 C: NVMe에서 사전 읽기 (QD 32)
+        # Threads 2..N+1 (Compressors): 16스레드 풀코어 병렬 압축 (zstd level 1 + CRC32, GIL 해제)
+        # Thread Main (Writer): E: NVMe로 순서 보장(Reorder Buffer) 순차 Direct I/O 쓰기
         # ----------------------------------------------------------------------
-        queue_depth = 12
+        num_compressors = min(16, max(4, os.cpu_count() or 8))
+        queue_depth = max(32, num_compressors * 2)
         read_q = queue.Queue(maxsize=queue_depth)
         write_q = queue.Queue(maxsize=queue_depth)
         stop_event = threading.Event()
@@ -614,12 +615,16 @@ def create_block_stream_backup(
                 pipeline_error.append(e)
                 stop_event.set()
             finally:
-                read_q.put(None)
+                for _ in range(num_compressors):
+                    try:
+                        read_q.put(None, timeout=2.0)
+                    except Exception:
+                        pass
 
-        # [Stage 2] Compressor 스레드 (풀코어 멀티스레드 압축)
+        # [Stage 2] Compressor 스레드 풀 (16스레드 풀코어 병렬 압축)
         def compressor_worker():
             try:
-                compressor = zstd.ZstdCompressor(level=1, threads=-1)
+                compressor = zstd.ZstdCompressor(level=1)
                 while not stop_event.is_set():
                     if cancel_event and cancel_event.is_set():
                         break
@@ -645,21 +650,26 @@ def create_block_stream_backup(
             except Exception as e:
                 pipeline_error.append(e)
                 stop_event.set()
-            finally:
-                write_q.put(None)
 
         t_reader = threading.Thread(target=reader_worker, daemon=True, name="Backup-Reader")
-        t_comp = threading.Thread(target=compressor_worker, daemon=True, name="Backup-Compressor")
+        t_compressors = [
+            threading.Thread(target=compressor_worker, daemon=True, name=f"Backup-Comp-{i}")
+            for i in range(num_compressors)
+        ]
         t_reader.start()
-        t_comp.start()
+        for t in t_compressors:
+            t.start()
 
-        # [Stage 3] Writer (메인 스레드: D: NVMe 파일 쓰기 및 진행률 보고)
+        # [Stage 3] Writer (메인 스레드: 순서 보장 Reorder Buffer 순차 쓰기 및 진행률 보고)
         processed_bytes = 0
         compressed_total_bytes = 0
         last_log_time = time.time()
+        pending_writes = {}
+        next_write_idx = 0
+        total_chunks = len(runs)
 
         try:
-            while True:
+            while next_write_idx < total_chunks:
                 if cancel_event and cancel_event.is_set():
                     stop_event.set()
                     raise InterruptedError("사용자에 의해 블록 스트리밍 백업이 취소되었습니다.")
@@ -669,42 +679,49 @@ def create_block_stream_backup(
 
                 try:
                     item = write_q.get(timeout=0.2)
+                    if item is not None:
+                        idx, chunk_hdr, comp_data, raw_len, comp_len = item
+                        pending_writes[idx] = (chunk_hdr, comp_data, raw_len, comp_len)
                 except queue.Empty:
-                    continue
+                    if not any(t.is_alive() for t in t_compressors) and next_write_idx not in pending_writes:
+                        if pipeline_error:
+                            raise pipeline_error[0]
+                        raise RuntimeError("모든 압축 워커가 작업을 마치기 전에 예기치 않게 종료되었습니다.")
 
-                if item is None:
-                    break
+                while next_write_idx in pending_writes:
+                    chunk_hdr, comp_data, raw_len, comp_len = pending_writes.pop(next_write_idx)
+                    out_fp.write(chunk_hdr)
+                    out_fp.write(comp_data)
 
-                idx, chunk_hdr, comp_data, raw_len, comp_len = item
-                out_fp.write(chunk_hdr)
-                out_fp.write(comp_data)
+                    processed_bytes += raw_len
+                    compressed_total_bytes += comp_len
 
-                processed_bytes += raw_len
-                compressed_total_bytes += comp_len
+                    now = time.time()
+                    if now - last_log_time >= 0.5 or next_write_idx == total_chunks - 1:
+                        elapsed = max(0.1, now - start_time)
+                        pct = min(100.0, round((processed_bytes / max(1, total_data_bytes)) * 100.0, 1))
+                        speed_mb = (processed_bytes / (1024 * 1024)) / elapsed
 
-                now = time.time()
-                if now - last_log_time >= 0.5 or idx == len(runs) - 1:
-                    elapsed = max(0.1, now - start_time)
-                    pct = min(100.0, round((processed_bytes / max(1, total_data_bytes)) * 100.0, 1))
-                    speed_mb = (processed_bytes / (1024 * 1024)) / elapsed
+                        if progress_callback:
+                            progress_callback({
+                                "percent": pct,
+                                "processed_bytes": processed_bytes,
+                                "total_bytes": total_data_bytes,
+                                "speed_mb_s": round(speed_mb, 1),
+                                "chunk_index": next_write_idx + 1,
+                                "total_chunks": total_chunks,
+                                "phase": f"LBA 블록 스트리밍 백업 중 ({pct}%)"
+                            })
+                        last_log_time = now
 
-                    if progress_callback:
-                        progress_callback({
-                            "percent": pct,
-                            "processed_bytes": processed_bytes,
-                            "total_bytes": total_data_bytes,
-                            "speed_mb_s": round(speed_mb, 1),
-                            "chunk_index": idx + 1,
-                            "total_chunks": len(runs),
-                            "phase": f"LBA 블록 스트리밍 백업 중 ({pct}%)"
-                        })
-                    last_log_time = now
+                    next_write_idx += 1
 
             out_fp.flush()
         finally:
             stop_event.set()
             t_reader.join(timeout=2.0)
-            t_comp.join(timeout=2.0)
+            for t in t_compressors:
+                t.join(timeout=2.0)
         elapsed_total = time.time() - start_time
         avg_speed = (processed_bytes / (1024 * 1024)) / max(0.1, elapsed_total)
 

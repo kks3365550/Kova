@@ -2055,62 +2055,70 @@ class DriveArchiveManager:
     def list_archives(self, repo_dir: Optional[str] = None) -> List[Dict[str, Any]]:
         """저장소 디렉토리의 VHDX/WIM/QBLK 아카이브 및 WindowsImageBackup 목록 반환"""
         auto_discover_wib = (repo_dir is None)
-        if not repo_dir:
-            repo_dir = "D:\\MyBackup_Repository\\archives"
-            if not os.path.exists(repo_dir):
-                repo_dir = os.path.join(tempfile.gettempdir(), "BackupSystem_Archives")
+        search_dirs = []
+        if repo_dir:
+            search_dirs.append(repo_dir)
+        else:
+            for drive_letter in ["D:", "E:", "F:", "C:"]:
+                cand = os.path.join(drive_letter + "\\", "MyBackup_Repository", "archives")
+                if os.path.exists(cand):
+                    search_dirs.append(cand)
+            if not search_dirs:
+                search_dirs.append(os.path.join(tempfile.gettempdir(), "BackupSystem_Archives"))
 
         archives = []
         seen_paths = set()
 
         # 1. archives 디렉토리 스캔 (.wim, .vhdx, .qblk, .raw.zst)
-        if os.path.exists(repo_dir):
-            for entry in os.scandir(repo_dir):
-                if entry.is_file() and entry.name.lower().endswith((".wim", ".vhdx", ".qblk", ".raw.zst")):
-                    file_path = entry.path
-                    meta_path = file_path + ".meta.json"
-                    meta_data = {}
-                    if os.path.exists(meta_path):
-                        try:
-                            with open(meta_path, "r", encoding="utf-8") as f:
-                                meta_data = json.load(f)
-                        except Exception as e_meta:
-                            logger.warning(f"아카이브 메타 읽기 실패, 기본값으로 진행 ({meta_path}): {e_meta}")
+        for s_dir in search_dirs:
+            if not os.path.exists(s_dir):
+                continue
+            for entry in os.scandir(s_dir):
+                    if entry.is_file() and entry.name.lower().endswith((".wim", ".vhdx", ".qblk", ".raw.zst")):
+                        file_path = entry.path
+                        meta_path = file_path + ".meta.json"
+                        meta_data = {}
+                        if os.path.exists(meta_path):
+                            try:
+                                with open(meta_path, "r", encoding="utf-8") as f:
+                                    meta_data = json.load(f)
+                            except Exception as e_meta:
+                                logger.warning(f"아카이브 메타 읽기 실패, 기본값으로 진행 ({meta_path}): {e_meta}")
 
-                    vhdx_path = meta_data.get("vhdx_path") or (file_path if file_path.lower().endswith(".vhdx") else None)
-                    size_bytes = meta_data.get("size_bytes")
-                    if not size_bytes:
-                        if vhdx_path and os.path.exists(vhdx_path):
-                            size_bytes = os.path.getsize(vhdx_path)
+                        vhdx_path = meta_data.get("vhdx_path") or (file_path if file_path.lower().endswith(".vhdx") else None)
+                        size_bytes = meta_data.get("size_bytes")
+                        if not size_bytes:
+                            if vhdx_path and os.path.exists(vhdx_path):
+                                size_bytes = os.path.getsize(vhdx_path)
+                            else:
+                                size_bytes = entry.stat().st_size
+
+                        size_gb = round(size_bytes / (1024 ** 3), 2)
+                        mtime_str = meta_data.get("created_at") or time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry.stat().st_mtime))
+                        if entry.name.lower().endswith((".qblk", ".raw.zst")):
+                            backup_type = "block_stream"
+                        elif entry.name.lower().endswith(".vhdx"):
+                            backup_type = "wbadmin_vhdx"
                         else:
-                            size_bytes = entry.stat().st_size
+                            backup_type = "wim"
 
-                    size_gb = round(size_bytes / (1024 ** 3), 2)
-                    mtime_str = meta_data.get("created_at") or time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry.stat().st_mtime))
-                    if entry.name.lower().endswith((".qblk", ".raw.zst")):
-                        backup_type = "block_stream"
-                    elif entry.name.lower().endswith(".vhdx"):
-                        backup_type = "wbadmin_vhdx"
-                    else:
-                        backup_type = "wim"
-
-                    archives.append({
-                        "name": entry.name,
-                        "path": file_path,
-                        "backup_type": backup_type,
-                        "vhdx_path": vhdx_path,
-                        "size_bytes": size_bytes,
-                        "size_gb": size_gb,
-                        "modified_at": mtime_str,
-                        "vsn": meta_data.get("volume_serial_number", "미등록"),
-                        "source_volume": meta_data.get("source_volume", "C:"),
-                        "is_verified": meta_data.get("is_verified", False),
-                        "verification_stage": meta_data.get("verification_stage", 0),
-                        "created_at": meta_data.get("created_at", mtime_str)
-                    })
-                    seen_paths.add(os.path.abspath(file_path).lower())
-                    if vhdx_path:
-                        seen_paths.add(os.path.abspath(vhdx_path).lower())
+                        archives.append({
+                            "name": entry.name,
+                            "path": file_path,
+                            "backup_type": backup_type,
+                            "vhdx_path": vhdx_path,
+                            "size_bytes": size_bytes,
+                            "size_gb": size_gb,
+                            "modified_at": mtime_str,
+                            "vsn": meta_data.get("volume_serial_number", "미등록"),
+                            "source_volume": meta_data.get("source_volume", "C:"),
+                            "is_verified": meta_data.get("is_verified", False),
+                            "verification_stage": meta_data.get("verification_stage", 0),
+                            "created_at": meta_data.get("created_at", mtime_str)
+                        })
+                        seen_paths.add(os.path.abspath(file_path).lower())
+                        if vhdx_path:
+                            seen_paths.add(os.path.abspath(vhdx_path).lower())
 
         # 2. WindowsImageBackup 폴더 스캔 (repo_dir 미지정 기본 조회 시만 자동 발견)
         if auto_discover_wib:
@@ -2155,11 +2163,12 @@ class DriveArchiveManager:
         # 3. 영구 아카이브 캐시 저장 및 폴백 (권한 부족/일시적 스캔 실패 대비)
         if auto_discover_wib:
             cache_candidates = [
-                os.path.join(repo_dir, ".archives_cache.json"),
+                os.path.join(sd, ".archives_cache.json") for sd in search_dirs
+            ] + [
                 os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".ai", "archives_cache.json")
             ]
         else:
-            cache_candidates = [os.path.join(repo_dir, ".archives_cache.json")]
+            cache_candidates = [os.path.join(sd, ".archives_cache.json") for sd in search_dirs]
 
         # 캐시로부터 누락 아카이브 폴백 복원
         for cp in cache_candidates:
