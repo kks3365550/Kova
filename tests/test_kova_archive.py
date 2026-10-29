@@ -21,6 +21,7 @@ def test_list_archives_finds_kova_images(tmp_path, monkeypatch):
 
     monkeypatch.setattr("core.drive_archive.os.path.isdir", fake_isdir)
     monkeypatch.setattr("core.drive_archive.os.scandir", fake_scandir)
+    monkeypatch.setattr("core.drive_archive.json.dump", lambda *a, **k: None)  # 실제 캐시 오염 방지
     got = [a for a in DriveArchiveManager.get_instance().list_archives() if a["backup_type"] == "kova_image"]
     names = {a["name"] for a in got}
     assert {"C_20261030_010101.kova", "old.kimg"} <= names

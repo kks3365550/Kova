@@ -91,3 +91,6 @@ Desktop.ini
 
 *.bak*
 
+
+# WinPE restore ISO (400MB)
+*.iso
