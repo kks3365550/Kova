@@ -41,7 +41,7 @@ def test_list_archives_reports_correct_metadata():
     for arc in archives:
         assert arc.get("name"), "아카이브 이름 누락"
         assert arc.get("size_bytes", 0) > 0, "아카이브 크기 0B 오류"
-        assert arc.get("backup_type") in ("block_stream", "wbadmin_vhdx", "wim"), f"알 수 없는 백업 형식: {arc.get('backup_type')}"
+        assert arc.get("backup_type") in ("block_stream", "wbadmin_vhdx", "wim", "kova_image"), f"알 수 없는 백업 형식: {arc.get('backup_type')}"
 
     # 2. 빈 디렉토리 조회 시 유령 항목 없이 0건 반환 확인
     with tempfile.TemporaryDirectory() as empty_dir:

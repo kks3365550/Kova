@@ -1623,6 +1623,8 @@ class DriveArchiveManager:
         """
         VHDX / WIM 아카이브를 대상 드라이브로 복원 + BCD 부트로더 주입 + VSN 복원
         """
+        if wim_path.lower().endswith((".kova", ".kimg")):
+            return {"success": False, "error": "KOVA Engine 이미지(.kova)는 WinPE의 restore.cmd로만 복원할 수 있습니다."}
         with self.state_lock:
             if self.is_running:
                 return {"success": False, "error": "이미 다른 아카이브/복원 작업이 진행 중입니다."}
@@ -2159,6 +2161,39 @@ class DriveArchiveManager:
                                         pass
                     except Exception:
                         pass
+
+        # 2-1. KOVA Engine 이미지 스캔 (<드라이브>:\KovaImages\*.kova, 구 *.kimg). 복원은 WinPE(restore.cmd) 전용.
+        if auto_discover_wib:
+            for drive_letter in ["C:", "D:", "E:", "F:", "G:", "H:", "I:", "J:", "K:"]:
+                kdir = os.path.join(drive_letter + "\\", "KovaImages")
+                if not os.path.isdir(kdir):
+                    continue
+                try:
+                    for entry in os.scandir(kdir):
+                        if not (entry.is_file() and entry.name.lower().endswith((".kova", ".kimg"))):
+                            continue
+                        norm_fp = os.path.abspath(entry.path).lower()
+                        if norm_fp in seen_paths:
+                            continue
+                        st = entry.stat()
+                        mtime_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(st.st_mtime))
+                        archives.append({
+                            "name": entry.name,
+                            "path": entry.path,
+                            "backup_type": "kova_image",
+                            "vhdx_path": None,
+                            "size_bytes": st.st_size,
+                            "size_gb": round(st.st_size / (1024 ** 3), 2),
+                            "modified_at": mtime_str,
+                            "vsn": "미등록",
+                            "source_volume": "C:",
+                            "is_verified": os.path.exists(entry.path + ".json"),
+                            "verification_stage": 0,
+                            "created_at": mtime_str
+                        })
+                        seen_paths.add(norm_fp)
+                except OSError:
+                    pass
 
         # 3. 영구 아카이브 캐시 저장 및 폴백 (권한 부족/일시적 스캔 실패 대비)
         if auto_discover_wib:
