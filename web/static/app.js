@@ -67,6 +67,9 @@ async function loadDashboard() {
         if (typeof loadSystemImageStatus === 'function') {
             loadSystemImageStatus();
         }
+        if (typeof loadOffsiteStatus === 'function') {
+            await loadOffsiteStatus();
+        }
     } catch (err) {
         console.error('Failed to load dashboard:', err);
     }
@@ -993,7 +996,7 @@ async function unregisterWindowsTaskFromUI() {
 // 3-2-1 오프사이트 원격 복제 UI 핸들러
 // =========================================================================
 
-function toggleOffsiteProviderUI(provider) {
+function toggleOffsiteProviderUI(provider, autoSave = false) {
     const localFields = document.getElementById('offsite-local-fields');
     const gdriveFields = document.getElementById('offsite-gdrive-fields');
     const isGdrive = provider === 'gdrive';
@@ -1003,6 +1006,10 @@ function toggleOffsiteProviderUI(provider) {
     const radGdrive = document.getElementById('offsite-provider-gdrive');
     if (radLocal) radLocal.checked = !isGdrive;
     if (radGdrive) radGdrive.checked = isGdrive;
+
+    if (autoSave && typeof saveOffsiteConfigFromUI === 'function') {
+        saveOffsiteConfigFromUI(false);
+    }
 }
 
 async function loadOffsiteStatus() {
@@ -1074,7 +1081,7 @@ async function loadOffsiteStatus() {
     }
 }
 
-async function saveOffsiteConfigFromUI() {
+async function saveOffsiteConfigFromUI(showAlert = true) {
     const isGdrive = document.getElementById('offsite-provider-gdrive')?.checked;
     const provider = isGdrive ? 'gdrive' : 'local';
     const pathInput = document.getElementById('offsite-remote-path');
@@ -1102,13 +1109,23 @@ async function saveOffsiteConfigFromUI() {
             })
         });
         if (res.success) {
-            alert('🎉 3-2-1 오프사이트 복제 설정이 성공적으로 저장되었습니다.');
+            if (showAlert) {
+                alert('🎉 3-2-1 오프사이트 복제 설정이 성공적으로 저장되었습니다.');
+            }
             await loadOffsiteStatus();
+            if (res.data && typeof renderOffsiteStatusWidget === 'function') {
+                state.offsite = res.data;
+                renderOffsiteStatusWidget();
+            }
         } else {
-            alert('설정 저장 실패: ' + (res.error || '알 수 없는 오류'));
+            if (showAlert) {
+                alert('설정 저장 실패: ' + (res.error || '알 수 없는 오류'));
+            }
         }
     } catch (e) {
-        alert('설정 저장 오류: ' + e.message);
+        if (showAlert) {
+            alert('설정 저장 오류: ' + e.message);
+        }
     }
 }
 
@@ -1187,7 +1204,7 @@ async function testOffsiteFromUI() {
                         clearInterval(poller);
                         try { if (authWin && !authWin.closed) authWin.close(); } catch(e){}
                         alert(`🎉 [Google Drive 연동 성공!]\n\n- 인증 계정: ${stCheck.status.user_email}\n- 가용 여유 공간: ${stCheck.status.free_gb} GB\n- 대상 폴더: ${stCheck.status.target_folder_id || 'kova'}`);
-                        await loadOffsiteStatus();
+                        await saveOffsiteConfigFromUI(false);
                     }
                 } catch(e) {}
             }, 2000);
@@ -1201,10 +1218,11 @@ async function testOffsiteFromUI() {
             } else {
                 alert(`🎉 [연결 성공!]\n\n- 원격 대상: ${remote_path}\n- 가용 여유 공간: ${st.free_gb} GB (${st.free_percent}% 여유)`);
             }
+            await saveOffsiteConfigFromUI(false);
         } else {
             alert(`⚠️ [연결 실패]\n\n원격 대상에 접근할 수 없습니다:\n${st.error || '접근 권한이 없거나 설정이 올바르지 않습니다.'}`);
+            await loadOffsiteStatus();
         }
-        await loadOffsiteStatus();
     } catch (e) {
         alert('연결 테스트 오류: ' + e.message);
         await loadOffsiteStatus();
