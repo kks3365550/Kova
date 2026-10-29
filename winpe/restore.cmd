@@ -3,6 +3,8 @@ setlocal EnableDelayedExpansion
 title Kova bare-metal restore (KOVA Engine)
 set "HERE=%~dp0"
 set "KENG=%HERE%kova_engine.exe"
+set "TH=%NUMBER_OF_PROCESSORS%"
+if not defined TH set "TH=8"
 if not exist "%KENG%" (
   echo [ERROR] kova_engine.exe not found next to restore.cmd: %KENG%
   goto :fail
@@ -49,7 +51,7 @@ if /i "!IMGDRIVE!"=="W" goto :letterclash
 rem ---- 2. verify the image BEFORE touching any disk ----
 echo.
 echo Verifying image integrity. This can take a long time...
-"%KENG%" verify --image "!IMG!"
+"%KENG%" verify --image "!IMG!" --threads %TH%
 if errorlevel 1 (
   echo [ERROR] Image verification failed. Nothing was changed.
   goto :fail
@@ -97,7 +99,7 @@ if not exist W:\ (
 )
 
 rem ---- 6. restore the volume ----
-"%KENG%" restore --image "!IMG!" --target \\.\W:
+"%KENG%" restore --image "!IMG!" --target \\.\W: --threads %TH%
 if errorlevel 1 (
   echo [ERROR] Restore failed. The disk is NOT bootable.
   goto :fail

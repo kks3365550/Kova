@@ -589,7 +589,7 @@ def create_block_stream_backup(
         # Threads 2..N+1 (Compressors): 16스레드 풀코어 병렬 압축 (zstd level 1 + CRC32, GIL 해제)
         # Thread Main (Writer): E: NVMe로 순서 보장(Reorder Buffer) 순차 Direct I/O 쓰기
         # ----------------------------------------------------------------------
-        num_compressors = min(16, max(4, os.cpu_count() or 8))
+        num_compressors = os.cpu_count() or 8
         queue_depth = max(32, num_compressors * 2)
         read_q = queue.Queue(maxsize=queue_depth)
         write_q = queue.Queue(maxsize=queue_depth)

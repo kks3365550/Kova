@@ -456,8 +456,8 @@ class SystemImageManager:
             shadow_id, dev = line.split("|", 1)
             log(f"스냅샷 생성: {dev}")
 
-            for step, args in (("이미지 쓰기", ["write", "--source", dev, "--target", part_path, "--threads", "4", "--chunk-mb", "4", "--level", "1"]),
-                               ("이미지 검증", ["verify", "--image", part_path, "--threads", "4"])):
+            for step, args in (("이미지 쓰기", ["write", "--source", dev, "--target", part_path, "--threads", str(os.cpu_count() or 4), "--chunk-mb", "4", "--level", "1"]),
+                               ("이미지 검증", ["verify", "--image", part_path, "--threads", str(os.cpu_count() or 4)])):
                 with cls._lock:
                     cls._current_phase = f"KOVA Engine {step} 중"
                 p = subprocess.Popen([exe] + args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=flags)
