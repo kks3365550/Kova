@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableDelayedExpansion
-title Kova bare-metal restore (kimg)
+title Kova bare-metal restore (KOVA Engine)
 set "HERE=%~dp0"
-set "KIMG=%HERE%kimg.exe"
-if not exist "%KIMG%" (
-  echo [ERROR] kimg.exe not found next to restore.cmd: %KIMG%
+set "KENG=%HERE%kova_engine.exe"
+if not exist "%KENG%" (
+  echo [ERROR] kova_engine.exe not found next to restore.cmd: %KENG%
   goto :fail
 )
 
@@ -17,16 +17,18 @@ echo.
 rem ---- 1. find images on every volume ----
 set N=0
 for %%D in (C D E F G H I J K L M N O P Q R T U V X Y Z) do (
-  if exist "%%D:\KovaImages\*.kimg" (
-    for %%F in ("%%D:\KovaImages\*.kimg") do (
-      set /a N+=1
-      set "IMG!N!=%%~fF"
-      echo   [!N!] %%~fF
+  for %%E in (kova kimg) do (
+    if exist "%%D:\KovaImages\*.%%E" (
+      for %%F in ("%%D:\KovaImages\*.%%E") do (
+        set /a N+=1
+        set "IMG!N!=%%~fF"
+        echo   [!N!] %%~fF
+      )
     )
   )
 )
 if %N%==0 (
-  echo [ERROR] No KovaImages\*.kimg found on any volume.
+  echo [ERROR] No KovaImages\*.kova found on any volume.
   goto :fail
 )
 echo.
@@ -47,7 +49,7 @@ if /i "!IMGDRIVE!"=="W" goto :letterclash
 rem ---- 2. verify the image BEFORE touching any disk ----
 echo.
 echo Verifying image integrity. This can take a long time...
-"%KIMG%" verify --image "!IMG!"
+"%KENG%" verify --image "!IMG!"
 if errorlevel 1 (
   echo [ERROR] Image verification failed. Nothing was changed.
   goto :fail
@@ -95,7 +97,7 @@ if not exist W:\ (
 )
 
 rem ---- 6. restore the volume ----
-"%KIMG%" restore --image "!IMG!" --target \\.\W:
+"%KENG%" restore --image "!IMG!" --target \\.\W:
 if errorlevel 1 (
   echo [ERROR] Restore failed. The disk is NOT bootable.
   goto :fail

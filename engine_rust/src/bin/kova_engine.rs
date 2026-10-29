@@ -1,10 +1,10 @@
-//! kimg: prototype image writer/verifier (phase 1-2, not wired into Kova).
+//! KOVA Engine: prototype image writer/verifier (phase 1-2, not wired into Kova).
 //!
 //! File layout (all integers little-endian, every region 4096-aligned for Direct I/O):
 //!   [0, 4096)        header
 //!   [4096, index)    chunk records: each chunk is stored raw or zstd-compressed, padded to 4096
 //!   [index, +n*64)   index entries, padded to 4096
-//! Header: magic "KIMG0001", version u32, flags u32, volume_bytes u64, cluster u64,
+//! Header: magic "KOVAENG1" (legacy "KIMG0001" readable), version u32, flags u32, volume_bytes u64, cluster u64,
 //!         chunk_bytes u64, index_off u64, index_count u64, raw_bytes u64, index_hash [32].
 //! Index entry (64 B): src_off u64, raw_len u32, flags u32 (bit0 = zstd), file_off u64,
 //!         comp_len u32, reserved u32, blake3(raw chunk) [32].
@@ -44,13 +44,14 @@ const FSCTL_SET_SPARSE: u32 = 0x0009_00C4;
 const FSCTL_LOCK_VOLUME: u32 = 0x0009_0018;
 const FSCTL_DISMOUNT_VOLUME: u32 = 0x0009_0020;
 const ERROR_MORE_DATA: HRESULT = HRESULT::from_win32(234);
-const MAGIC: &[u8; 8] = b"KIMG0001";
+const MAGIC: &[u8; 8] = b"KOVAENG1";
+const LEGACY_MAGIC: &[u8; 8] = b"KIMG0001"; // 구 .kimg 이미지 읽기 호환
 const VERSION: u32 = 1;
 const ENTRY_SIZE: usize = 64;
 const FLAG_ZSTD: u32 = 1;
 
 #[derive(Parser)]
-#[command(name = "kimg", about = "Kova image prototype: write and verify")]
+#[command(name = "kova_engine", about = "Kova image prototype: write and verify")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,
@@ -176,12 +177,12 @@ impl Header {
         b
     }
     fn decode(b: &[u8]) -> Result<Self, String> {
-        if b.len() < 96 || &b[0..8] != MAGIC {
-            return Err("not a kimg image (bad magic)".into());
+        if b.len() < 96 || (&b[0..8] != MAGIC && &b[0..8] != LEGACY_MAGIC) {
+            return Err("not a KOVA Engine image (bad magic)".into());
         }
         let ver = u32::from_le_bytes(b[8..12].try_into().unwrap());
         if ver != VERSION {
-            return Err(format!("unsupported kimg version {ver}"));
+            return Err(format!("unsupported KOVA Engine version {ver}"));
         }
         let u = |r: std::ops::Range<usize>| u64::from_le_bytes(b[r].try_into().unwrap());
         Ok(Self {
@@ -567,7 +568,7 @@ fn verify_image(path: &str, threads: usize) -> Result<(u64, u64), String> {
     if hdr.chunk_bytes == 0 || hdr.chunk_bytes > (1 << 30) {
         return Err(format!("implausible chunk size {}", hdr.chunk_bytes));
     }
-    eprintln!("kimg: {} chunks, chunk {} bytes, {} threads", entries.len(), hdr.chunk_bytes, threads);
+    eprintln!("kova_engine: {} chunks, chunk {} bytes, {} threads", entries.len(), hdr.chunk_bytes, threads);
     let done = AtomicU64::new(0);
     let none = AtomicU64::new(0);
     let sh = Shared::new();
@@ -1109,7 +1110,7 @@ mod tests {
 
     fn tmp(name: &str) -> String {
         std::env::temp_dir()
-            .join(format!("kova_kimg_{}_{}", std::process::id(), name))
+            .join(format!("kova_engine_{}_{}", std::process::id(), name))
             .to_string_lossy()
             .into_owned()
     }

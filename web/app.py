@@ -434,7 +434,7 @@ from core.system_image import SystemImageManager
 
 class SystemImageStartRequest(BaseModel):
     target_drive: str = "D:"
-    engine: str = "wbadmin"  # "kimg"는 선택 옵션. 검증 실패 시 wbadmin으로 대체
+    engine: str = "kova"  # 기본. "wbadmin"은 표준 옵션. KOVA Engine 검증 실패 시 wbadmin으로 대체
 
 @app.get("/api/system-image/status")
 def get_system_image_status(target_drive: str = "D:"):

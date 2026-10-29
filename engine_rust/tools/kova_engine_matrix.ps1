@@ -1,12 +1,12 @@
-# kimg verification matrix: small virtual disks, many layouts.
-# Per scenario: create VHDX -> NTFS -> fill -> VSS snapshot -> kimg write -> verify
-#   -> restore to 2nd VHDX -> kimg compare -> mount + chkdsk + file-hash manifest diff
+# KOVA Engine verification matrix: small virtual disks, many layouts.
+# Per scenario: create VHDX -> NTFS -> fill -> VSS snapshot -> kova_engine write -> verify
+#   -> restore to 2nd VHDX -> kova_engine compare -> mount + chkdsk + file-hash manifest diff
 #   -> negative test (corrupt a copy of the image, verify must FAIL).
 # Needs admin (VSS, diskpart); relaunches itself elevated. Only touches $Work and its own VHDX files.
 param(
   [string]$Only = '',
   [string]$Work = 'D:\kova_matrix',
-  [string]$Exe  = 'C:\Users\kksjmj\Desktop\ai\target_rust\release\kimg.exe',
+  [string]$Exe  = 'C:\Users\kksjmj\Desktop\ai\target_rust\release\kova_engine.exe',
   [int]$Repeat = 1,
   [switch]$PreTouch,
   [string]$ShadowOn = '',
@@ -130,7 +130,7 @@ function Populate($root, $fill, $mb) {
     }
   }
 }
-function Run-Kimg([string[]]$a, [string]$tag) {
+function Run-Engine([string[]]$a, [string]$tag) {
   $out = & $Exe @a 2>&1 | ForEach-Object { "$_" }
   $code = $LASTEXITCODE
   $out | Where-Object { $_ -notmatch '\] (write|restore|compare|verify)' } | ForEach-Object { L ("  [{0}] {1}" -f $tag, ($_.Substring(0, [Math]::Min(220, $_.Length)))) }
@@ -151,8 +151,8 @@ foreach ($sc in $scenarios) {
   L "=================== $tag ==================="
   $srcVhd = Join-Path $Work "$($sc.name)_src.vhdx"
   $dstVhd = Join-Path $Work "$($sc.name)_dst.vhdx"
-  $img    = Join-Path $Work "$($sc.name).kimg"
-  $bad    = Join-Path $Work "$($sc.name).bad.kimg"
+  $img    = Join-Path $Work "$($sc.name).kova"
+  $bad    = Join-Path $Work "$($sc.name).bad.kova"
   Remove-Item $srcVhd,$dstVhd,$img,$bad -Force -ErrorAction SilentlyContinue
   $sid = $null
   $r = [ordered]@{ scenario=$tag; write=''; verify=''; restore=''; compare=''; chkdsk=''; files=''; negative=''; snap1=''; snap2=''; sec=0; result='FAIL' }
@@ -181,10 +181,10 @@ foreach ($sc in $scenarios) {
     if ($PreTouch) {
       try { [void][IO.Directory]::GetFileSystemEntries($dev + ''); L 'pre-touched snapshot (listed root)' } catch { L "pre-touch failed: $_" }
     }
-    $c = Run-Kimg @('write','--source',$dev,'--target',$img,'--threads','4','--chunk-mb','4','--level',"$($sc.level)") "write"
+    $c = Run-Engine @('write','--source',$dev,'--target',$img,'--threads','4','--chunk-mb','4','--level',"$($sc.level)") "write"
     $r.write = $c
-    $r.verify = Run-Kimg @('verify','--image',$img,'--threads','4') "verify"
-    $r.snap1 = Run-Kimg @('compare','--image',$img,'--source',$dev,'--target',$dev,'--threads','4') "snapcheck-after-write(info)"
+    $r.verify = Run-Engine @('verify','--image',$img,'--threads','4') "verify"
+    $r.snap1 = Run-Engine @('compare','--image',$img,'--source',$dev,'--target',$dev,'--threads','4') "snapcheck-after-write(info)"
     L ("image size: {0:N1} MB (volume {1} MB)" -f ((Get-Item $img).Length / 1MB), $sc.mb)
 
     # restore to second disk
@@ -193,8 +193,8 @@ foreach ($sc in $scenarios) {
     $tgt = '\\?\GLOBALROOT\Device\Harddisk' + $n2 + '\Partition' + $p2.PartitionNumber
     # strict byte check: restore to a plain sparse file (nothing mounts it), compare to the snapshot
     $rbin = Join-Path $Work "$($sc.name).restored.bin"
-    $rf = Run-Kimg @('restore','--image',$img,'--target',$rbin,'--threads','4') "restore-file"
-    $r.compare = if ($rf -ne 0) { $rf } else { Run-Kimg @('compare','--image',$img,'--source',$dev,'--target',$rbin,'--threads','4') "compare-file" }
+    $rf = Run-Engine @('restore','--image',$img,'--target',$rbin,'--threads','4') "restore-file"
+    $r.compare = if ($rf -ne 0) { $rf } else { Run-Engine @('compare','--image',$img,'--source',$dev,'--target',$rbin,'--threads','4') "compare-file" }
     if ($r.compare -ne 0 -and (Test-Path $rbin)) {
       # dump the first differing bytes: restored file (= what was written) vs snapshot now
       try {
@@ -218,8 +218,8 @@ foreach ($sc in $scenarios) {
     Remove-Item $rbin -Force -ErrorAction SilentlyContinue
     # device restore (what a real restore does): then mount, chkdsk, file hashes. Byte compare here is informational
     # because Windows may mount the volume and write to it right after the restore.
-    $r.restore = Run-Kimg @('restore','--image',$img,'--target',$tgt,'--threads','4') "restore-dev"
-    $cd = Run-Kimg @('compare','--image',$img,'--source',$dev,'--target',$tgt,'--threads','4') "compare-dev(info)"
+    $r.restore = Run-Engine @('restore','--image',$img,'--target',$tgt,'--threads','4') "restore-dev"
+    $cd = Run-Engine @('compare','--image',$img,'--source',$dev,'--target',$tgt,'--threads','4') "compare-dev(info)"
 
     # independent check: mount restored volume, chkdsk, file hashes
     Update-Disk -Number $n2; Start-Sleep 2
@@ -245,9 +245,9 @@ foreach ($sc in $scenarios) {
     $fs = [IO.File]::Open($bad, 'Open', 'ReadWrite')
     $pos = [long]($fs.Length / 3); $fs.Position = $pos
     $b = New-Object byte[] 1; [void]$fs.Read($b, 0, 1); $fs.Position = $pos; $fs.WriteByte([byte]($b[0] -bxor 0xFF)); $fs.Dispose()
-    $nc = Run-Kimg @('verify','--image',$bad,'--threads','4') "verify-corrupt"
+    $nc = Run-Engine @('verify','--image',$bad,'--threads','4') "verify-corrupt"
     $r.negative = if ($nc -ne 0) { 'detected' } else { 'MISSED' }
-    $r.snap2 = Run-Kimg @('compare','--image',$img,'--source',$dev,'--target',$dev,'--threads','4') "snapcheck-at-end(info)"
+    $r.snap2 = Run-Engine @('compare','--image',$img,'--source',$dev,'--target',$dev,'--threads','4') "snapcheck-at-end(info)"
 
     $ok = ($r.write -eq 0) -and ($r.verify -eq 0) -and ($r.restore -eq 0) -and ($r.compare -eq 0) -and ($r.chkdsk -eq 0) -and $filesOk -and ($nc -ne 0)
     if ($ok) { $r.result = 'PASS' }
