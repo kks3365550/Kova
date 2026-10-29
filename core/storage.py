@@ -755,13 +755,21 @@ class BlobStorage:
 
         if compressed.startswith(ZSTD_MAGIC) and HAS_ZSTD:
             dctx = zstd.ZstdDecompressor()
-            return dctx.decompress(compressed)
+            try:
+                return dctx.decompress(compressed)
+            except Exception:
+                import io
+                return dctx.stream_reader(io.BytesIO(compressed)).read()
         try:
             return zlib.decompress(compressed)
         except Exception:
             if HAS_ZSTD:
                 dctx = zstd.ZstdDecompressor()
-                return dctx.decompress(compressed)
+                try:
+                    return dctx.decompress(compressed)
+                except Exception:
+                    import io
+                    return dctx.stream_reader(io.BytesIO(compressed)).read()
             raise
 
     def verify_blob(self, sha256_hash: str, verify_hash: bool = True) -> Tuple[bool, Optional[str], int]:
