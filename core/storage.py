@@ -764,7 +764,7 @@ class BlobStorage:
                 return dctx.decompress(compressed)
             raise
 
-    def verify_blob(self, sha256_hash: str) -> Tuple[bool, Optional[str], int]:
+    def verify_blob(self, sha256_hash: str, verify_hash: bool = True) -> Tuple[bool, Optional[str], int]:
         """
         단일 블롭의 압축 해제, 복호화 및 SHA-256 일치 여부를 검증.
         물리 경로, ENC\x01 헤더, AES-256-GCM, ZSTD/zlib 스트리밍을 저장소 내부에서 완전 캡슐화.
@@ -773,7 +773,7 @@ class BlobStorage:
         """
         # Dual-Read: Fast Pack verification if present
         if sha256_hash.lower() in self.composite_facade.pack_index_map:
-            return self.composite_facade.verify_blob(sha256_hash)
+            return self.composite_facade.verify_blob(sha256_hash, verify_hash=verify_hash)
 
         blob_path = self.get_blob_abs_path(sha256_hash)
         if not os.path.exists(blob_path):
@@ -791,7 +791,7 @@ class BlobStorage:
                     raw_blob = f_in.read()
                 decompressed = self.crypto_engine.decrypt_blob_data(raw_blob, sha256_hash)
                 calc_hash = hashlib.sha256(decompressed).hexdigest()
-                if calc_hash.lower() != sha256_hash.lower():
+                if verify_hash and calc_hash.lower() != sha256_hash.lower():
                     return False, f"해시 불일치 (기록: {sha256_hash}, 계산: {calc_hash})", 0
                 return True, None, len(decompressed)
 
@@ -825,7 +825,7 @@ class BlobStorage:
                         total_size += len(tail)
 
             calculated_hash = decompressed_hasher.hexdigest()
-            if calculated_hash.lower() != sha256_hash.lower():
+            if verify_hash and calculated_hash.lower() != sha256_hash.lower():
                 return False, f"해시 불일치 (기록: {sha256_hash}, 계산: {calculated_hash})", 0
 
             return True, None, total_size

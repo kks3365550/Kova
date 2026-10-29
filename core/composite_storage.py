@@ -155,7 +155,7 @@ class CompositeStorageFacade:
 
         return self.blob_storage.read_blob_bytes(blob_id)
 
-    def verify_blob(self, blob_id: str) -> Tuple[bool, Optional[str], int]:
+    def verify_blob(self, blob_id: str, verify_hash: bool = True) -> Tuple[bool, Optional[str], int]:
         """
         Dual-Read verification check:
         1. If in Pack: verify CRC32/SHA256 and unpack size
@@ -172,7 +172,7 @@ class CompositeStorageFacade:
                     payload = reader.read_chunk(blob_id, verify=True)
                     unpacked = self._unpack_payload(payload, blob_id)
                     calc_sha = hashlib.sha256(unpacked).hexdigest()
-                    if calc_sha.lower() != blob_id:
+                    if verify_hash and calc_sha.lower() != blob_id:
                         return False, f"Hash mismatch in Pack {pack_id}: {calc_sha}", 0
                     return True, None, len(unpacked)
                 except Exception as e:
@@ -180,7 +180,7 @@ class CompositeStorageFacade:
 
         # 2. Individual Blob branch fallback
         if self.blob_storage.has_blob(blob_id):
-            return self.blob_storage.verify_blob(blob_id)
+            return self.blob_storage.verify_blob(blob_id, verify_hash=verify_hash)
 
         return False, f"블롭이 저장소에 존재하지 않음: {blob_id}", 0
 

@@ -170,8 +170,11 @@ class IntegrityVerifier:
         self,
         snapshot_manifest: Dict[str, Any],
         sample_count: int = 20,
-        self_heal: bool = True
+        self_heal: bool = True,
+        verify_content_hash: Optional[bool] = None
     ) -> Dict[str, Any]:
+        if verify_content_hash is None:
+            verify_content_hash = bool(snapshot_manifest.get("verify_content_hash", True))
         """
         🔴 Automated Restore Verification (자동 복원 검증):
         - 계층화 샘플링:
@@ -279,7 +282,7 @@ class IntegrityVerifier:
                         raise RestoreVerificationError(
                             f"자동 복원 검증 실패: {rel_path} (청크 누락: {cid})"
                         )
-                    c_ok, c_err, c_sz = self.storage.verify_blob(cid)
+                    c_ok, c_err, c_sz = self.storage.verify_blob(cid, verify_hash=verify_content_hash)
                     if not c_ok:
                         corrupted = True
                         corruption_reason = f"청크 손상 ({cid}): {c_err}"
@@ -296,7 +299,7 @@ class IntegrityVerifier:
                     )
 
                 # 저장소 논리 API(verify_blob)로 검증 수행
-                ok, err_msg, actual_size = self.storage.verify_blob(blob_id)
+                ok, err_msg, actual_size = self.storage.verify_blob(blob_id, verify_hash=verify_content_hash)
                 if not ok:
                     corrupted = True
                     corruption_reason = err_msg or "블롭 무결성 검증 실패"

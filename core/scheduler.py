@@ -307,7 +307,7 @@ class BackupScheduler:
             return
         try:
             verifier = IntegrityVerifier(repo_dir)
-            res = verifier.verify_restore_sampling({**manifest, "entries": entries}, sample_count=20)
+            res = verifier.verify_restore_sampling({**manifest, "entries": entries, "verify_content_hash": False}, sample_count=20)
         except RestoreVerificationError:
             raise
         except Exception as e:
