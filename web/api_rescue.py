@@ -50,9 +50,10 @@ def append_usb_log(msg: str):
 
 
 def scan_removable_drives() -> List[Dict[str, Any]]:
-    """현재 시스템에 연결된 이동식 USB 드라이브 및 대상 후보 탐색 (psutil + Win32 API)"""
+    """현재 시스템에 연결된 이동식 USB 드라이브만 탐색 (하드웨어 BusType/DriveType 검증으로 고정 NVMe/SATA 완전 배제)"""
     import psutil
     import ctypes
+    from tools.make_rescue_usb import is_safe_removable_drive
 
     res = []
     try:
@@ -61,16 +62,20 @@ def scan_removable_drives() -> List[Dict[str, Any]]:
             letter = p.mountpoint.rstrip("\\").upper()
             if letter in ("C:", "D:"):
                 continue
+
+            # 하드웨어 BusType / 미디어 타입 기반 엄격한 검증 (NVMe, 고정 SATA, 시스템 디스크 완전 배제)
+            clean_letter = letter.replace(":", "")
+            is_safe, reason = is_safe_removable_drive(clean_letter)
+            if not is_safe:
+                continue
+
             try:
                 usage = psutil.disk_usage(p.mountpoint)
-                dtype = ctypes.windll.kernel32.GetDriveTypeW(p.mountpoint)
-                # 2: DRIVE_REMOVABLE, 3: DRIVE_FIXED, 4: DRIVE_REMOTE, 5: DRIVE_CDROM
-                is_removable = (dtype == 2)
                 
                 # 볼륨 라벨 추출
                 vol_name = ctypes.create_unicode_buffer(260)
                 fs_name = ctypes.create_unicode_buffer(260)
-                label = "이동식 디스크"
+                label = "이동식 USB"
                 if ctypes.windll.kernel32.GetVolumeInformationW(p.mountpoint, vol_name, 260, None, None, None, fs_name, 260):
                     if vol_name.value:
                         label = vol_name.value
@@ -81,8 +86,8 @@ def scan_removable_drives() -> List[Dict[str, Any]]:
                     "FileSystem": p.fstype,
                     "SizeGB": round(usage.total / (1024 ** 3), 2),
                     "FreeGB": round(usage.free / (1024 ** 3), 2),
-                    "DriveType": "Removable" if is_removable else "Fixed/Other",
-                    "IsRemovable": is_removable,
+                    "DriveType": "USB 이동식",
+                    "IsRemovable": True,
                     "IsFat32": (p.fstype.upper() == "FAT32")
                 })
             except Exception:

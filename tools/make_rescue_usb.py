@@ -47,11 +47,61 @@ def run_ps(cmd: str) -> str:
     return res.stdout.strip()
 
 
-def format_target_drive(drive_letter: str, label: str = "RESCUE_DR") -> bool:
-    """대상 이동식 드라이브를 FAT32로 포맷 (C/D 시스템 드라이브 절대 보호)"""
+def is_safe_removable_drive(drive_letter: str) -> tuple[bool, str]:
+    """
+    드라이브 문자가 아닌 실제 하드웨어 버스/미디어 타입을 검사하여
+    순수 이동식 USB 장치인지 확인 (고정 NVMe/SATA 디스크, 부팅/시스템 디스크 절대 차단)
+    """
     letter = drive_letter.replace(":", "").strip().upper()
     if letter in ("C", "D"):
-        error(f"시스템 드라이브({letter}:)는 포맷할 수 없습니다! 절대 보호.")
+        return False, f"시스템 핵심 드라이브({letter}:) 보호"
+
+    # PowerShell 쿼리로 BusType, DriveType, IsBoot, IsSystem 일괄 확인
+    ps_cmd = (
+        f"$p = Get-Partition -DriveLetter '{letter}' -ErrorAction SilentlyContinue; "
+        "$d = if ($p) { $p | Get-Disk -ErrorAction SilentlyContinue } else { $null }; "
+        f"$v = Get-Volume -DriveLetter '{letter}' -ErrorAction SilentlyContinue; "
+        "@{"
+        f"DriveLetter = '{letter}'; "
+        "BusType = if ($d) { [string]$d.BusType } else { 'Unknown' }; "
+        "DriveType = if ($v) { [string]$v.DriveType } else { 'Unknown' }; "
+        "IsBoot = if ($d) { [bool]$d.IsBoot } else { $false }; "
+        "IsSystem = if ($d) { [bool]$d.IsSystem } else { $false }"
+        "} | ConvertTo-Json -Compress"
+    )
+    try:
+        out = run_ps(ps_cmd)
+        if not out:
+            return False, f"드라이브 {letter}: 정보 조회 불가"
+        import json
+        info = json.loads(out)
+        bus_type = str(info.get("BusType", "")).upper()
+        drive_type = str(info.get("DriveType", "")).upper()
+        is_boot = bool(info.get("IsBoot", False))
+        is_system = bool(info.get("IsSystem", False))
+
+        if is_boot or is_system:
+            return False, f"부팅/시스템 드라이브({letter}:) 차단"
+
+        # 내장 고정 버스(NVMe, SATA, SAS, RAID 등)이면서 Removable이 아닌 경우 절대 차단
+        if bus_type in ("NVME", "SATA", "SAS", "RAID") and drive_type != "REMOVABLE":
+            return False, f"고정 내장 디스크({letter}:, BusType: {bus_type}, DriveType: {drive_type}) 차단"
+
+        # 허용 조건: BusType이 USB이거나, DriveType이 Removable인 경우만 허용
+        if bus_type == "USB" or drive_type == "REMOVABLE":
+            return True, f"이동식 USB 확인됨 (BusType: {bus_type}, DriveType: {drive_type})"
+
+        return False, f"이동식 USB 아님 (BusType: {bus_type}, DriveType: {drive_type})"
+    except Exception as e:
+        return False, f"하드웨어 검증 예외: {e}"
+
+
+def format_target_drive(drive_letter: str, label: str = "RESCUE_DR") -> bool:
+    """대상 이동식 드라이브를 FAT32로 포맷 (하드웨어 BusType/DriveType 기반 절대 안전 검증)"""
+    letter = drive_letter.replace(":", "").strip().upper()
+    is_safe, reason = is_safe_removable_drive(letter)
+    if not is_safe:
+        error(f"드라이브 {letter}: 포맷 거부 - {reason}")
         return False
 
     log(f"드라이브 {letter}: 를 FAT32로 빠른 포맷 진행 중 (라벨: {label})...")
@@ -94,8 +144,9 @@ def format_target_drive(drive_letter: str, label: str = "RESCUE_DR") -> bool:
 def check_target_drive(drive_letter: str, auto_format: bool = False) -> bool:
     """대상 드라이브가 이동식 USB이고 사용 가능한지 안전 검증 (필요시 FAT32 자동 포맷 지원)"""
     letter = drive_letter.replace(":", "").strip().upper()
-    if letter in ("C", "D"):
-        error(f"시스템 드라이브({letter}:)는 대상이 될 수 없습니다! C/D 드라이브 보호.")
+    is_safe, reason = is_safe_removable_drive(letter)
+    if not is_safe:
+        error(f"드라이브 {letter}: 대상 지정 불가 - {reason}")
         return False
 
     cmd = (
