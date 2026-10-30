@@ -6,22 +6,30 @@ from typing import Dict, Any, Optional
 TASK_NAME = "BackupSystem_AutoBackup"
 
 def get_python_executable() -> str:
-    """Finds the best Python executable, prioritizing the project's own virtualenv."""
+    """Finds the best Python executable, prioritizing windowless pythonw.exe for background runs."""
     proj_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    candidates = [
+
+    # 1. 최우선: 무창 백그라운드 실행을 위한 pythonw.exe 탐색
+    windowless_candidates = [
         os.path.join(proj_dir, ".venv", "Scripts", "pythonw.exe"),
-        os.path.join(proj_dir, ".venv", "Scripts", "python.exe"),
-        os.path.join(proj_dir, "emergency_restore", "python", "python.exe"),
+        os.path.join(proj_dir, "emergency_restore", "python", "pythonw.exe"),
+        os.path.join(proj_dir, "runtime", "python", "pythonw.exe"),
+        os.path.join(os.path.dirname(sys.executable), "pythonw.exe"),
     ]
-    for c in candidates:
+    for c in windowless_candidates:
         if os.path.exists(c):
             return c
 
-    # Fallback to current runtime
-    py_dir = os.path.dirname(sys.executable)
-    pythonw = os.path.join(py_dir, "pythonw.exe")
-    if os.path.exists(pythonw):
-        return pythonw
+    # 2. 폴백: pythonw.exe가 없는 경우 콘솔용 python.exe 탐색
+    fallback_candidates = [
+        os.path.join(proj_dir, ".venv", "Scripts", "python.exe"),
+        os.path.join(proj_dir, "emergency_restore", "python", "python.exe"),
+        os.path.join(proj_dir, "runtime", "python", "python.exe"),
+    ]
+    for c in fallback_candidates:
+        if os.path.exists(c):
+            return c
+
     return sys.executable
 
 def _run_schtasks_cmd(cmd_list: list, timeout: int = 15) -> tuple[int, str, str]:

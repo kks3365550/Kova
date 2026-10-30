@@ -131,7 +131,11 @@ def test_run_schtasks_exception_returns_minus_one(monkeypatch):
 
 
 def test_get_python_executable_exists():
-    assert os.path.exists(wt.get_python_executable())
+    exe = wt.get_python_executable()
+    assert os.path.exists(exe)
+    # pythonw.exe 가 존재하는 환경이라면 반드시 pythonw.exe 가 우선되어야 함 (무창 백그라운드)
+    if os.path.exists(os.path.join(os.path.dirname(sys.executable), "pythonw.exe")):
+        assert exe.lower().endswith("pythonw.exe")
 
 
 # ---------------------------------------------------------- registry_backup
