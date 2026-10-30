@@ -34,6 +34,7 @@ function renderSnapshotsTable() {
                 <td class="py-3 px-4 font-mono text-xs text-blue-400">
                     <div class="flex items-center gap-1.5 flex-wrap">
                         <span>${s.id}</span>
+                        ${isVerified ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-semibold" title="무결성 검증 완료">✅ 검증됨</span>' : ''}
                         ${s.vss_enabled ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-semibold" title="Windows Volume Shadow Copy(VSS) 일관성 백업">VSS</span>' : ''}
                         ${s.is_local_protected !== false ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-semibold" title="로컬 복원 검증 & WORM 무결성 완료">🛡️ 로컬보호</span>' : ''}
                         ${(() => {
@@ -263,6 +264,7 @@ async function verifySnapshot(snapshotId) {
         } else {
             alert(`⚠️ 무결성 검증 실패!\n손상된 블롭: ${res.error_count}개 감지됨`);
         }
+        await loadSnapshots();
     } catch (e) {
         alert('무결성 검증 중 오류 발생: ' + e.message);
     }

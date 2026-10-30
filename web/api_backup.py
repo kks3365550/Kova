@@ -945,6 +945,8 @@ def run_verify(req: RunVerifyRequest):
         is_verified=res.get("success", False),
         error_count=res.get("error_count", 0)
     )
+    from core.snapshot_cache import get_snapshot_cache
+    get_snapshot_cache().evict(repo_dir)
 
     if res["success"]:
         append_task_log(f"무결성 검증 100% 통과! {res['verified_count']}개 블롭 검사 완료 (오류 0개)")
