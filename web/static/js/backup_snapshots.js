@@ -258,10 +258,10 @@ async function verifySnapshot(snapshotId) {
             method: 'POST',
             body: JSON.stringify({ snapshot_id: snapshotId })
         });
-        if (res.is_valid) {
-            alert(`✅ 무결성 검증 성공!\n총 ${res.total_files}개 파일이 완벽하게 보존되어 있으며 손상이 없습니다.`);
+        if (res.success) {
+            alert(`✅ 무결성 검증 성공!\n검사된 블롭 ${res.verified_count}개, 오류 0개. 모든 백업 데이터가 정상입니다.`);
         } else {
-            alert(`⚠️ 무결성 검증 실패!\n누락된 블롭: ${res.missing_blobs.length}개\n손상된 블롭: ${res.corrupted_blobs.length}개`);
+            alert(`⚠️ 무결성 검증 실패!\n손상된 블롭: ${res.error_count}개 감지됨`);
         }
     } catch (e) {
         alert('무결성 검증 중 오류 발생: ' + e.message);
