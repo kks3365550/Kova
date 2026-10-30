@@ -155,6 +155,8 @@ fn run_backup(
 
     if !json_mode {
         println!("[KOVA-FAST] Scanning source tree in parallel...");
+    } else {
+        println!("{{\"event\":\"phase\",\"phase\":\"scanning\",\"message\":\"[1/3] 대상 경로 파일 병렬 스캔 중...\"}}");
     }
     let scan_start = Instant::now();
     let exclude_filter = scanner::ExcludeFilter::new(exclude);
@@ -172,6 +174,13 @@ fn run_backup(
             items.len(),
             scan_elapsed
         );
+    } else {
+        println!(
+            "{{\"event\":\"phase\",\"phase\":\"indexing\",\"message\":\"[2/3] 파일 스캔 완료 (총 {}개 항목, {:.2}s). 인메모리 Blob 캐시 로딩 중...\",\"items\":{}}}",
+            items.len(),
+            scan_elapsed,
+            items.len()
+        );
     }
 
     let total_bytes = AtomicU64::new(0);
@@ -182,10 +191,30 @@ fn run_backup(
     let modified_files = AtomicUsize::new(0);
     let unmodified_files = AtomicUsize::new(0);
 
-    // Load latest snapshot manifest to build incremental fast-path map
+    // ── High-Speed In-Memory Blob HashSet Cache ──
+    // Eliminates 500,000+ GetFileAttributesW disk syscalls by preloading existing blob hashes
+    let blob_load_start = Instant::now();
+    let existing_blobs = cas.get_all_blob_hashes();
+    let blob_elapsed = blob_load_start.elapsed().as_secs_f64();
+    if !json_mode {
+        println!(
+            "[KOVA-FAST] Loaded {} existing blobs in-memory in {:.3}s",
+            existing_blobs.len(),
+            blob_elapsed
+        );
+    } else {
+        println!(
+            "{{\"event\":\"phase\",\"phase\":\"indexing\",\"message\":\"[2/3] 기존 블록 {}개 메모리 인덱싱 완료 ({:.2}s). 최신 스냅샷 대조 중...\",\"blob_count\":{}}}",
+            existing_blobs.len(),
+            blob_elapsed,
+            existing_blobs.len()
+        );
+    }
+
+    // Load latest snapshot manifest to build incremental fast-path map (limit 1 for zero waste)
     use std::collections::HashMap;
     let mut prev_files_map: HashMap<String, FileEntry> = HashMap::new();
-    let recent_manifests = cas.get_recent_manifests(5);
+    let recent_manifests = cas.get_recent_manifests(1);
     for manifest in recent_manifests {
         let prev_sid = manifest.session_id();
         let prev_files = manifest.files();
@@ -209,7 +238,7 @@ fn run_backup(
                         });
                     }
                 }
-                let norm_path = entry.path.replace('\\', "/");
+                let norm_path = entry.path.replace('\\', "/").to_lowercase();
                 prev_files_map.entry(norm_path).or_insert(entry);
             }
         }
@@ -219,6 +248,14 @@ fn run_backup(
     let (dirs, files): (Vec<_>, Vec<_>) = items.into_iter().partition(|i| i.is_dir);
     let total_file_count = files.len();
 
+    if json_mode {
+        println!(
+            "{{\"event\":\"phase\",\"phase\":\"processing\",\"message\":\"[3/3] 초고속 증분 백업 가동 (대상: {}개 파일)\",\"total_files\":{}}}",
+            total_file_count,
+            total_file_count
+        );
+    }
+
     // Process files in parallel with Rayon
     let file_entries: Vec<FileEntry> = files
         .into_par_iter()
@@ -226,7 +263,7 @@ fn run_backup(
             // Incremental Fast-Path Check:
             // If file path, size, and modified time match previous snapshot,
             // skip reading from disk completely and reuse existing chunk metadata!
-            let norm_rel = item.rel_path.replace('\\', "/");
+            let norm_rel = item.rel_path.replace('\\', "/").to_lowercase();
             if let Some(prev) = prev_files_map.get(&norm_rel) {
                 let mtime_diff = if prev.modified > item.modified {
                     prev.modified - item.modified
@@ -241,11 +278,11 @@ fn run_backup(
                     false
                 };
 
-                // 이전 청크의 blob이 저장소에 실제로 있을 때만 재사용 (없으면 파일을 다시 읽어 blob 복구)
+                // 이전 청크의 blob이 저장소에 실제로 있을 때만 재사용 (In-memory HashSet 조회: Syscall 0회)
                 if prev.size == item.size
                     && mtime_match
                     && (!prev.chunks.is_empty() || prev.size == 0)
-                    && prev.chunks.iter().all(|c| cas.has_blob(&c.hash))
+                    && prev.chunks.iter().all(|c| existing_blobs.contains(&c.hash))
                 {
                     total_bytes.fetch_add(prev.size, Ordering::Relaxed);
                     dedup_bytes.fetch_add(prev.size, Ordering::Relaxed);

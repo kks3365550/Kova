@@ -140,6 +140,47 @@ impl CasStorage {
         self.blob_path(hash).exists()
     }
 
+    /// Loads all existing blob hashes into an in-memory HashSet using parallel directory scan.
+    /// This eliminates hundreds of thousands of GetFileAttributesW disk syscalls during incremental checks.
+    pub fn get_all_blob_hashes(&self) -> std::collections::HashSet<String> {
+        use rayon::prelude::*;
+        use std::collections::HashSet;
+
+        let blobs_dir = self.repo_root.join("blobs");
+        if !blobs_dir.is_dir() {
+            return HashSet::new();
+        }
+
+        let prefix_dirs: Vec<PathBuf> = match fs::read_dir(&blobs_dir) {
+            Ok(rd) => rd
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_dir())
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+
+        let hashes: Vec<String> = prefix_dirs
+            .par_iter()
+            .flat_map(|dir| {
+                let mut dir_hashes = Vec::new();
+                if let Ok(rd) = fs::read_dir(dir) {
+                    for entry in rd.flatten() {
+                        let p = entry.path();
+                        if p.extension().map_or(false, |ext| ext == "blob") {
+                            if let Some(stem) = p.file_stem() {
+                                dir_hashes.push(stem.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                }
+                dir_hashes
+            })
+            .collect();
+
+        hashes.into_iter().collect()
+    }
+
     /// Stores compressed blob data atomically. Returns true if newly written, false if deduplicated.
     pub fn save_blob(&self, hash: &str, compressed_data: &[u8]) -> io::Result<bool> {
         let target_path = self.blob_path(hash);

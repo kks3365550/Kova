@@ -126,50 +126,124 @@ pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<Scanned
         };
     }
 
-    let entries: Vec<_> = WalkDir::new(source_root)
-        .into_iter()
-        .filter_entry(|e| {
-            if e.depth() == 0 {
-                return true;
+    if !source_root.is_dir() {
+        return Vec::new();
+    }
+
+    // Read top-level children to branch subdirectories across Rayon thread pool
+    let mut top_files = Vec::new();
+    let mut top_subdirs = Vec::new();
+
+    if let Ok(rd) = fs::read_dir(source_root) {
+        for entry in rd.flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().to_string();
+            let file_type = match entry.file_type() {
+                Ok(ft) => ft,
+                Err(_) => continue,
+            };
+
+            if file_type.is_dir() {
+                if !filter.is_dir_excluded(&name) {
+                    top_subdirs.push(path);
+                }
+            } else if !filter.is_file_excluded(&name) {
+                if let Ok(metadata) = entry.metadata() {
+                    if let Ok(rel) = path.strip_prefix(source_root) {
+                        let rel_path = rel.to_string_lossy().replace('\\', "/");
+                        if !rel_path.is_empty() {
+                            top_files.push(ScannedItem {
+                                path,
+                                rel_path,
+                                is_dir: false,
+                                size: metadata.len(),
+                                modified: mtime_ms(&metadata),
+                            });
+                        }
+                    }
+                }
             }
-            let name = e.file_name().to_string_lossy();
-            if e.file_type().is_dir() {
-                !filter.is_dir_excluded(&name)
-            } else {
-                !filter.is_file_excluded(&name)
+        }
+    }
+
+    // Scan each subdirectory in parallel using Rayon full-core worker pool
+    let subdir_items: Vec<ScannedItem> = top_subdirs
+        .into_par_iter()
+        .flat_map(|subdir| {
+            let mut items = Vec::new();
+
+            // Include the subdir itself if metadata is available
+            if let Ok(m) = fs::symlink_metadata(&subdir) {
+                if let Ok(rel) = subdir.strip_prefix(source_root) {
+                    let rel_path = rel.to_string_lossy().replace('\\', "/");
+                    if !rel_path.is_empty() {
+                        items.push(ScannedItem {
+                            path: subdir.clone(),
+                            rel_path,
+                            is_dir: true,
+                            size: 0,
+                            modified: mtime_ms(&m),
+                        });
+                    }
+                }
             }
+
+            let entries: Vec<_> = WalkDir::new(&subdir)
+                .into_iter()
+                .filter_entry(|e| {
+                    if e.depth() == 0 {
+                        return true;
+                    }
+                    let name = e.file_name().to_string_lossy();
+                    if e.file_type().is_dir() {
+                        !filter.is_dir_excluded(&name)
+                    } else {
+                        !filter.is_file_excluded(&name)
+                    }
+                })
+                .filter_map(|e| e.ok())
+                .collect();
+
+            let mut scanned: Vec<ScannedItem> = entries
+                .into_iter()
+                .filter_map(|entry| {
+                    if entry.depth() == 0 {
+                        // Already recorded the root subdir above
+                        return None;
+                    }
+                    let metadata = entry.metadata().ok()?;
+                    let is_dir = metadata.is_dir();
+                    let size = if is_dir { 0 } else { metadata.len() };
+                    let modified = mtime_ms(&metadata);
+
+                    let path = entry.into_path();
+                    let rel_path = path
+                        .strip_prefix(source_root)
+                        .ok()?
+                        .to_string_lossy()
+                        .replace('\\', "/");
+
+                    if rel_path.is_empty() {
+                        return None;
+                    }
+
+                    Some(ScannedItem {
+                        path,
+                        rel_path,
+                        is_dir,
+                        size,
+                        modified,
+                    })
+                })
+                .collect();
+
+            items.append(&mut scanned);
+            items
         })
-        .filter_map(|e| e.ok())
         .collect();
 
-    entries
-        .into_par_iter()
-        .filter_map(|entry| {
-            let metadata = entry.metadata().ok()?;
-            let is_dir = metadata.is_dir();
-            let size = if is_dir { 0 } else { metadata.len() };
-            let modified = mtime_ms(&metadata);
-
-            let path = entry.into_path();
-            let rel_path = path
-                .strip_prefix(source_root)
-                .ok()?
-                .to_string_lossy()
-                .replace('\\', "/");
-
-            if rel_path.is_empty() {
-                return None;
-            }
-
-            Some(ScannedItem {
-                path,
-                rel_path,
-                is_dir,
-                size,
-                modified,
-            })
-        })
-        .collect()
+    top_files.extend(subdir_items);
+    top_files
 }
 
 fn mtime_ms(m: &fs::Metadata) -> u64 {

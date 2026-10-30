@@ -237,6 +237,12 @@ def _background_custom_backup_task(params: Dict[str, Any]):
                     append_task_log(f"[초고속 네이티브 Rust 엔진 가동 - 선택 백업] 세션: {session_id}")
 
                     def _rust_progress(ev):
+                        ev_type = ev.get("type") or ev.get("event")
+                        if ev_type == "phase":
+                            msg = ev.get("message", "")
+                            if msg:
+                                append_task_log(msg)
+                            return
                         pct = ev.get("percent", 0)
                         done = ev.get("processed_files", 0)
                         tot = ev.get("total_files", 0)
@@ -508,6 +514,12 @@ def _background_backup_task(params: Dict[str, Any]):
                     append_task_log(f"[초고속 네이티브 Rust 엔진 가동] 세션: {session_id}")
 
                     def _rust_progress(ev):
+                        ev_type = ev.get("type") or ev.get("event")
+                        if ev_type == "phase":
+                            msg = ev.get("message", "")
+                            if msg:
+                                append_task_log(msg)
+                            return
                         pct = ev.get("percent", 0)
                         done = ev.get("processed_files", 0)
                         tot = ev.get("total_files", 0)

@@ -295,8 +295,11 @@ def run_rust_backup(
 
             try:
                 ev = json.loads(line)
-                ev_type = ev.get("type")
-                if ev_type == "progress":
+                ev_type = ev.get("type") or ev.get("event")
+                if ev_type == "phase":
+                    if progress_callback:
+                        progress_callback(ev)
+                elif ev_type == "progress":
                     now = time.time()
                     if progress_callback and (now - last_callback_time >= 0.1):  # 100ms throttle
                         progress_callback(ev)
