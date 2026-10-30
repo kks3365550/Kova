@@ -262,8 +262,8 @@ def create_launchers(target_root: str):
         "set \"USB_ROOT=%~dp0\"\r\n"
         "set \"PY_EXE=%USB_ROOT%Rescue_Tools\\python\\python.exe\"\r\n"
         "if not exist \"%PY_EXE%\" set \"PY_EXE=python.exe\"\r\n"
-        "cd /d \"%USB_ROOT%Rescue_Tools\\rescue_lab\"\r\n"
-        "call recovery_launcher.bat\r\n"
+        "cd /d \"%USB_ROOT%Rescue_Tools\"\r\n"
+        "\"%PY_EXE%\" disaster_recovery.py\r\n"
         "pause\r\n"
     )
     with open(os.path.join(target_root, "1_긴급복구콘솔_실행.bat"), "wb") as f:
@@ -282,7 +282,8 @@ def create_launchers(target_root: str):
         "set \"USB_ROOT=%~dp0\"\r\n"
         "set \"PY_EXE=%USB_ROOT%Rescue_Tools\\python\\python.exe\"\r\n"
         "if not exist \"%PY_EXE%\" set \"PY_EXE=python.exe\"\r\n"
-        "\"%PY_EXE%\" \"%USB_ROOT%Rescue_Tools\\rescue_lab\\discovery_engine.py\"\r\n"
+        "cd /d \"%USB_ROOT%Rescue_Tools\"\r\n"
+        "\"%PY_EXE%\" emergency_restore.py\r\n"
         "echo.\r\n"
         "pause\r\n"
     )
@@ -374,7 +375,7 @@ def build_rescue_usb(target_drive: str = DEFAULT_TARGET, iso_path: str = DEFAULT
             log("3.5/4. WinPE boot.wim에 복구 콘솔 자동 실행 로직 주입 중...")
             inject_script = os.path.join(PROJECT_ROOT, "tools", "inject_autostart_to_wim.py")
             if os.path.exists(inject_script):
-                res = subprocess.run([sys.executable, inject_script], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                res = subprocess.run([sys.executable, inject_script, boot_wim_path], capture_output=True, text=True, encoding="utf-8", errors="replace")
                 if res.returncode == 0:
                     log("  -> WinPE boot.wim 자동 실행 주입 성공 (setup.exe 차단 완료)")
                 else:

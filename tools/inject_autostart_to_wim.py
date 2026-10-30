@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
+r"""
 tools/inject_autostart_to_wim.py
 wimlib-imagex를 사용하여 관리자 권한(UAC) 없이 순수 사용자 영역에서
 E:\sources\boot.wim (Index 1 및 Index 2)에 winpeshl.ini 및 autorun_rescue.bat을 주입.
@@ -19,7 +19,7 @@ except Exception:
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WIMLIB_EXE = os.path.join(PROJECT_ROOT, "tools", "wimlib-imagex.exe")
-TARGET_WIM = r"E:\sources\boot.wim"
+TARGET_WIM = sys.argv[1] if len(sys.argv) > 1 else r"E:\sources\boot.wim"
 STAGE_DIR = os.path.join(PROJECT_ROOT, "tools", "_wim_stage")
 
 WINPESHL_INI = """[LaunchApps]

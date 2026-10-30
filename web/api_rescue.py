@@ -165,7 +165,7 @@ def _background_usb_worker(target_drive: str, iso_path: str, auto_format: bool =
 
             inject_script = os.path.join(PROJECT_ROOT, "tools", "inject_autostart_to_wim.py")
             if os.path.exists(inject_script):
-                res = subprocess.run([sys.executable, inject_script], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                res = subprocess.run([sys.executable, inject_script, os.path.join(target_root, "sources", "boot.wim")], capture_output=True, text=True, encoding="utf-8", errors="replace")
                 if res.returncode == 0:
                     append_usb_log("WinPE boot.wim 자동 실행 주입 성공! (부팅 시 0초 만에 콘솔 직행)")
                 else:
