@@ -37,6 +37,7 @@ _usb_task_state = {
 class MakeUsbRequest(BaseModel):
     drive_letter: str
     iso_path: Optional[str] = None
+    auto_format: bool = False
 
 
 def append_usb_log(msg: str):
@@ -91,7 +92,7 @@ def scan_removable_drives() -> List[Dict[str, Any]]:
     return res
 
 
-def _background_usb_worker(target_drive: str, iso_path: str):
+def _background_usb_worker(target_drive: str, iso_path: str, auto_format: bool = False):
     try:
         from tools.make_rescue_usb import (
             check_target_drive, mount_iso, dismount_iso,
@@ -102,9 +103,9 @@ def _background_usb_worker(target_drive: str, iso_path: str):
             _usb_task_state["phase"] = "VALIDATING"
             _usb_task_state["phase_text"] = "대상 드라이브 및 ISO 사전 검증 중"
             _usb_task_state["progress"] = 5
-        append_usb_log(f"대상 USB 검증 시작: {target_drive}")
+        append_usb_log(f"대상 USB 검증 시작: {target_drive} (FAT32 자동 포맷: {'활성화' if auto_format else '비활성화'})")
 
-        if not check_target_drive(target_drive):
+        if not check_target_drive(target_drive, auto_format=auto_format):
             raise RuntimeError(f"대상 드라이브 {target_drive}가 유효하지 않거나 FAT32 포맷이 아닙니다.")
 
         if not os.path.exists(iso_path):
@@ -268,7 +269,7 @@ def start_make_usb(req: MakeUsbRequest):
         _usb_task_state["started_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         _usb_task_state["completed_at"] = None
 
-    t = threading.Thread(target=_background_usb_worker, args=(drive, iso), daemon=True)
+    t = threading.Thread(target=_background_usb_worker, args=(drive, iso, req.auto_format), daemon=True)
     t.start()
 
     return {

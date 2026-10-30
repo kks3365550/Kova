@@ -1,6 +1,7 @@
 // web/static/js/rescue_usb.js - 긴급 재해 복구(Rescue DR) UEFI 부팅 USB 제작 프론트엔드 모듈
 
 let rescueUsbPollTimer = null;
+let cachedRescueTargets = [];
 
 async function openRescueUsbModal() {
     openModal('rescue-usb-modal');
@@ -26,6 +27,8 @@ async function loadRescueUsbTargets() {
         const data = await res.json();
 
         select.innerHTML = '';
+
+        cachedRescueTargets = data.targets || [];
 
         if (!data.success || !data.targets || data.targets.length === 0) {
             select.innerHTML = '<option value="">감지된 이동식 USB가 없습니다</option>';
@@ -111,8 +114,19 @@ async function startRescueUsbCreation() {
         return;
     }
 
-    if (!confirm(`[확인] ${driveLetter} 드라이브로 긴급 재해 복구 UEFI 부팅 USB를 제작하시겠습니까?\n\n- 소요 시간: 약 30초~1분\n- 부팅 시 0초 만에 복구 콘솔이 자동 실행되도록 구성됩니다.`)) {
-        return;
+    const chosen = cachedRescueTargets.find(x => x.DriveLetter === driveLetter);
+    let autoFormat = false;
+
+    if (chosen && !chosen.IsFat32) {
+        const msg = `[⚠️ FAT32 포맷 필요 안내]\n\n선택하신 ${driveLetter} 드라이브는 현재 [${chosen.FileSystem}] 포맷입니다.\nUEFI 표준 부팅 USB로 동작하려면 반드시 [FAT32] 포맷이어야 합니다.\n\n지금 ${driveLetter} 드라이브를 FAT32로 포맷하고 복구 USB 제작을 계속 진행하시겠습니까?\n\n🚨 주의: 포맷 시 ${driveLetter} 드라이브 안의 모든 기존 파일이 완전히 삭제됩니다!`;
+        if (!confirm(msg)) {
+            return;
+        }
+        autoFormat = true;
+    } else {
+        if (!confirm(`[확인] ${driveLetter} 드라이브로 긴급 재해 복구 UEFI 부팅 USB를 제작하시겠습니까?\n\n- 소요 시간: 약 30초~1분\n- 부팅 시 0초 만에 복구 콘솔이 자동 실행되도록 구성됩니다.`)) {
+            return;
+        }
     }
 
     const startBtn = document.getElementById('btn-start-make-usb');
@@ -126,7 +140,10 @@ async function startRescueUsbCreation() {
         const res = await fetch('/api/rescue/make-usb', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ drive_letter: driveLetter })
+            body: JSON.stringify({ 
+                drive_letter: driveLetter,
+                auto_format: autoFormat
+            })
         });
         const data = await res.json();
 

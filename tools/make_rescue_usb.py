@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
+r"""
 tools/make_rescue_usb.py - 긴급 재해 복구(Rescue DR) UEFI 부팅 USB 자동 제작 엔진
 - 대상: E:\ (이동식 USB 드라이브, FAT32)
 - 소스: D:\Rufus\Win11_25H2_Korean_x64_v2.iso (공식 순정 Windows 11)
@@ -11,7 +11,6 @@ import sys
 import shutil
 import subprocess
 import time
-from typing import Dict, Any, Optional
 
 try:
     if hasattr(sys.stdout, "reconfigure"):
@@ -48,8 +47,52 @@ def run_ps(cmd: str) -> str:
     return res.stdout.strip()
 
 
-def check_target_drive(drive_letter: str) -> bool:
-    """대상 드라이브가 이동식 USB이고 사용 가능한지 안전 검증"""
+def format_target_drive(drive_letter: str, label: str = "RESCUE_DR") -> bool:
+    """대상 이동식 드라이브를 FAT32로 포맷 (C/D 시스템 드라이브 절대 보호)"""
+    letter = drive_letter.replace(":", "").strip().upper()
+    if letter in ("C", "D"):
+        error(f"시스템 드라이브({letter}:)는 포맷할 수 없습니다! 절대 보호.")
+        return False
+
+    log(f"드라이브 {letter}: 를 FAT32로 빠른 포맷 진행 중 (라벨: {label})...")
+    # 1차: PowerShell Format-Volume 시도
+    cmd = (
+        f"$v = Get-Volume -DriveLetter '{letter}' -ErrorAction SilentlyContinue; "
+        "if (-not $v) { exit 1 }; "
+        f"Format-Volume -DriveLetter '{letter}' -FileSystem FAT32 -NewFileSystemLabel '{label}' -Force -Confirm:$false | Out-Null"
+    )
+    try:
+        run_ps(cmd)
+    except Exception as e:
+        log(f"PowerShell Format-Volume 실패 ({e}), format.com 명령어로 재시도...")
+        res = subprocess.run(
+            f'format {letter}: /FS:FAT32 /V:{label} /Q /Y',
+            shell=True,
+            capture_output=True,
+            text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        )
+        if res.returncode != 0:
+            error(f"드라이브 {letter}: 포맷 실패: {res.stderr.strip() or res.stdout.strip()}")
+            return False
+
+    time.sleep(1)
+    verify_cmd = f"(Get-Volume -DriveLetter '{letter}' -ErrorAction SilentlyContinue).FileSystem"
+    try:
+        new_fs = run_ps(verify_cmd).strip().upper()
+        if new_fs == "FAT32":
+            log(f"드라이브 {letter}: FAT32 포맷 성공 완료!")
+            return True
+        else:
+            error(f"포맷 후 파일시스템 불일치: {new_fs}")
+            return False
+    except Exception as e:
+        error(f"포맷 검증 실패: {e}")
+        return False
+
+
+def check_target_drive(drive_letter: str, auto_format: bool = False) -> bool:
+    """대상 드라이브가 이동식 USB이고 사용 가능한지 안전 검증 (필요시 FAT32 자동 포맷 지원)"""
     letter = drive_letter.replace(":", "").strip().upper()
     if letter in ("C", "D"):
         error(f"시스템 드라이브({letter}:)는 대상이 될 수 없습니다! C/D 드라이브 보호.")
@@ -76,15 +119,27 @@ def check_target_drive(drive_letter: str) -> bool:
     import json
     data = json.loads(out)
     drive_type = data.get("DriveType")
-    fs = data.get("FileSystem")
+    fs = data.get("FileSystem", "")
     free_bytes = data.get("SizeRemaining", 0)
     free_gb = free_bytes / (1024 ** 3)
 
     log(f"대상 볼륨 감지: {letter}: (타입: {drive_type}, 파일시스템: {fs}, 여유공간: {free_gb:.2f} GB)")
 
     if fs.upper() != "FAT32":
-        error(f"UEFI 표준 부팅을 위해 FAT32 포맷이 필요합니다. 현재: {fs}")
-        return False
+        if auto_format:
+            log(f"대상 볼륨이 {fs}입니다. 요청에 따라 FAT32 포맷을 수행합니다...")
+            if not format_target_drive(letter):
+                error(f"드라이브 {letter}: FAT32 포맷에 실패하여 제작을 중단합니다.")
+                return False
+            # 포맷 성공 후 다시 볼륨 정보 갱신
+            out_after = run_ps(cmd)
+            if out_after:
+                data_after = json.loads(out_after)
+                free_bytes = data_after.get("SizeRemaining", 0)
+                free_gb = free_bytes / (1024 ** 3)
+        else:
+            error(f"UEFI 표준 부팅을 위해 FAT32 포맷이 필요합니다. 현재: {fs}")
+            return False
 
     if free_gb < 2.0:
         error(f"여유 공간이 부족합니다. 최소 2GB 필요, 현재: {free_gb:.2f} GB")
@@ -223,12 +278,12 @@ def create_launchers(target_root: str):
         f.write(readme_text.encode("utf-8"))
 
 
-def build_rescue_usb(target_drive: str = DEFAULT_TARGET, iso_path: str = DEFAULT_ISO) -> bool:
+def build_rescue_usb(target_drive: str = DEFAULT_TARGET, iso_path: str = DEFAULT_ISO, auto_format: bool = False) -> bool:
     log("=" * 65)
     log("  [백업시스템] 긴급 재해 복구 UEFI 부팅 USB 제작 프로세스 시작")
     log("=" * 65)
 
-    if not check_target_drive(target_drive):
+    if not check_target_drive(target_drive, auto_format=auto_format):
         return False
 
     if not os.path.exists(iso_path):
@@ -325,7 +380,7 @@ def build_rescue_usb(target_drive: str = DEFAULT_TARGET, iso_path: str = DEFAULT
         size_mb = total_size / (1024 * 1024)
         log(f"총 복사된 파일: {file_count}개")
         log(f"총 사용된 용량: {size_mb:.2f} MB ({size_mb / 1024:.2f} GB)")
-        log(f"부팅 모드: UEFI (GPT / Secure Boot 공식 지원)")
+        log("부팅 모드: UEFI (GPT / Secure Boot 공식 지원)")
         log(f"WinPE 부트로더: {os.path.join(target_root, 'efi', 'boot', 'bootx64.efi')} (정상)")
         log(f"WinPE 이미지: {os.path.join(target_root, 'sources', 'boot.wim')} (정상)")
 
