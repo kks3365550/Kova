@@ -355,6 +355,8 @@ function renderDashboardStats() {
     if (topoVaultStored) topoVaultStored.innerText = formatBytes(stats.stored_bytes);
     if (topoVaultSavings) topoVaultSavings.innerText = `${stats.savings_percentage || 0}% 절감`;
     if (dedupBadge) dedupBadge.innerText = `${stats.savings_percentage || 0}% 절약`;
+    const dedupBadge2 = document.getElementById('stat-dedup-pct-badge-2');
+    if (dedupBadge2) dedupBadge2.innerText = `${stats.savings_percentage || 0}% 절약`;
     if (dedupProgress) dedupProgress.style.width = `${Math.min(100, Math.max(0, stats.savings_percentage || 0))}%`;
 
     // Track 2-15: Chunking Telemetry
@@ -362,6 +364,8 @@ function renderDashboardStats() {
     const chunksEl = document.getElementById('stat-total-chunks');
     const stratEl = document.getElementById('stat-chunk-strategies');
     if (badgeEl) badgeEl.innerText = `${(stats.chunked_files_count || 0).toLocaleString()}개 분할`;
+    const badgeEl2 = document.getElementById('stat-chunk-files-badge-2');
+    if (badgeEl2) badgeEl2.innerText = String(stats.chunked_files_count || 0);
     if (chunksEl) chunksEl.innerText = `${(stats.total_chunks || 0).toLocaleString()}개`;
     if (stratEl) {
         const strats = stats.chunk_strategies || {};
