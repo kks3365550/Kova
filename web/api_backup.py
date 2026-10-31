@@ -932,7 +932,7 @@ def run_verify(req: RunVerifyRequest):
     append_task_log(f"스냅샷 '{req.snapshot_id}' 물리적 무결성(Health Check) 검증을 시작합니다...")
     manifest = SnapshotEngine.get_snapshot(repo_dir, req.snapshot_id)
     if not manifest:
-        raise HTTPException(status_code=404, detail="스냅샷을 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail="해당 백업 시점을 찾을 수 없어요. 목록을 새로고침한 뒤 다시 선택해 주세요.")
 
     from core.verify import IntegrityVerifier
     verifier = IntegrityVerifier(repo_dir)
@@ -1062,12 +1062,12 @@ def run_dr_drill(snapshot_id: Optional[str] = None, req: Optional[DrillRequest] 
     if not target_id or target_id == "latest":
         snapshots = SnapshotEngine.list_snapshots(repo_dir)
         if not snapshots:
-            raise HTTPException(status_code=404, detail="복구 모의훈련을 수행할 스냅샷이 없습니다.")
+            raise HTTPException(status_code=404, detail="점검할 백업이 아직 없어요. 먼저 백업을 한 번 실행해 주세요.")
         target_id = snapshots[0]["id"]
 
     manifest = SnapshotEngine.get_snapshot(repo_dir, target_id)
     if not manifest:
-        raise HTTPException(status_code=404, detail=f"스냅샷 '{target_id}'을 찾을 수 없습니다.")
+        raise HTTPException(status_code=404, detail=f"백업 시점 '{target_id}'을 찾을 수 없어요. 목록에서 다시 선택해 주세요.")
 
     entries = manifest.get("entries", [])
     file_entries = [e for e in entries if not e.get("is_dir") and e.get("size", 0) > 0]

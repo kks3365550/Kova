@@ -208,7 +208,7 @@ class BackupTrayApp:
         # 최초 시작 알림
         self.show_notification(
             "백업 시스템 활성화",
-            "백그라운드 백업 및 무결성 보호 에이전트가 가동되었습니다."
+            "백업이 켜졌어요. 이제 자동으로 파일을 지켜 드립니다."
         )
 
         # 윈도우 메시지 루프
@@ -317,9 +317,9 @@ class BackupTrayApp:
                         detail = "이미 다른 작업이 진행 중입니다."
                     self.show_notification("백업 충돌", detail, NIIF_WARNING)
                 else:
-                    self.show_notification("백업 요청 실패", f"서버 오류 (HTTP {e.code})", NIIF_ERROR)
+                    self.show_notification("백업 요청 실패", "백업 프로그램이 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요.", NIIF_ERROR)
             except Exception as e:
-                self.show_notification("백업 요청 실패", f"서버와 통신할 수 없습니다: {e}", NIIF_ERROR)
+                self.show_notification("백업 요청 실패", "백업 프로그램과 연결되지 않았어요. 프로그램이 켜져 있는지 확인해 주세요.", NIIF_ERROR)
 
         threading.Thread(target=_call, daemon=True).start()
 
@@ -347,11 +347,11 @@ class BackupTrayApp:
                     else:
                         last_err = data.get("error")
                         if last_err:
-                            self.show_notification("상태: 오류 발생", f"최근 작업 오류: {last_err}"[:250], NIIF_WARNING)
+                            self.show_notification("상태: 오류 발생", "최근 백업에 문제가 있었어요. 대시보드를 열어 확인해 주세요.", NIIF_WARNING)
                         else:
-                            self.show_notification("정상 대기 중", "모든 백업 엔진이 정상 대기 상태입니다.")
+                            self.show_notification("정상 대기 중", "문제 없이 대기 중이에요. 다음 일정에 맞춰 자동으로 백업합니다.")
             except Exception:
-                self.show_notification("서버 상태", "백업 서버 응답 없음 (오프라인)", NIIF_WARNING)
+                self.show_notification("백업 프로그램 상태", "백업 프로그램이 응답하지 않아요. 트레이 메뉴에서 다시 시작해 주세요.", NIIF_WARNING)
 
         threading.Thread(target=_call, daemon=True).start()
 
@@ -378,7 +378,7 @@ class BackupTrayApp:
     def restart_server(self):
         def _call():
             try:
-                self.show_notification("서버 재시작", "백업 서버를 재기동합니다...", NIIF_INFO)
+                self.show_notification("백업 프로그램 다시 켜기", "백업 프로그램을 다시 켜는 중이에요. 잠시만 기다려 주세요.", NIIF_INFO)
                 base_dir = os.path.dirname(os.path.abspath(__file__))
 
                 # 1. 기존 서버(8765 포트 / APP_DIR 프로세스) 안전 종료
@@ -421,12 +421,12 @@ class BackupTrayApp:
                         pass
 
                 if restarted:
-                    self.show_notification("재시작 완료", "백업 서버가 정상적으로 재시작되었습니다.", NIIF_INFO)
+                    self.show_notification("재시작 완료", "백업 프로그램이 다시 켜졌어요.", NIIF_INFO)
                 else:
-                    self.show_notification("재시작 확인", "서버 시작 명령을 전송했습니다.", NIIF_WARNING)
+                    self.show_notification("재시작 확인", "다시 켜는 중이에요. 잠시 뒤에도 안 되면 컴퓨터를 다시 시작해 주세요.", NIIF_WARNING)
 
             except Exception as e:
-                self.show_notification("재시작 실패", str(e), NIIF_ERROR)
+                self.show_notification("다시 켜지 못했어요", "프로그램을 다시 켜지 못했어요. 컴퓨터를 다시 시작한 뒤에도 같으면 담당자에게 알려 주세요.", NIIF_ERROR)
 
         threading.Thread(target=_call, daemon=True).start()
 
@@ -465,13 +465,13 @@ class BackupTrayApp:
                         if error:
                             self.show_notification(
                                 "백업 작업 실패",
-                                f"작업 중 오류가 발생했습니다: {error}",
+                                "백업이 끝까지 되지 않았어요. 대시보드에서 내용을 확인해 주세요.",
                                 NIIF_ERROR
                             )
                         else:
                             self.show_notification(
                                 "백업 작업 완료 🎉",
-                                "새로운 증분 스냅샷이 성공적으로 저장되었습니다."
+                                "새 백업이 안전하게 저장되었어요."
                             )
 
                     self.last_task_state = is_running

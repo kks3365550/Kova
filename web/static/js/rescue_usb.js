@@ -161,7 +161,7 @@ async function startRescueUsbCreation() {
         startRescueUsbPolling();
 
     } catch (e) {
-        alert('서버 통신 실패: ' + e.message);
+        alert('서버 통신 실패: ' + friendlyError(e));
         if (startBtn) {
             startBtn.disabled = false;
             startBtn.innerHTML = '<i data-lucide="play" class="w-4 h-4 fill-current"></i> <span>긴급 복구 USB 제작 시작</span>';

@@ -45,7 +45,7 @@ async function loadMigrationDrives() {
     } catch (err) {
         console.error("마이그레이션 드라이브 목록 로드 실패:", err);
         selectEl.innerHTML = '<option value="">드라이브 목록 조회 실패</option>';
-        if (infoEl) infoEl.innerHTML = `<span class="text-rose-400">조회 실패: ${err.message}</span>`;
+        if (infoEl) infoEl.innerHTML = `<span class="text-rose-400">조회 실패: ${friendlyError(err)}</span>`;
     }
 }
 
@@ -169,7 +169,7 @@ async function confirmAndRunMigration() {
         appendMigrationConsoleLog(`[START] ${targetDrive} 드라이브로의 라이브 마이그레이션이 시작되었습니다.`);
         startMigrationPolling();
     } catch (err) {
-        alert("네트워크 통신 오류: " + err.message);
+        alert("네트워크 통신 오류: " + friendlyError(err));
     }
 }
 
@@ -331,7 +331,7 @@ async function stopLiveMigration() {
             alert("중단 실패: " + (data.detail || data.error));
         }
     } catch (err) {
-        alert("네트워크 오류: " + err.message);
+        alert("네트워크 오류: " + friendlyError(err));
     }
 }
 
@@ -387,14 +387,14 @@ async function loadArchiveList() {
                         </div>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
-                        <button onclick="uploadArchiveToGdrive('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-purple-900/60 hover:bg-purple-800 text-purple-200 rounded-lg text-xs font-medium border border-purple-700/80 transition flex items-center gap-1" title="구글 드라이브로 6청크 초고속 병렬 업로드">
-                            <i data-lucide="cloud-upload" class="w-3.5 h-3.5 text-purple-300"></i> 구글 6청크 업로드
+                        <button onclick="uploadArchiveToGdrive('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-purple-900/60 hover:bg-purple-800 text-purple-200 rounded-lg text-xs font-medium border border-purple-700/80 transition flex items-center gap-1" title="구글 드라이브로 6저장 조각 초고속 병렬 업로드">
+                            <i data-lucide="cloud-upload" class="w-3.5 h-3.5 text-purple-300"></i> 구글 6저장 조각 업로드
                         </button>
                         <button onclick="verifySingleArchive('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-medium border border-zinc-700 transition flex items-center gap-1">
                             <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i> 실측 검증
                         </button>
                         <button onclick="openArchiveRestoreModal('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1">
-                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> 이 백업으로 복원
+                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> 이 백업으로 되돌리기
                         </button>
                         <button onclick="deleteArchiveItem('${encodeURIComponent(a.path)}', '${escapeHtml(a.name)}', ${a.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-lg text-xs font-medium border border-rose-800/80 transition flex items-center gap-1" title="이 통백업 아카이브 삭제">
                             <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400"></i> 삭제
@@ -433,16 +433,16 @@ async function deleteArchiveItem(archivePathEncoded, archiveName, sizeGb) {
         if (typeof loadSystemImageStatus === "function") loadSystemImageStatus();
         if (typeof loadDashboard === "function") loadDashboard();
     } catch (err) {
-        alert("통신 오류: " + err.message);
+        alert("통신 오류: " + friendlyError(err));
     }
 }
 
 async function uploadArchiveToGdrive(archivePathEncoded) {
     const archivePath = decodeURIComponent(archivePathEncoded);
-    if (!confirm(`이 베어메탈 백업 아카이브를 구글 드라이브로 업로드하시겠습니까?\n\n- 대상: ${archivePath}\n- 전송 방식: Rclone Chunker (6개 병렬 스트림, 4GB 청크)\n- 로컬 원본 보존: 원본 훼손 및 용량 낭비 없음`)) {
+    if (!confirm(`이 베어메탈 백업 아카이브를 구글 드라이브로 업로드하시겠습니까?\n\n- 대상: ${archivePath}\n- 전송 방식: Rclone Chunker (6개 병렬 스트림, 4GB 저장 조각)\n- 로컬 원본 보존: 원본 훼손 및 용량 낭비 없음`)) {
         return;
     }
-    appendArchiveConsoleLog(`[START] 구글 드라이브 6청크 병렬 업로드를 시작합니다: ${archivePath}`);
+    appendArchiveConsoleLog(`[START] 구글 드라이브 6저장 조각 병렬 업로드를 시작합니다: ${archivePath}`);
     try {
         const res = await fetch("/api/migration/archive/upload-gdrive", {
             method: "POST",
@@ -455,10 +455,10 @@ async function uploadArchiveToGdrive(archivePathEncoded) {
             appendArchiveConsoleLog(`[ERROR] 구글 드라이브 업로드 실패: ${data.detail || data.reason}`);
             return;
         }
-        alert("구글 드라이브 6청크 병렬 업로드 완료!\n" + data.reason);
+        alert("구글 드라이브 6저장 조각 병렬 업로드 완료!\n" + data.reason);
         appendArchiveConsoleLog(`[DONE] ${data.reason} (소요시간: ${Math.round(data.duration_sec || 0)}초)`);
     } catch (err) {
-        alert("네트워크 오류: " + err.message);
+        alert("네트워크 오류: " + friendlyError(err));
     }
 }
 
@@ -474,7 +474,7 @@ async function startDriveArchiveBackup() {
     const driveSelect = document.getElementById("sysimg-drive-select");
     const targetDrive = (driveSelect && driveSelect.value) ? driveSelect.value : "D:";
 
-    if (!confirm(`C: 드라이브 전체를 베어메탈 디스크 이미지로 통백업하시겠습니까?\n\n- 대상: C: 전체 (부팅 EFI + OS + 모든 파일)\n- 저장 위치: ${targetDrive}\\MyBackup_Repository\\archives\n- 4단계 실측 검증: ${autoVerify ? "포함 (권장)" : "미포함"}\n- 구글 드라이브 업로드: ${uploadGdrive ? "6청크 초고속 병렬 스트림 업로드" : "미포함 (로컬 보관)"}`)) {
+    if (!confirm(`C: 드라이브 전체를 베어메탈 디스크 이미지로 통백업하시겠습니까?\n\n- 대상: C: 전체 (부팅 EFI + OS + 모든 파일)\n- 저장 위치: ${targetDrive}\\MyBackup_Repository\\archives\n- 4단계 실측 검증: ${autoVerify ? "포함 (권장)" : "미포함"}\n- 구글 드라이브 업로드: ${uploadGdrive ? "6저장 조각 초고속 병렬 스트림 업로드" : "미포함 (로컬 보관)"}`)) {
         return;
     }
 
@@ -500,7 +500,7 @@ async function startDriveArchiveBackup() {
         appendArchiveConsoleLog(`[START] 베어메탈 블록 스트리밍 통백업이 시작되었습니다: ${data.target_wim || "진행 중"}`);
         startArchivePolling();
     } catch (err) {
-        alert("네트워크 오류: " + err.message);
+        alert("네트워크 오류: " + friendlyError(err));
     }
 }
 
@@ -614,7 +614,7 @@ function appendArchiveConsoleLog(msg) {
 }
 
 async function stopDriveArchiveBackup() {
-    if (!confirm("진행 중인 통백업/복원 작업을 중단하시겠습니까?")) return;
+    if (!confirm("진행 중인 통백업/되돌리기 작업을 중단하시겠습니까?")) return;
     try {
         const res = await fetch("/api/migration/archive/stop", { method: "POST" });
         const data = await res.json();
@@ -625,7 +625,7 @@ async function stopDriveArchiveBackup() {
             alert("중단 실패: " + (data.message || data.error));
         }
     } catch (err) {
-        alert("네트워크 오류: " + err.message);
+        alert("네트워크 오류: " + friendlyError(err));
     }
 }
 
@@ -658,7 +658,7 @@ async function verifySingleArchive(wimPath) {
             loadArchiveList();
         }
     } catch (err) {
-        alert("검증 통신 오류: " + err.message);
+        alert("검증 통신 오류: " + friendlyError(err));
     }
 }
 
@@ -715,13 +715,13 @@ async function confirmAndRunArchiveRestore() {
         });
         const data = await res.json();
         if (!res.ok || !data.success) {
-            alert("복원 시작 실패: " + (data.detail || data.error));
+            alert("되돌리기 시작 실패: " + (data.detail || data.error));
             return;
         }
 
-        appendArchiveConsoleLog(`[START] ${targetDrive} 드라이브로 통백업 복원/마이그레이션 시작: ${activeRestoreWimPath}`);
+        appendArchiveConsoleLog(`[START] ${targetDrive} 드라이브로 통백업 되돌리기/마이그레이션 시작: ${activeRestoreWimPath}`);
         startArchivePolling();
     } catch (err) {
-        alert("네트워크 오류: " + err.message);
+        alert("네트워크 오류: " + friendlyError(err));
     }
 }

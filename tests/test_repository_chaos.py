@@ -304,7 +304,7 @@ class TestRepositoryChaos(unittest.TestCase):
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         self.assertEqual(proc.returncode, 0, f"disaster_recovery.py failed: {proc.stderr}")
-        self.assertIn("복원 작업 완료", proc.stdout)
+        self.assertIn("되돌리기가 끝났어요", proc.stdout)
 
         # 복원된 파일 무결성 확인
         # (restore_snapshot 계약에 따라 dest 아래 전체 경로 트리에서 탐색해야 한다)

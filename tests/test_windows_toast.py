@@ -91,7 +91,7 @@ def test_notify_backup_failed_truncates_long_message():
         assert mock_toast.called
         args, kwargs = mock_toast.call_args
         title, msg = args[0], args[1]
-        assert "🚨 백업 실패: 일간 백업" in title
+        assert "🚨 백업이 되지 않았어요: 일간 백업" in title
         assert "..." in msg
         assert "A" * 120 not in msg
         assert kwargs.get("app_id") == "BackupSystem.Alert"
@@ -105,7 +105,7 @@ def test_notify_disk_space_warning():
         assert mock_toast.called
         args, kwargs = mock_toast.call_args
         title, msg = args[0], args[1]
-        assert "⚠️ 저장소 디스크 용량 부족" in title
+        assert "⚠️ 백업 보관 공간이 부족해요" in title
         assert "3.2GB" in msg
         assert "10.0GB" in msg
         assert "D:\\" in msg

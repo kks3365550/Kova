@@ -109,7 +109,7 @@ class TestBackupTrayApp(unittest.TestCase):
         with patch("tray_app.threading.Thread", side_effect=sync_thread):
             self.app.check_status_now()
 
-        mock_notify.assert_called_once_with("정상 대기 중", "모든 백업 엔진이 정상 대기 상태입니다.")
+        mock_notify.assert_called_once_with("정상 대기 중", "문제 없이 대기 중이에요. 다음 일정에 맞춰 자동으로 백업합니다.")
 
     @patch("tray_app.subprocess.Popen")
     @patch("tray_app.subprocess.run")

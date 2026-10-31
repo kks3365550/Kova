@@ -69,7 +69,7 @@ async function loadSystemImageStatus() {
             } else {
                 lastStatus.innerText = '미생성';
                 lastStatus.className = 'text-2xl font-black text-slate-100 font-mono';
-                lastTime.innerText = '저장소에 생성된 통백업 아카이브 없음';
+                lastTime.innerText = '백업 보관함에 생성된 통백업 아카이브 없음';
             }
         }
 
@@ -96,7 +96,7 @@ async function loadSystemImageStatus() {
         console.error('Failed to load system image status:', e);
         const dBadge = document.getElementById('sysimg-space-badge');
         if (dBadge) {
-            dBadge.innerHTML = `<span class="text-rose-400">오류: ${e.message || '상태 조회 실패'}</span>`;
+            dBadge.innerHTML = `<span class="text-rose-400">오류: ${friendlyError(e)}</span>`;
         }
     }
 }
@@ -149,7 +149,7 @@ async function startSystemImageBackup() {
     const msg = `윈도우 베어메탈(전체) 시스템 이미지 백업을 시작하시겠습니까?\n\n` +
         `• 대상: C: 전체 (부팅 EFI 파티션, 복구 파티션, OS 전체)\n` +
         (engine === 'kova'
-            ? `• 저장 위치: ${targetDrive}\\KovaImages\n\n※ KOVA Engine입니다. 검증에 실패하면 Windows 표준 이미지(wbadmin)로 자동 대체됩니다.\n※ 복원은 WinPE(restore.cmd)로 합니다. 현장 PC 디스크 인식 확인 전까지는 wbadmin 백업을 함께 유지하세요.`
+            ? `• 저장 위치: ${targetDrive}\\KovaImages\n\n※ KOVA Engine입니다. 검증에 실패하면 Windows 표준 이미지(wbadmin)로 자동 대체됩니다.\n※ 되돌리기은 WinPE(restore.cmd)로 합니다. 현장 PC 디스크 인식 확인 전까지는 wbadmin 백업을 함께 유지하세요.`
             : `• 저장 위치: ${targetDrive}\\WindowsImageBackup\n\n※ Windows 표준 이미지(wbadmin) 엔진으로 생성됩니다.`);
 
     if (!confirm(msg)) return;
@@ -181,7 +181,7 @@ async function startSystemImageBackup() {
             updateSystemImageRunningUI(false);
         }
     } catch (e) {
-        alert('백업 요청 오류: ' + e.message);
+        alert('백업 요청 오류: ' + friendlyError(e));
         updateSystemImageRunningUI(false);
     }
 }
@@ -239,7 +239,7 @@ async function stopSystemImageBackup() {
         await fetchAPI('/api/system-image/stop', { method: 'POST' });
         alert('백업 중단 명령이 전송되었습니다.');
     } catch (e) {
-        alert('중단 실패: ' + e.message);
+        alert('중단 실패: ' + friendlyError(e));
     }
 }
 
@@ -303,7 +303,7 @@ async function loadVhdxList(drive = null) {
         if (window.lucide) lucide.createIcons();
     } catch (e) {
         console.error('Failed to load VHDX list:', e);
-        container.innerHTML = `<div class="text-red-400 text-xs py-2">VHDX 목록 로딩 실패: ${e.message}</div>`;
+        container.innerHTML = `<div class="text-red-400 text-xs py-2">VHDX 목록 로딩 실패: ${friendlyError(e)}</div>`;
     }
 }
 
@@ -322,7 +322,7 @@ async function mountVhdx(encodedPath) {
             alert('VHDX 마운트 실패: ' + (res ? res.error : '알 수 없는 오류'));
         }
     } catch (e) {
-        alert('마운트 요청 오류: ' + e.message);
+        alert('마운트 요청 오류: ' + friendlyError(e));
     }
 }
 
@@ -341,7 +341,7 @@ async function dismountVhdx(encodedPath) {
             alert('VHDX 언마운트 실패: ' + (res ? res.error : '알 수 없는 오류'));
         }
     } catch (e) {
-        alert('언마운트 요청 오류: ' + e.message);
+        alert('언마운트 요청 오류: ' + friendlyError(e));
     }
 }
 
@@ -371,7 +371,7 @@ async function deleteVhdx(encodedPath, encodedFilename, sizeGb) {
             alert('VHDX 삭제 실패: ' + (res ? res.error : '알 수 없는 오류'));
         }
     } catch (e) {
-        alert('VHDX 삭제 요청 오류: ' + e.message);
+        alert('VHDX 삭제 요청 오류: ' + friendlyError(e));
     }
 }
 

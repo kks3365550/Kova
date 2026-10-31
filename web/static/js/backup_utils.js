@@ -1,5 +1,5 @@
 // =========================================================================
-// [백업시스템] 공통 상태 저장소 & 포맷팅 유틸리티 & API 통신 & 모달 제어
+// [백업시스템] 공통 상태 백업 보관함 & 포맷팅 유틸리티 & API 통신 & 모달 제어
 // =========================================================================
 
 // State Management
@@ -131,7 +131,7 @@ async function showScheduledBackupLogs() {
         }
         body.textContent = out;
     } catch (e) {
-        body.textContent = '로그를 불러오지 못했습니다: ' + (e.message || e);
+        body.textContent = '로그를 불러오지 못했습니다: ' + friendlyError(e);
     }
 }
 

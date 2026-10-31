@@ -457,11 +457,11 @@ def restore_snapshot(
                 break
 
     if not target_snap:
-        print(f"[!] 스냅샷을 찾을 수 없습니다: {snapshot_id}")
+        print(f"[!] 선택한 백업 시점을 찾지 못했어요: {snapshot_id}\n    목록에서 번호나 이름을 다시 확인해 주세요.")
         return {"success": False, "error": "스냅샷 미존재"}
 
     manifest = target_snap["data"]
-    print(f"\n[*] 스냅샷 복원 준비: {target_snap['id']} ({target_snap['iso_time']})")
+    print(f"\n[*] 백업 되돌리기를 준비하고 있어요: {target_snap['id']} ({target_snap['iso_time']})")
     print(f"[*] 프로필: {target_snap['profile_name']} | 총 {target_snap['file_count']}개 파일 ({format_bytes(target_snap['total_bytes'])})")
 
     # 암호화 엔진 초기화
@@ -472,14 +472,14 @@ def restore_snapshot(
                 crypto_engine = CryptoAtRestEngine.from_key_file(key_file, repo_dir)
                 print(f"[*] 오프라인 키 파일 로드 완료: {key_file}")
             except Exception as e:
-                print(f"[!] 키 파일 로드 실패: {e}")
+                print("[!] 암호 키 파일을 읽지 못했어요. 키 파일 위치를 확인한 뒤 다시 시도해 주세요.")
         elif passphrase:
             try:
                 from core.crypto_at_rest import CryptoAtRestEngine
                 crypto_engine = CryptoAtRestEngine.from_passphrase(passphrase, repo_dir, create_if_missing=False)
                 print("[*] 패스프레이즈 기반 복호화 키 초기화 완료")
             except Exception as e:
-                print(f"[!] 패스프레이즈 키 생성 실패: {e}")
+                print("[!] 입력한 암호로 백업을 열지 못했어요. 암호를 다시 확인해 주세요.")
 
     # 무결성 검증 (Ed25519 & Manifest 지문)
     pubkey = os.path.join(repo_dir, "keys", "backup_ed25519.pub")
@@ -489,7 +489,7 @@ def restore_snapshot(
         if not ok and "위조" in msg:
             if non_interactive:
                 return {"success": False, "error": "서명 위조 탐지로 인한 자동 복원 중단"}
-            choice = input("[WARNING] 서명 위조가 탐지되었습니다! 계속 복원하시겠습니까? (y/N): ").strip().lower()
+            choice = input("[주의] 이 백업이 중간에 바뀐 것 같아요. 그래도 되돌릴까요? 모르겠으면 N을 누르세요. (y/N): ").strip().lower()
             if choice != "y":
                 return {"success": False, "error": "서명 위조로 인한 사용자 복원 중단"}
 
@@ -576,11 +576,11 @@ def restore_snapshot(
 
     elapsed = max(0.001, time.time() - start_time)
     print(f"\n\n{'='*60}")
-    print(f"[OK] 복원 작업 완료! (소요시간: {elapsed:.2f}초)")
-    print(f" - 성공 파일: {success_count}개")
-    print(f" - 실패 파일: {fail_count}개")
+    print(f"[완료] 되돌리기가 끝났어요! (걸린 시간: {elapsed:.0f}초)")
+    print(f" - 되돌린 파일: {success_count}개")
+    print(f" - 되돌리지 못한 파일: {fail_count}개")
     if failed_entries:
-        print("\n[WARNING] 복원 실패 세부 내역:")
+        print("\n[주의] 되돌리지 못한 파일 목록 (처음 10개):")
         for ferr in failed_entries[:10]:
             print(f"  * {ferr}")
         if len(failed_entries) > 10:
@@ -610,12 +610,12 @@ def main():
         candidates = get_candidate_repositories()
         if candidates:
             repo = candidates[0]
-            print(f"[*] 자동 감지된 백업 저장소: {repo}")
+            print(f"[*] 백업 보관함을 자동으로 찾았어요: {repo}")
         else:
-            repo = input("백업 저장소 경로를 입력하세요 (예: D:\\MyBackup_Repository): ").strip('"\' ')
+            repo = input("백업 보관함이 있는 폴더를 입력하세요 (예: D:\\MyBackup_Repository): ").strip('"\' ')
 
     if not repo or not os.path.isdir(repo):
-        print(f"[!] 유효한 백업 저장소를 찾을 수 없습니다: {repo}")
+        print(f"[!] 백업 보관함을 찾지 못했어요: {repo}\n    백업용 외장하드가 연결되어 있는지 확인해 주세요.")
         sys.exit(1)
 
     if args.audit:
@@ -624,12 +624,12 @@ def main():
 
     snapshots = list_snapshots(repo)
     if not snapshots:
-        print(f"[!] 저장소에 스냅샷이 없습니다: {repo}")
+        print(f"[!] 이 보관함에는 아직 백업이 없어요: {repo}")
         return
 
     if args.list:
         print(f"\n{'='*75}")
-        print(f"[LIST] 사용 가능한 스냅샷 목록: {repo}")
+        print(f"[목록] 되돌릴 수 있는 백업: {repo}")
         print(f"{'='*75}")
         for idx, s in enumerate(snapshots, 1):
             print(f"[{idx:2d}] ID: {s['id']}")
@@ -640,18 +640,18 @@ def main():
 
     if args.verify:
         snap_id = args.restore or "latest"
-        print(f"[*] 스냅샷 무결성 정밀 검증 시작: {snap_id}")
+        print(f"[*] 백업이 온전한지 꼼꼼히 확인하고 있어요: {snap_id}")
         target = snapshots[0] if snap_id == "latest" else next((s for s in snapshots if s["id"] == snap_id), None)
         if not target:
-            print(f"[!] 스냅샷 {snap_id}를 찾을 수 없습니다.")
+            print(f"[!] 백업 {snap_id}을(를) 찾지 못했어요. 목록에서 다시 확인해 주세요.")
             return
 
         manifest = target["data"]
         pubkey = os.path.join(repo, "keys", "backup_ed25519.pub")
         ok_sig, msg_sig = verify_ed25519_manifest(manifest, pubkey)
         ok_fp, msg_fp = verify_manifest_fingerprint(manifest)
-        print(f" - Ed25519 서명: {msg_sig}")
-        print(f" - Manifest 지문: {msg_fp}")
+        print(f" - 변조 방지 확인: {msg_sig}")
+        print(f" - 백업 목록표 확인: {msg_fp}")
 
         missing_blobs = []
         for e in manifest.get("entries", []):
@@ -660,9 +660,9 @@ def main():
                 missing_blobs.append(bh)
 
         if missing_blobs:
-            print(f" [WARNING] 누락된 블롭: {len(missing_blobs)}개")
+            print(f" [주의] 빠진 저장 조각이 {len(missing_blobs)}개 있어요. 일부만 되돌려질 수 있어요.")
         else:
-            print(f" [OK] 전체 {len(manifest.get('entries', []))}개 참조 블롭 물리적 무결성 확인 완료")
+            print(f" [OK] 전체 {len(manifest.get('entries', []))}개 파일이 모두 온전해요")
         return
 
     target_drives = find_candidate_target_drives(repo)
@@ -671,7 +671,7 @@ def main():
         if dest == "auto":
             dest = target_drives[0] + "\\" if target_drives else None
             if dest:
-                print(f"[*] 자동 선택된 복원 대상 드라이브: {dest}")
+                print(f"[*] 되돌릴 드라이브를 자동으로 골랐어요: {dest}")
         restore_snapshot(
             repo_dir=repo,
             snapshot_id=args.restore,
@@ -685,13 +685,13 @@ def main():
 
     # 대화형 모드 (옵션 미지정 시)
     print(f"\n{'='*75}")
-    print(f"[LIST] 사용 가능한 스냅샷 목록: {repo}")
+    print(f"[목록] 되돌릴 수 있는 백업: {repo}")
     print(f"{'='*75}")
     for idx, s in enumerate(snapshots[:10], 1):
         print(f"[{idx:2d}] {s['id']} | {s['iso_time'][:19]} | {s['profile_name']} | {s['file_count']}개 | {s['sig_status']}")
     print(f"{'='*75}")
 
-    choice = timed_input("\n복원할 스냅샷 번호 또는 ID를 입력하세요 (기본값: 1, 5초 타임아웃, Q=종료): ", timeout=5.0, default="1").strip()
+    choice = timed_input("\n되돌릴 백업 번호를 입력하세요. (안 누르면 5초 뒤 1번=가장 최근 백업, 그만두려면 Q): ", timeout=5.0, default="1").strip()
     if choice.lower() == 'q':
         return
 
@@ -702,7 +702,7 @@ def main():
         if match:
             selected_snap = match
         else:
-            print(f"[!] '{choice}'에 일치하는 스냅샷을 찾지 못하여 최신 스냅샷[1]을 선택합니다.")
+            print(f"[!] '{choice}'에 맞는 백업이 없어서 가장 최근 백업(1번)을 골랐어요.")
             selected_snap = snapshots[0]
     else:
         selected_snap = snapshots[0]
@@ -711,11 +711,11 @@ def main():
     if dest == "auto":
         dest = target_drives[0] + "\\" if target_drives else None
         if dest:
-            print(f"[*] 자동 선택된 복원 대상 드라이브: {dest}")
+            print(f"[*] 되돌릴 드라이브를 자동으로 골랐어요: {dest}")
     elif not dest:
         default_target = (target_drives[0] + "\\") if target_drives else ""
         rec_hint = f" (추천: {target_drives[0]}\\)" if target_drives else " (엔터 시 원본 위치)"
-        dest_in = timed_input(f"복원 대상 폴더 경로를 입력하세요{rec_hint} (5초 타임아웃): ", timeout=5.0, default=default_target).strip('"\' ')
+        dest_in = timed_input(f"되돌릴 위치(폴더)를 입력하세요{rec_hint} (안 누르면 5초 뒤 자동 선택): ", timeout=5.0, default=default_target).strip('"\' ')
         if not dest_in and target_drives:
             dest = target_drives[0] + "\\"
             print(f"[*] 선택된 대상 드라이브: {dest}")

@@ -30,7 +30,7 @@ async function loadCustomSelectionData(retryCount = 0) {
         const containerApps = document.getElementById('installed-apps-container');
         if (containerApps) containerApps.innerHTML = `
             <div class="text-center py-6 space-y-2">
-                <div class="text-red-400 text-xs">일시적인 통신 지연 (${e.message})</div>
+                <div class="text-red-400 text-xs">일시적인 통신 지연 (${friendlyError(e)})</div>
                 <button onclick="loadCustomSelectionData()" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-medium border border-zinc-700 transition">
                     목록 다시 불러오기
                 </button>
@@ -303,7 +303,7 @@ async function startCustomSelectionBackup() {
             })
         });
     } catch (e) {
-        alert('선택 백업 시작 실패: ' + e.message);
+        alert('선택 백업 시작 실패: ' + friendlyError(e));
     }
 }
 
@@ -344,17 +344,17 @@ async function estimateCustomBackupSpace(btnEl) {
                     <span class="text-cyan-400 font-mono">${formatBytes(res.total_bytes)} (${res.scanned_files.toLocaleString()}개 파일)</span>
                 </div>
                 <div class="flex items-center justify-between font-semibold">
-                    <span class="text-slate-300">저장소 여유 공간:</span>
+                    <span class="text-slate-300">백업 보관함 여유 공간:</span>
                     <span class="font-mono ${isOk ? 'text-emerald-400' : 'text-red-400'}">${res.repo_free_gb} GB</span>
                 </div>
                 <div class="pt-1 mt-1 border-t border-slate-800 flex items-center justify-between font-bold">
                     <span class="text-slate-400">사전 안전 진단:</span>
-                    <span class="${isOk ? 'text-emerald-400' : 'text-red-400'}">${isOk ? '✅ 백업 안전 (공간 충분)' : '⚠️ 저장소 공간 부족 경고'}</span>
+                    <span class="${isOk ? 'text-emerald-400' : 'text-red-400'}">${isOk ? '✅ 백업 안전 (공간 충분)' : '⚠️ 백업 보관함 공간 부족 경고'}</span>
                 </div>
             `;
         }
     } catch (err) {
-        alert('용량 예측 오류: ' + (err.message || err));
+        alert('용량 예측 오류: ' + friendlyError(err));
     } finally {
         if (btnEl) {
             btnEl.disabled = false;

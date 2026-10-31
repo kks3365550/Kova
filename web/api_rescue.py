@@ -230,7 +230,7 @@ def _background_usb_worker(target_drive: str, iso_path: str, auto_format: bool =
     except Exception as e:
         with _usb_lock:
             _usb_task_state["phase"] = "ERROR"
-            _usb_task_state["phase_text"] = f"오류 발생: {str(e)}"
+            _usb_task_state["phase_text"] = "복구 USB 만들기가 중단됐어요. USB를 확인한 뒤 다시 시도해 주세요."
             _usb_task_state["is_running"] = False
             _usb_task_state["error"] = str(e)
         append_usb_log(f"[!] 제작 중단 (오류): {str(e)}")

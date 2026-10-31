@@ -1,3 +1,18 @@
+// 쉬운 오류 안내: 기술 용어 대신 "무슨 일이 생겼는지 + 할 일"로 보여 준다.
+function friendlyError(e) {
+    var m = String((e && e.message) || e || '');
+    if (/Failed to fetch|NetworkError|Load failed|ECONN/i.test(m)) {
+        return '백업 프로그램과 연결이 끊겼어요. 프로그램이 켜져 있는지 확인한 뒤 다시 시도해 주세요.';
+    }
+    if (/401|403|비밀번호|password/i.test(m)) {
+        return '비밀번호가 맞지 않거나 권한이 없어요. 비밀번호를 다시 확인해 주세요.';
+    }
+    if (/timeout|timed out|시간 초과/i.test(m)) {
+        return '시간이 너무 오래 걸려 멈췄어요. 잠시 후 다시 시도해 주세요.';
+    }
+    return '문제가 생겼어요. 잠시 후 다시 시도해 주세요. (문제가 계속되면 담당자에게 아래 내용을 알려 주세요: ' + m + ')';
+}
+
 // =========================================================================
 // [백업시스템] 메인 오케스트레이터 & 대시보드 뷰 / 프로필 관리
 // 서브 모듈: /static/js/backup_utils.js, backup_snapshots.js, backup_custom.js, backup_sysimage.js
@@ -91,8 +106,8 @@ function renderOffsiteStatusWidget() {
         const activeProf = (state.profiles || []).find(p => p.auto_backup_enabled) || (state.profiles || [])[0];
         const rPath = activeProf?.repo_dir || '';
         const parts = rPath ? rPath.split(/[\\/]/).filter(Boolean) : [];
-        heroLocalRepo.innerText = parts[parts.length - 1] || '로컬 저장소';
-        heroLocalRepo.title = rPath || '로컬 저장소';
+        heroLocalRepo.innerText = parts[parts.length - 1] || '로컬 백업 보관함';
+        heroLocalRepo.title = rPath || '로컬 백업 보관함';
     }
 
     // Node C: Topology Offsite Pipeline Binding & Fluent Dash Pill
@@ -102,6 +117,7 @@ function renderOffsiteStatusWidget() {
     const dashProtPill = document.getElementById('dash-protection-pill');
 
     if (!off || !off.enabled) {
+        const noSnaps = !state.snapshots || state.snapshots.length === 0;
         if (sidebarStatus) {
             sidebarStatus.innerText = '미사용';
             sidebarStatus.className = 'text-slate-500 font-mono font-medium';
@@ -117,7 +133,7 @@ function renderOffsiteStatusWidget() {
             dashState.className = 'text-slate-400 font-medium';
         }
         if (heroScoreBadge) {
-            heroScoreBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span><span>로컬 WORM 보호 중 (3-2-1 원격 미설정)</span>';
+            heroScoreBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span><span>' + (noSnaps ? '아직 백업이 없어요 (먼저 백업을 해 주세요)' : '이 PC에 잠금 보호 중 (다른 장소 보관은 미설정)') + '</span>';
             heroScoreBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-950/80 text-amber-300 border border-amber-800 flex items-center gap-1';
         }
         if (heroOffsite) {
@@ -137,7 +153,7 @@ function renderOffsiteStatusWidget() {
             topoStatus.className = 'text-slate-400 font-medium';
         }
         if (dashProtPill) {
-            dashProtPill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span><span>로컬 WORM 보호 중</span>';
+            dashProtPill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span><span>' + (noSnaps ? '아직 백업이 없어요' : '이 PC에 잠금 보호 중') + '</span>';
             dashProtPill.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-950 text-amber-300 border border-amber-800 flex items-center gap-1.5';
         }
         return;
@@ -154,11 +170,11 @@ function renderOffsiteStatusWidget() {
     }
 
     if (sidebarStatus) {
-        sidebarStatus.innerText = '3-2-1 보호중';
+        sidebarStatus.innerText = '안전 보관 중';
         sidebarStatus.className = 'text-blue-400 font-mono font-medium';
     }
     if (dashBadge) {
-        dashBadge.innerText = '3-2-1 보호 활성';
+        dashBadge.innerText = '안전 보관 켜짐';
         dashBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-900/60 text-blue-300 border border-blue-700';
     }
     if (dashMode) dashMode.innerText = modeText;
@@ -170,13 +186,13 @@ function renderOffsiteStatusWidget() {
     const hasSnaps = (state.snapshots || []).some(s => s.is_offsite_protected || s.offsite_status === 'COMMITTED');
     if (dashState) {
         if (hasSnaps) {
-            dashState.innerHTML = '<span class="text-blue-400 font-semibold">🌐 최신 스냅샷 동기화 완료</span>';
+            dashState.innerHTML = '<span class="text-blue-400 font-semibold">🌐 최신 백업 시점 동기화 완료</span>';
         } else {
-            dashState.innerHTML = '<span class="text-amber-400 font-semibold">⏳ 스냅샷 복제 대기/진행 중</span>';
+            dashState.innerHTML = '<span class="text-amber-400 font-semibold">⏳ 백업 시점 복제 대기/진행 중</span>';
         }
     }
     if (heroScoreBadge) {
-        heroScoreBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>100% 3-2-1 완벽 보호</span>';
+        heroScoreBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>100% 안전하게 보관 중</span>';
         heroScoreBadge.className = 'px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center gap-1';
     }
     if (heroOffsite) {
@@ -187,7 +203,7 @@ function renderOffsiteStatusWidget() {
     }
 
     if (topoBadge) {
-        topoBadge.innerText = '3-2-1 동기화';
+        topoBadge.innerText = '다른 장소와 동기화';
         topoBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-medium bg-indigo-950 text-indigo-300 border border-indigo-700';
     }
     if (topoTarget) {
@@ -204,7 +220,7 @@ function renderOffsiteStatusWidget() {
         }
     }
     if (dashProtPill) {
-        dashProtPill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>3-2-1 보호 정상</span>';
+        dashProtPill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>안전 보관 정상</span>';
         dashProtPill.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center gap-1.5';
     }
 }
@@ -284,7 +300,7 @@ async function completeOnboardingWizard() {
         if (documentsChecked) sources.push('Documents');
 
         const newProfile = {
-            name: "내 PC 스마트 백업 프로필",
+            name: "내 PC 기본 백업",
             sources: sources.length > 0 ? sources : ["Desktop"],
             repo_dir: repoDir,
             schedule_type: (sched === 'manual') ? 'manual' : 'daily',
@@ -304,10 +320,10 @@ async function completeOnboardingWizard() {
 
         localStorage.setItem('onboarding_completed', 'true');
         closeModal('onboarding-modal');
-        alert('🎉 스마트 백업 설정이 완료되었습니다!\n이제 정해진 시간에 자동으로 안전하게 백업됩니다.');
+        alert('🎉 설정이 끝났어요!\n이제 정해진 시간에 자동으로 내 파일을 백업해 드려요.');
         await loadDashboard();
     } catch (err) {
-        alert('온보딩 설정 저장 실패: ' + err.message);
+        alert('설정을 저장하지 못했어요. ' + friendlyError(err));
     }
 }
 
@@ -338,7 +354,7 @@ function renderDashboardStats() {
     if (topoSrcLog) topoSrcLog.innerText = formatBytes(stats.logical_bytes);
     if (topoVaultStored) topoVaultStored.innerText = formatBytes(stats.stored_bytes);
     if (topoVaultSavings) topoVaultSavings.innerText = `${stats.savings_percentage || 0}% 절감`;
-    if (dedupBadge) dedupBadge.innerText = `${stats.savings_percentage || 0}% SAVED`;
+    if (dedupBadge) dedupBadge.innerText = `${stats.savings_percentage || 0}% 절약`;
     if (dedupProgress) dedupProgress.style.width = `${Math.min(100, Math.max(0, stats.savings_percentage || 0))}%`;
 
     // Track 2-15: Chunking Telemetry
@@ -352,8 +368,8 @@ function renderDashboardStats() {
         const fastcdcCount = strats.fastcdc || strats.fastcdc_v1 || 0;
         const fixedCount = strats.fixed || strats.fixed_block || 0;
         stratEl.innerHTML = `
-            <span class="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/60 font-mono text-[11px]">FastCDC: ${fastcdcCount.toLocaleString()}</span>
-            <span class="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/60 font-mono text-[11px]">Fixed: ${fixedCount.toLocaleString()}</span>
+            <span class="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800/60 font-mono text-[11px]">쪼개 저장: ${fastcdcCount.toLocaleString()}</span>
+            <span class="px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800/60 font-mono text-[11px]">통째 저장: ${fixedCount.toLocaleString()}</span>
         `;
     }
 }
@@ -466,7 +482,7 @@ function renderRecentSnapshots() {
     if (!state.snapshots || state.snapshots.length === 0) {
         container.innerHTML = `
             <div class="text-center py-6 text-slate-500 text-xs bg-slate-900/40 rounded-xl border border-slate-800">
-                생성된 백업 스냅샷이 없습니다. 상단의 '지금 백업 시작' 버튼을 눌러 첫 백업을 생성하세요.
+                아직 백업한 기록이 없어요. 홈 화면의 파란 '지금 백업하기' 버튼을 눌러 첫 백업을 시작해 보세요.
             </div>
         `;
         return;
@@ -477,7 +493,7 @@ function renderRecentSnapshots() {
         const isFull = s.backup_type === 'full';
         const sum = s.summary || {};
         const formattedDate = formatDate(s.iso_time);
-        const typeLabel = isFull ? '전체 백업' : '증분 백업';
+        const typeLabel = isFull ? '전체 백업' : '바뀐 것만 백업';
         const sizeText = formatBytes(sum.total_bytes);
 
         return `
@@ -493,7 +509,7 @@ function renderRecentSnapshots() {
                 </div>
                 <div class="flex items-center gap-2">
                     <button onclick="openRestoreModal('${s.id}')" class="px-3 py-1 bg-zinc-800 hover:bg-blue-600 text-zinc-200 hover:text-white rounded-lg text-xs font-semibold transition border border-zinc-700/80 hover:border-blue-500 flex items-center gap-1 shadow-sm">
-                        <i data-lucide="rotate-ccw" class="w-3 h-3"></i> 복원
+                        <i data-lucide="rotate-ccw" class="w-3 h-3"></i> 되돌리기
                     </button>
                     <button onclick="inspectSnapshot('${s.id}')" class="px-2.5 py-1 bg-zinc-800/60 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-lg text-xs font-medium transition border border-zinc-800">
                         탐색
@@ -516,11 +532,11 @@ function renderDashboardSnapshotChart() {
     if (!state.snapshots || state.snapshots.length === 0) {
         container.innerHTML = `
             <div class="w-full h-full flex flex-col items-center justify-center text-zinc-500 text-xs font-mono space-y-1">
-                <span>기록된 스냅샷이 없습니다.</span>
-                <span class="text-[10px] text-zinc-600">[BACKUP NOW]를 눌러 첫 스냅샷을 생성하세요.</span>
+                <span>아직 백업한 기록이 없어요.</span>
+                <span class="text-[10px] text-zinc-600">'지금 백업하기' 버튼을 눌러 첫 백업을 시작해 보세요.</span>
             </div>
         `;
-        if (metaSummary) metaSummary.innerText = '| 기록된 스냅샷 없음';
+        if (metaSummary) metaSummary.innerText = '| 기록된 백업 시점 없음';
         return;
     }
 
@@ -531,7 +547,7 @@ function renderDashboardSnapshotChart() {
         return tA - tB;
     });
 
-    // 최근 최대 10개 스냅샷 (차트 영역에 맞춤)
+    // 최근 최대 10개 백업 시점 (차트 영역에 맞춤)
     const chartSnaps = sorted.slice(-10);
     const maxBytes = Math.max(...chartSnaps.map(s => (s.summary && s.summary.total_bytes) || 1), 1024 * 1024);
     const latest = chartSnaps[chartSnaps.length - 1];
@@ -539,7 +555,7 @@ function renderDashboardSnapshotChart() {
     if (metaSummary && latest) {
         const latestBytes = (latest.summary && latest.summary.total_bytes) || 0;
         const latestFiles = (latest.summary && latest.summary.total_files) || 0;
-        metaSummary.innerText = `| 실측 DB 스냅샷 ${state.snapshots.length}개 보관 (최신: ${formatBytes(latestBytes)}, ${latestFiles.toLocaleString()}개 파일)`;
+        metaSummary.innerText = `| 실측 DB 백업 시점 ${state.snapshots.length}개 보관 (최신: ${formatBytes(latestBytes)}, ${latestFiles.toLocaleString()}개 파일)`;
     }
 
     const barsHtml = chartSnaps.map((s, idx) => {
@@ -566,7 +582,7 @@ function renderDashboardSnapshotChart() {
             dateLabel = `#${idx+1}`;
         }
 
-        const tooltip = `[스냅샷 #${idx+1}]\nID: ${s.id}\n일시: ${dateLabel}\n용량: ${formatBytes(b)}\n파일 수: ${f.toLocaleString()}개\n프로필: ${s.profile_name || '기본 백업'}`;
+        const tooltip = `[백업 시점 #${idx+1}]\nID: ${s.id}\n일시: ${dateLabel}\n용량: ${formatBytes(b)}\n파일 수: ${f.toLocaleString()}개\n프로필: ${s.profile_name || '기본 백업'}`;
 
         return `
             <div class="flex-1 min-w-[2.2rem] max-w-[4.2rem] flex flex-col justify-end items-center h-full group relative cursor-pointer" title="${tooltip}" onclick="inspectSnapshot('${s.id}')">
@@ -621,8 +637,8 @@ function renderDashboardSnapshotChart() {
         const firstDate = formatDate(first.iso_time || first.created_at);
         const lastDate = formatDate(last.iso_time || last.created_at);
         dateLabels.innerHTML = `
-            <span>첫 스냅샷: <b class="text-zinc-300">${firstDate}</b></span>
-            <span class="text-emerald-400">최신 스냅샷: <b>${lastDate} (Live)</b></span>
+            <span>첫 백업 시점: <b class="text-zinc-300">${firstDate}</b></span>
+            <span class="text-emerald-400">최신 백업 시점: <b>${lastDate} (Live)</b></span>
         `;
     }
 }
@@ -647,7 +663,7 @@ function renderProfilesList() {
     if (!container) return;
 
     if (!state.profiles || state.profiles.length === 0) {
-        container.innerHTML = `<div class="text-slate-500 text-sm">등록된 프로필이 없습니다.</div>`;
+        container.innerHTML = `<div class="text-slate-500 text-sm">아직 만든 백업 설정이 없어요. '새 백업 설정 추가'를 눌러 만들어 보세요.</div>`;
         return;
     }
 
@@ -671,7 +687,7 @@ function renderProfilesList() {
             <div class="flex justify-between items-start">
                 <div>
                     <h3 class="text-base font-bold text-slate-100">${p.name}</h3>
-                    <p class="text-xs text-slate-400 mt-1">저장소: <code class="text-blue-400 font-mono">${p.repo_dir}</code></p>
+                    <p class="text-xs text-slate-400 mt-1">백업 보관함: <code class="text-blue-400 font-mono">${p.repo_dir}</code></p>
                 </div>
                 <div class="flex items-center gap-2">
                     <button onclick="editProfile('${p.id}')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-xs font-medium">수정</button>
@@ -848,9 +864,9 @@ async function validateModalRepo() {
         });
         const freeGb = (res.free_bytes / (1024 * 1024 * 1024)).toFixed(1);
         if (res.exists) {
-            feedback.innerHTML = `<span class="text-emerald-400 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i>저장소 확인 완료 (여유 공간: ${freeGb} GB)</span>`;
+            feedback.innerHTML = `<span class="text-emerald-400 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i>백업 보관함 확인 완료 (여유 공간: ${freeGb} GB)</span>`;
         } else {
-            feedback.innerHTML = `<span class="text-blue-400 flex items-center gap-1"><i data-lucide="info" class="w-3 h-3"></i>새 저장소 폴더 생성 예정 (여유 공간: ${freeGb} GB)</span>`;
+            feedback.innerHTML = `<span class="text-blue-400 flex items-center gap-1"><i data-lucide="info" class="w-3 h-3"></i>새 백업 보관함 폴더 생성 예정 (여유 공간: ${freeGb} GB)</span>`;
         }
         lucide.createIcons();
     } catch (e) {
@@ -873,7 +889,7 @@ async function saveProfileFromModal() {
     const compression = parseInt(document.getElementById('prof-compression').value.trim(), 10) || 6;
 
     if (!name || !sourcesStr || !repo) {
-        alert('프로필 이름, 백업 대상 경로, 저장소 경로를 모두 입력하세요.');
+        alert('프로필 이름, 백업 대상 경로, 백업 보관함 경로를 모두 입력하세요.');
         return;
     }
 
@@ -904,7 +920,7 @@ async function saveProfileFromModal() {
         await loadProfiles();
         await loadDashboard();
     } catch (e) {
-        alert('프로필 저장 실패: ' + e.message);
+        alert('프로필 저장 실패: ' + friendlyError(e));
     }
 }
 
@@ -916,7 +932,7 @@ async function triggerProfileBackup(profileId) {
             body: JSON.stringify({ profile_id: profileId })
         });
     } catch (e) {
-        alert('백업 실행 실패: ' + e.message);
+        alert('백업 실행 실패: ' + friendlyError(e));
     }
 }
 
@@ -928,7 +944,7 @@ async function deleteProfile(profileId, profileName) {
         await loadProfiles();
         await loadDashboard();
     } catch (e) {
-        alert('프로필 삭제 실패: ' + e.message);
+        alert('프로필 삭제 실패: ' + friendlyError(e));
     }
 }
 
@@ -946,7 +962,7 @@ async function loadWindowsTaskStatus() {
             if (nextEl) nextEl.innerText = `다음 자동 실행 예정: ${res.next_run || '-'}`;
         } else {
             badge.className = 'text-[11px] px-2.5 py-0.5 rounded-full font-medium bg-slate-800 text-slate-400 border border-slate-700';
-            badge.innerText = '미등록 (상시 데몬 모드)';
+            badge.innerText = '등록 안 됨 (프로그램이 켜져 있는 동안 계속 동작)';
             if (nextEl) nextEl.innerText = '';
         }
     } catch (e) {
@@ -977,7 +993,7 @@ async function registerWindowsTaskFromUI() {
             alert('등록 실패: ' + res.error);
         }
     } catch (e) {
-        alert('스케줄러 등록 오류: ' + e.message);
+        alert('스케줄러 등록 오류: ' + friendlyError(e));
     }
 }
 
@@ -988,12 +1004,12 @@ async function unregisterWindowsTaskFromUI() {
         alert(res.message || '등록 해제되었습니다.');
         await loadWindowsTaskStatus();
     } catch (e) {
-        alert('해제 오류: ' + e.message);
+        alert('해제 오류: ' + friendlyError(e));
     }
 }
 
 // =========================================================================
-// 3-2-1 오프사이트 원격 복제 UI 핸들러
+// 3-2-1 다른 장소 보관 원격 복제 UI 핸들러
 // =========================================================================
 
 function toggleOffsiteProviderUI(provider, autoSave = false) {
@@ -1065,7 +1081,7 @@ async function loadOffsiteStatus() {
                 badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> 정상 연결 (여유: ${st.free_gb} GB / ${st.free_percent}%)`;
                 if (detailInfo) {
                     detailInfo.classList.remove('hidden');
-                    detailInfo.innerHTML = `원격 저장소 상태: 정상 접근 가능 | 전체 ${st.total_gb} GB 중 ${st.used_gb} GB 사용 (${st.free_gb} GB 여유)`;
+                    detailInfo.innerHTML = `원격 백업 보관함 상태: 정상 접근 가능 | 전체 ${st.total_gb} GB 중 ${st.used_gb} GB 사용 (${st.free_gb} GB 여유)`;
                 }
             } else {
                 badge.className = 'text-[11px] px-2.5 py-0.5 rounded-full font-medium bg-amber-950/80 text-amber-300 border border-amber-700/60 flex items-center gap-1';
@@ -1110,7 +1126,7 @@ async function saveOffsiteConfigFromUI(showAlert = true) {
         });
         if (res.success) {
             if (showAlert) {
-                alert('🎉 3-2-1 오프사이트 복제 설정이 성공적으로 저장되었습니다.');
+                alert('🎉 다른 장소 보관 설정이 성공적으로 저장되었습니다.');
             }
             await loadOffsiteStatus();
             if (res.data && typeof renderOffsiteStatusWidget === 'function') {
@@ -1124,7 +1140,7 @@ async function saveOffsiteConfigFromUI(showAlert = true) {
         }
     } catch (e) {
         if (showAlert) {
-            alert('설정 저장 오류: ' + e.message);
+            alert('설정 저장 오류: ' + friendlyError(e));
         }
     }
 }
@@ -1148,7 +1164,7 @@ async function uploadGdriveCredFile(input) {
             alert('키 파일 업로드 실패: ' + (data.error || '알 수 없는 오류'));
         }
     } catch(err) {
-        alert('키 파일 업로드 통신 오류: ' + err.message);
+        alert('키 파일 업로드 통신 오류: ' + friendlyError(err));
     }
 }
 
@@ -1224,7 +1240,7 @@ async function testOffsiteFromUI() {
             await loadOffsiteStatus();
         }
     } catch (e) {
-        alert('연결 테스트 오류: ' + e.message);
+        alert('연결 테스트 오류: ' + friendlyError(e));
         await loadOffsiteStatus();
     }
 }
@@ -1236,10 +1252,10 @@ async function triggerOffsiteSyncFromUI() {
     const remote_path = (pathInput ? pathInput.value : '').trim();
 
     const engineMsg = isGdrive 
-        ? '(Rclone 멀티스레드 128MB 청크 초고속 클라우드 엔진 가동)'
+        ? '(Rclone 멀티스레드 128MB 저장 조각 초고속 클라우드 엔진 가동)'
         : '(Windows 순정 robocopy /MT:32 고속 백그라운드 엔진 가동)';
 
-    if (!confirm(`현재 로컬 백업 저장소 전체를 원격지로 지금 즉시 동기화(복제)하시겠습니까?\n${engineMsg}`)) return;
+    if (!confirm(`현재 로컬 백업 보관함 전체를 원격지로 지금 즉시 동기화(복제)하시겠습니까?\n${engineMsg}`)) return;
 
     try {
         const res = await fetchAPI('/api/offsite/sync', {
@@ -1256,19 +1272,19 @@ async function triggerOffsiteSyncFromUI() {
             alert('복제 실행 실패: ' + (res.detail || res.error || '알 수 없는 오류'));
         }
     } catch (e) {
-        alert('복제 실행 오류: ' + e.message);
+        alert('복제 실행 오류: ' + friendlyError(e));
     }
 }
 
 // Maintenance
 async function runGarbageCollection() {
-    if (!confirm('저장소에서 참조되지 않는 고아 블롭을 정리하고 디스크 공간을 회수하시겠습니까?')) return;
+    if (!confirm('백업 보관함에서 참조되지 않는 쓰지 않는 저장 조각을 정리하고 디스크 공간을 회수하시겠습니까?')) return;
     try {
         const res = await fetchAPI('/api/maintenance/prune', { method: 'POST' });
-        alert(`🧹 정리 완료!\n삭제된 고아 블롭: ${res.deleted_blobs}개\n회수된 용량: ${formatBytes(res.freed_bytes)}`);
+        alert(`🧹 정리 완료!\n삭제된 쓰지 않는 저장 조각: ${res.deleted_blobs}개\n회수된 용량: ${formatBytes(res.freed_bytes)}`);
         await loadDashboard();
     } catch (e) {
-        alert('정리 실패: ' + e.message);
+        alert('정리 실패: ' + friendlyError(e));
     }
 }
 

@@ -1,5 +1,5 @@
 // =========================================================================
-// [백업시스템] 스냅샷 관리, 파일 탐색기(Explorer), 복원(Restore) & 실시간 로그
+// [백업시스템] 백업 시점 관리, 파일 탐색기(Explorer), 되돌리기(Restore) & 실시간 로그
 // =========================================================================
 
 async function loadSnapshots() {
@@ -16,7 +16,7 @@ function renderSnapshotsTable() {
     if (!tbody) return;
 
     if (!state.snapshots || state.snapshots.length === 0) {
-        tbody.innerHTML = `<tr><td colspan="7" class="text-center py-10 text-slate-500">백업 스냅샷이 존재하지 않습니다.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="text-center py-10 text-slate-500">백업 백업 시점이 존재하지 않습니다.</td></tr>`;
         return;
     }
 
@@ -34,18 +34,18 @@ function renderSnapshotsTable() {
                 <td class="py-3 px-4 font-mono text-xs text-blue-400">
                     <div class="flex items-center gap-1.5 flex-wrap">
                         <span>${s.id}</span>
-                        ${isVerified ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-semibold" title="무결성 검증 완료">✅ 검증됨</span>' : ''}
+                        ${isVerified ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800 font-semibold" title="백업 점검 완료">✅ 검증됨</span>' : ''}
                         ${s.vss_enabled ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-purple-950 text-purple-300 border border-purple-800 font-semibold" title="Windows Volume Shadow Copy(VSS) 일관성 백업">VSS</span>' : ''}
-                        ${s.is_local_protected !== false ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-semibold" title="로컬 복원 검증 & WORM 무결성 완료">🛡️ 로컬보호</span>' : ''}
+                        ${s.is_local_protected !== false ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-semibold" title="이 PC 백업이 잠금 상태로 온전한 것을 확인했어요">🛡️ 로컬보호</span>' : ''}
                         ${(() => {
                             if (s.is_offsite_protected || s.offsite_status === 'COMMITTED') {
-                                return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-950 text-blue-400 border border-blue-800 font-semibold" title="3-2-1 원격 저장소 복제 완료">🌐 3-2-1 원격보호</span>';
+                                return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-950 text-blue-400 border border-blue-800 font-semibold" title="다른 장소 보관함에 복사 완료">🌐 다른 장소 보관</span>';
                             } else if (s.offsite_status === 'TRANSFERRING' || s.offsite_status === 'PENDING') {
-                                return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 font-semibold animate-pulse" title="원격 저장소 복제 동기화 진행 중">⏳ 원격동기화</span>';
+                                return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800 font-semibold animate-pulse" title="원격 백업 보관함 복제 동기화 진행 중">⏳ 원격동기화</span>';
                             } else if (s.offsite_status === 'UNSYNCED') {
-                                return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-amber-400 border border-amber-700/60 font-semibold" title="원격 저장소 미동기화 (대기 중)">⏸️ 원격미복제</span>';
+                                return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-amber-400 border border-amber-700/60 font-semibold" title="원격 백업 보관함 미동기화 (대기 중)">⏸️ 원격미복제</span>';
                             } else {
-                                return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-700 font-medium" title="오프사이트 원격 복제 비활성화">로컬전용</span>';
+                                return '<span class="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 border border-slate-700 font-medium" title="다른 장소 보관 원격 복제 비활성화">로컬전용</span>';
                             }
                         })()}
                     </div>
@@ -53,7 +53,7 @@ function renderSnapshotsTable() {
                 <td class="py-3 px-4 font-medium text-slate-200">${profName}</td>
                 <td class="py-3 px-4">
                     <span class="text-[11px] px-2 py-0.5 rounded-full font-medium ${isFull ? 'bg-blue-900/60 text-blue-300 border border-blue-700' : 'bg-emerald-900/60 text-emerald-300 border border-emerald-700'}">
-                        ${isFull ? '전체 (Full)' : '증분 (Incremental)'}
+                        ${isFull ? '전체 (Full)' : '바뀐 것만 (Incremental)'}
                     </span>
                 </td>
                 <td class="py-3 px-4 text-slate-300">${formatDate(isoTime)}</td>
@@ -63,10 +63,10 @@ function renderSnapshotsTable() {
                     <button onclick="inspectSnapshot('${s.id}')" class="p-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 rounded-lg text-xs" title="파일 탐색">
                         <i data-lucide="folder-search" class="w-4 h-4"></i>
                     </button>
-                    <button onclick="openRestoreModal('${s.id}')" class="p-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs" title="시점 복원">
+                    <button onclick="openRestoreModal('${s.id}')" class="p-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs" title="시점 되돌리기">
                         <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
                     </button>
-                    <button onclick="verifySnapshot('${s.id}')" class="p-1.5 ${isVerified ? 'bg-emerald-600/80' : 'bg-emerald-700'} hover:bg-emerald-600 text-white rounded-lg text-xs" title="${isVerified ? '무결성 재검증' : '무결성 검증'}">
+                    <button onclick="verifySnapshot('${s.id}')" class="p-1.5 ${isVerified ? 'bg-emerald-600/80' : 'bg-emerald-700'} hover:bg-emerald-600 text-white rounded-lg text-xs" title="${isVerified ? '온전함 확인 재검증' : '백업 점검'}">
                         <i data-lucide="shield-check" class="w-4 h-4"></i>
                     </button>
                     <button onclick="deleteSnapshot('${s.id}')" class="p-1.5 bg-red-900/60 hover:bg-red-600 text-red-300 hover:text-white rounded-lg text-xs" title="삭제">
@@ -98,13 +98,13 @@ async function inspectSnapshot(snapshotId) {
         const snapData = await fetchAPI(`/api/snapshots/${snapshotId}?include_entries=false`);
         state.selectedSnapshot = snapData;
 
-        document.getElementById('explorer-modal-title').innerText = `스냅샷 파일 탐색: ${snapshotId}`;
+        document.getElementById('explorer-modal-title').innerText = `백업 시점 파일 탐색: ${snapshotId}`;
         const sum = snapData.summary || {};
         const totalFiles = (sum.total_files !== undefined && sum.total_files !== null && sum.total_files > 0) ? sum.total_files : (snapData.total_files || 0);
         const totalBytes = (sum.total_bytes !== undefined && sum.total_bytes !== null && sum.total_bytes > 0) ? sum.total_bytes : (snapData.total_bytes || 0);
         const isoTime = snapData.iso_time || (typeof snapData.created_at === 'string' ? snapData.created_at : '');
         const offBadge = (snapData.is_offsite_protected || snapData.offsite_status === 'COMMITTED')
-            ? '<span class="text-blue-400 font-semibold">🌐 3-2-1 원격보호 완료</span>'
+            ? '<span class="text-blue-400 font-semibold">🌐 다른 장소 보관 완료</span>'
             : ((snapData.offsite_status === 'TRANSFERRING' || snapData.offsite_status === 'PENDING')
                 ? '<span class="text-amber-300 font-semibold animate-pulse">⏳ 원격동기화 중</span>'
                 : (snapData.offsite_status === 'UNSYNCED'
@@ -114,7 +114,7 @@ async function inspectSnapshot(snapshotId) {
             <span>생성 일시: <b>${formatDate(isoTime)}</b></span> · 
             <span>총 파일: <b>${totalFiles}개 (${formatBytes(totalBytes)})</b></span> · 
             <span>신규/수정: <b>${(sum.new_files || 0) + (sum.modified_files || 0)}개</b></span> · 
-            <span>3-2-1 복제: <b>${offBadge}</b></span>
+            <span>다른 장소 복사: <b>${offBadge}</b></span>
         `;
 
         const searchInput = document.getElementById('explorer-search-input');
@@ -123,7 +123,7 @@ async function inspectSnapshot(snapshotId) {
         openModal('explorer-modal');
         await loadExplorerPath('');
     } catch (e) {
-        alert('스냅샷 정보를 불러오지 못했습니다: ' + e.message);
+        alert('백업 시점 정보를 불러오지 못했습니다: ' + friendlyError(e));
     }
 }
 
@@ -146,7 +146,7 @@ async function loadExplorerPath(subpath) {
         state.explorer.items = res.items || [];
         renderExplorerItems();
     } catch (e) {
-        container.innerHTML = `<div class="p-4 text-center text-red-400">오류 발생: ${e.message}</div>`;
+        container.innerHTML = `<div class="p-4 text-center text-red-400">오류 발생: ${friendlyError(e)}</div>`;
     }
 }
 
@@ -239,9 +239,9 @@ function renderExplorerItems() {
                     ${!isDir ? `<span>${formatBytes(item.size)}</span>` : (item.size ? `<span>${formatBytes(item.size)}</span>` : '')}
                     ${!isDir && item.chunk_strategy && item.chunk_strategy !== 'whole_file' ? `<span class="px-1.5 py-0.5 rounded text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono" title="${item.chunk_strategy} 청킹 (${item.chunk_count}개 분할)">🧩 ${item.chunk_strategy.toUpperCase()} (${item.chunk_count}청킹)</span>` : ''}
                     ${!isDir && item.status ? `<span class="px-1.5 py-0.5 rounded text-[10px] ${item.status === 'new' ? 'bg-emerald-950 text-emerald-400' : item.status === 'modified' ? 'bg-amber-950 text-amber-400' : 'bg-slate-800 text-slate-400'}">${item.status}</span>` : ''}
-                    <button type="button" onclick="event.stopPropagation(); openRestoreModal('${state.explorer.snapshotId}', '${itemRelPath}', '${itemName}', '${item.type}')" class="opacity-0 group-hover:opacity-100 px-2.5 py-1 bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white rounded-lg text-[11px] font-medium transition flex items-center gap-1 shadow border border-slate-700 hover:border-blue-500" title="${isDir ? '이 폴더만 복원' : '이 파일만 복원'}">
+                    <button type="button" onclick="event.stopPropagation(); openRestoreModal('${state.explorer.snapshotId}', '${itemRelPath}', '${itemName}', '${item.type}')" class="opacity-0 group-hover:opacity-100 px-2.5 py-1 bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white rounded-lg text-[11px] font-medium transition flex items-center gap-1 shadow border border-slate-700 hover:border-blue-500" title="${isDir ? '이 폴더만 되돌리기' : '이 파일만 되돌리기'}">
                         <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
-                        <span>복원</span>
+                        <span>되돌리기</span>
                     </button>
                 </div>
             </div>
@@ -253,38 +253,38 @@ function renderExplorerItems() {
 }
 
 async function verifySnapshot(snapshotId) {
-    if (!confirm(`스냅샷 [${snapshotId}]의 모든 백업 블롭 무결성을 검증하시겠습니까?`)) return;
+    if (!confirm(`백업 시점 [${snapshotId}]의 모든 백업 저장 조각 온전함 확인을 검증하시겠습니까?`)) return;
     try {
         const res = await fetchAPI('/api/verify/run', {
             method: 'POST',
             body: JSON.stringify({ snapshot_id: snapshotId })
         });
         if (res.success) {
-            alert(`✅ 무결성 검증 성공!\n검사된 블롭 ${res.verified_count}개, 오류 0개. 모든 백업 데이터가 정상입니다.`);
+            alert(`✅ 백업 점검 성공!\n검사된 저장 조각 ${res.verified_count}개, 오류 0개. 모든 백업 데이터가 정상입니다.`);
         } else {
-            alert(`⚠️ 무결성 검증 실패!\n손상된 블롭: ${res.error_count}개 감지됨`);
+            alert(`⚠️ 백업 점검 실패!\n손상된 저장 조각: ${res.error_count}개 감지됨`);
         }
         await loadSnapshots();
     } catch (e) {
-        alert('무결성 검증 중 오류 발생: ' + e.message);
+        alert('백업 점검 중 오류 발생: ' + friendlyError(e));
     }
 }
 
 async function deleteSnapshot(snapshotId) {
-    if (!confirm(`정말로 스냅샷 [${snapshotId}]을 삭제하시겠습니까?\n삭제 후 참조되지 않는 데이터는 정리됩니다.`)) return;
+    if (!confirm(`정말로 백업 시점 [${snapshotId}]을 삭제하시겠습니까?\n삭제 후 참조되지 않는 데이터는 정리됩니다.`)) return;
     try {
         await fetchAPI(`/api/snapshots/${snapshotId}`, { method: 'DELETE' });
         await loadSnapshots();
         await loadDashboard();
     } catch (e) {
-        alert('삭제 실패: ' + e.message);
+        alert('삭제 실패: ' + friendlyError(e));
     }
 }
 
 // Restore Modal Handler
 function openRestoreModal(snapshotId, targetRelPath = null, targetName = null, targetType = null) {
     document.getElementById('restore-snapshot-id').value = snapshotId;
-    document.getElementById('restore-modal-title').innerText = `스냅샷 복원 (${snapshotId})`;
+    document.getElementById('restore-modal-title').innerText = `백업 시점 되돌리기 (${snapshotId})`;
 
     // Check if snapshot is in state
     const snap = (state.snapshots || []).find(s => s.id === snapshotId) || state.selectedSnapshot;
@@ -296,7 +296,7 @@ function openRestoreModal(snapshotId, targetRelPath = null, targetName = null, t
         if (sources.length > 0) {
             sourcesContainer.innerHTML = sources.map(s => `<div class="truncate flex items-center gap-1.5"><i data-lucide="folder" class="w-3 h-3 text-amber-400 shrink-0"></i> ${s}</div>`).join('');
         } else {
-            sourcesContainer.innerHTML = `<div class="text-slate-500">스냅샷에 기록된 원본 경로가 없습니다.</div>`;
+            sourcesContainer.innerHTML = `<div class="text-slate-500">백업 시점에 기록된 원본 경로가 없습니다.</div>`;
         }
     }
 
@@ -310,7 +310,7 @@ function openRestoreModal(snapshotId, targetRelPath = null, targetName = null, t
         if (badgeEl && badgeTextEl) {
             badgeEl.classList.remove('hidden');
             const typeLabel = targetType === 'directory' ? '폴더' : '파일';
-            badgeTextEl.innerText = `선택 ${typeLabel} 복원: [${targetRelPath}]`;
+            badgeTextEl.innerText = `선택 ${typeLabel} 되돌리기: [${targetRelPath}]`;
         }
     } else {
         clearSelectiveRestore();
@@ -356,7 +356,7 @@ function toggleRestoreMode() {
             startBtn.classList.remove('bg-amber-600', 'hover:bg-amber-500');
             startBtn.classList.add('bg-blue-600', 'hover:bg-blue-500');
             const span = startBtn.querySelector('span');
-            if (span) span.innerText = '새 폴더에 복원 시작';
+            if (span) span.innerText = '새 폴더에 되돌리기 시작';
         }
     }
     lucide.createIcons();
@@ -378,7 +378,7 @@ async function startRestore() {
     }
 
     if (!isInplace && !targetDir) {
-        alert('새 폴더 복원 모드에서는 복원할 대상 폴더 경로를 입력해야 합니다.');
+        alert('새 폴더 되돌리기 모드에서는 되돌릴 대상 폴더 경로를 입력해야 합니다.');
         return;
     }
 
@@ -398,7 +398,7 @@ async function startRestore() {
             })
         });
     } catch (e) {
-        alert('복원 시작 실패: ' + e.message);
+        alert('되돌리기 시작 실패: ' + friendlyError(e));
     }
 }
 
@@ -415,16 +415,16 @@ async function triggerQuickBackup() {
             body: JSON.stringify({ profile_id: profId })
         });
     } catch (e) {
-        alert('백업 시작 실패: ' + e.message);
+        alert('백업 시작 실패: ' + friendlyError(e));
     }
 }
 
 async function cancelCurrentTask() {
-    if (!confirm('현재 실행 중인 백업/복원 작업을 취소하시겠습니까?')) return;
+    if (!confirm('현재 실행 중인 백업/되돌리기 작업을 취소하시겠습니까?')) return;
     try {
         await fetchAPI('/api/backup/cancel', { method: 'POST' });
     } catch (e) {
-        alert('취소 요청 실패: ' + e.message);
+        alert('취소 요청 실패: ' + friendlyError(e));
     }
 }
 
@@ -457,7 +457,7 @@ async function pollTaskStatus() {
 
         if (isRunning) {
             runnerStatusEl.className = 'px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-xs font-semibold animate-pulse';
-            runnerStatusEl.innerText = task.type === 'backup' ? '백업 진행 중...' : '복원 진행 중...';
+            runnerStatusEl.innerText = task.type === 'backup' ? '백업 진행 중...' : '되돌리기 진행 중...';
             runnerCancelBtn.classList.remove('hidden');
         } else {
             if (task.error) {
@@ -481,7 +481,7 @@ async function pollTaskStatus() {
         if (task.type === 'backup') {
             runnerStatsText.innerText = `파일: ${progress.processed_files || 0} / ${progress.total_files || 0} (신규: ${progress.new_files || 0}, 수정: ${progress.modified_files || 0}, 동일: ${progress.unmodified_files || 0})`;
         } else if (task.type === 'restore') {
-            runnerStatsText.innerText = `복원: ${progress.restored_files || 0} / ${progress.total_files || 0} 파일 (${formatBytes(progress.restored_bytes)})`;
+            runnerStatsText.innerText = `되돌리기: ${progress.restored_files || 0} / ${progress.total_files || 0} 파일 (${formatBytes(progress.restored_bytes)})`;
         }
 
         // Terminal Logs
@@ -526,7 +526,7 @@ async function runDRDrill(snapshotId = null) {
                 badgeEl.innerText = '✅ 100% 정상 복구 보증 (Bit-Rot 0건)';
             } else {
                 badgeEl.className = 'font-bold text-red-400';
-                badgeEl.innerText = '⚠️ 복구 실패 / 손상 블롭 감지';
+                badgeEl.innerText = '⚠️ 복구 실패 / 손상 저장 조각 감지';
             }
         }
 
@@ -538,7 +538,7 @@ async function runDRDrill(snapshotId = null) {
                         <div class="text-[10px] text-slate-500 font-mono">SHA: ${f.sha256} (${formatBytes(f.size_bytes)})</div>
                     </div>
                     <span class="px-2 py-0.5 rounded text-[10px] font-bold ${f.verified ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-red-500/20 text-red-400'}">
-                        ${f.verified ? '무결성 일치' : '해시 불일치'}
+                        ${f.verified ? '온전함 확인 일치' : '내용이 달라짐'}
                     </span>
                 </div>
             `).join('');
@@ -547,6 +547,6 @@ async function runDRDrill(snapshotId = null) {
         if (window.lucide) window.lucide.createIcons();
         openModal('modal-dr-drill');
     } catch (err) {
-        alert('복구 모의훈련 실행 오류: ' + (err.message || err));
+        alert('복구 모의훈련 실행 오류: ' + friendlyError(err));
     }
 }

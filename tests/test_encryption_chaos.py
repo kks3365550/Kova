@@ -232,7 +232,7 @@ class TestEncryptionChaos(unittest.TestCase):
         ]
         proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         self.assertEqual(proc.returncode, 0, f"CLI execution failed: {proc.stderr}")
-        self.assertIn("복원 작업 완료", proc.stdout)
+        self.assertIn("되돌리기가 끝났어요", proc.stdout)
 
         # 복원 파일 내용 일치 확인
         #

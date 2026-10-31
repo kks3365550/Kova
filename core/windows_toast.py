@@ -110,8 +110,8 @@ def notify_backup_failed(task_name: str, error_msg: str) -> None:
     short_error = error_msg.strip()
     if len(short_error) > 80:
         short_error = short_error[:77] + "..."
-    title = f"🚨 백업 실패: {task_name}"
-    msg = f"백업 중 오류가 발생했습니다: {short_error}\n대시보드에서 진단 로그를 확인하세요."
+    title = f"🚨 백업이 되지 않았어요: {task_name}"
+    msg = f"백업이 끝까지 되지 않았어요. 대시보드를 열어 확인해 주세요.\n(알려드릴 내용: {short_error})"
     send_windows_toast(title, msg, app_id="BackupSystem.Alert", async_call=True)
 
 
@@ -119,9 +119,9 @@ def notify_disk_space_warning(free_gb: float, req_gb: float, drive_path: str = "
     """
     저장소 디스크 여유 공간 부족 시 토스트를 띄웁니다.
     """
-    title = "⚠️ 저장소 디스크 용량 부족"
+    title = "⚠️ 백업 보관 공간이 부족해요"
     target = f" ({drive_path})" if drive_path else ""
-    msg = f"백업 저장 공간{target}이 부족합니다.\n현재 여유: {free_gb:.1f}GB / 필요 공간: {req_gb:.1f}GB"
+    msg = f"백업 보관 공간{target}이 부족해요. 안 쓰는 파일을 지우거나 다른 저장 장치를 연결해 주세요.\n남은 공간 {free_gb:.1f}GB / 필요한 공간 {req_gb:.1f}GB"
     send_windows_toast(title, msg, app_id="BackupSystem.Storage", async_call=True)
 
 
@@ -130,5 +130,5 @@ def notify_backup_success(task_name: str, snapshot_id: str, files_count: int, si
     주요 백업 성공 알림 (필요 시 선택적 호출).
     """
     title = f"✅ 백업 완료: {task_name}"
-    msg = f"스냅샷 {snapshot_id} 생성 완료 ({files_count:,}개 파일, {size_mb:,.1f}MB)"
+    msg = f"백업이 끝났어요. 파일 {files_count:,}개 ({size_mb:,.1f}MB)를 안전하게 저장했어요."
     send_windows_toast(title, msg, app_id="BackupSystem", async_call=True)
