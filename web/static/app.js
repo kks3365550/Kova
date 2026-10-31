@@ -80,6 +80,7 @@ function switchTab(tabId) {
         if (typeof loadMigrationDrives === 'function') loadMigrationDrives();
         if (typeof loadArchiveList === 'function') loadArchiveList();
         if (typeof startArchivePolling === 'function') startArchivePolling();
+        if (typeof loadBitLockerStatus === 'function') loadBitLockerStatus();
     }
 }
 

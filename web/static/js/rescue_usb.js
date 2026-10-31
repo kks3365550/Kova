@@ -384,3 +384,116 @@ function escapeHtml(str) {
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#039;');
 }
+
+
+// ============================================================================
+// BitLocker Status & Recovery Key Management
+// ============================================================================
+let cachedBitLockerData = null;
+
+async function loadBitLockerStatus() {
+    try {
+        const res = await fetch('/api/system/bitlocker-status');
+        const json = await res.json();
+        if (!json.ok || !json.data) return;
+        cachedBitLockerData = json.data;
+
+        const badge = document.getElementById('bitlocker-badge');
+        const statusText = document.getElementById('bitlocker-status-text');
+        const keyPreview = document.getElementById('bitlocker-key-preview');
+
+        if (json.data.is_encrypted) {
+            if (badge) {
+                badge.className = 'inline-block text-[10px] px-2.5 py-0.5 rounded-full bg-amber-950/80 text-amber-300 font-bold border border-amber-600/60 font-mono';
+                badge.innerText = '⚠️ BitLocker 켜짐 (복구키 보관 필수)';
+            }
+            if (statusText) {
+                statusText.className = 'text-amber-400 font-bold';
+                statusText.innerText = json.data.protection_label || '보호 켜짐 (암호화 활성)';
+            }
+            if (keyPreview) {
+                if (json.data.recovery_key) {
+                    const k = json.data.recovery_key;
+                    keyPreview.className = 'text-amber-300 font-bold font-mono tracking-wider';
+                    keyPreview.innerText = k.substring(0, 13) + '-******-******';
+                } else {
+                    keyPreview.className = 'text-amber-400 font-semibold';
+                    keyPreview.innerText = 'Microsoft 계정 확인 필요';
+                }
+            }
+        } else {
+            if (badge) {
+                badge.className = 'inline-block text-[10px] px-2.5 py-0.5 rounded-full bg-emerald-950/80 text-emerald-300 font-bold border border-emerald-600/60 font-mono';
+                badge.innerText = '🟢 BitLocker 꺼짐 (암호화 없음)';
+            }
+            if (statusText) {
+                statusText.className = 'text-emerald-400 font-bold';
+                statusText.innerText = '암호화 안 됨 (WinPE 즉시 복구 가능)';
+            }
+            if (keyPreview) {
+                keyPreview.className = 'text-slate-400 font-mono';
+                keyPreview.innerText = '필요 없음 (잠금 해제)';
+            }
+        }
+    } catch (e) {
+        console.warn('BitLocker 상태 조회 건너뜀:', e);
+    }
+}
+
+async function openBitLockerModal() {
+    openModal('bitlocker-modal');
+    if (!cachedBitLockerData) {
+        await loadBitLockerStatus();
+    }
+    const data = cachedBitLockerData || {};
+    const keyBox = document.getElementById('bitlocker-modal-key');
+    const idBox = document.getElementById('bitlocker-modal-key-id');
+    const guideBox = document.getElementById('bitlocker-modal-guide-text');
+
+    if (keyBox) {
+        if (data.recovery_key) {
+            keyBox.innerText = data.recovery_key;
+        } else {
+            keyBox.innerText = 'Windows 권한 정책으로 직접 키가 조회되지 않습니다.\n아래 마이크로소프트 계정 웹페이지에서 48자리를 즉시 확인하실 수 있습니다.';
+        }
+    }
+    if (idBox) {
+        idBox.innerText = data.key_id ? `(식별자 ID: ${data.key_id})` : '';
+    }
+    if (guideBox) {
+        guideBox.value = data.guide_text || '';
+    }
+    if (window.lucide) lucide.createIcons();
+}
+
+async function saveBitLockerGuideToFile() {
+    try {
+        const res = await fetch('/api/system/bitlocker-save-guide', { method: 'POST' });
+        const json = await res.json();
+        if (json.ok) {
+            if (typeof showToast === 'function') {
+                showToast('바탕화면에 BitLocker 복구키 보관 파일이 저장되었습니다!', 'success');
+            } else {
+                alert(json.message || '저장되었습니다.');
+            }
+        } else {
+            alert('저장 실패: ' + (json.error || '알 수 없는 오류'));
+        }
+    } catch (e) {
+        alert('저장 중 오류가 발생했습니다: ' + e);
+    }
+}
+
+function copyBitLockerKey() {
+    if (cachedBitLockerData && cachedBitLockerData.recovery_key) {
+        navigator.clipboard.writeText(cachedBitLockerData.recovery_key).then(() => {
+            if (typeof showToast === 'function') {
+                showToast('48자리 복구키가 클립보드에 복사되었습니다.', 'info');
+            } else {
+                alert('48자리 복구키가 클립보드에 복사되었습니다.');
+            }
+        });
+    } else {
+        alert('복구키가 직접 조회되지 않았습니다. 마이크로소프트 계정 링크에서 확인하세요.');
+    }
+}

@@ -260,6 +260,12 @@ def create_launchers(target_root: str):
         "echo ======================================================================\r\n"
         "echo.\r\n"
         "set \"USB_ROOT=%~dp0\"\r\n"
+        "if exist \"%USB_ROOT%Drivers\" (\r\n"
+        "    echo [*] Intel VMD 및 스토리지 디스크 드라이버 자동 로드 중...\r\n"
+        "    for /r \"%USB_ROOT%Drivers\" %%%%f in (*.inf) do (\r\n"
+        "        drvload \"%%%%f\" >nul 2>&1\r\n"
+        "    )\r\n"
+        ")\r\n"
         "set \"PY_EXE=%USB_ROOT%Rescue_Tools\\python\\python.exe\"\r\n"
         "if not exist \"%PY_EXE%\" set \"PY_EXE=python.exe\"\r\n"
         "cd /d \"%USB_ROOT%Rescue_Tools\"\r\n"
@@ -328,6 +334,27 @@ def create_launchers(target_root: str):
     )
     with open(os.path.join(target_root, "README_복구안내.txt"), "wb") as f:
         f.write(readme_text.encode("utf-8"))
+
+    # 5. Drivers 폴더 및 VMD/스토리지 드라이버 안내서 생성
+    drivers_dir = os.path.join(target_root, "Drivers")
+    os.makedirs(drivers_dir, exist_ok=True)
+    drivers_readme = (
+        "======================================================================\r\n"
+        "  🛡️ [KOVA 백업시스템] 최신 노트북 Intel VMD / 스토리지 드라이버 폴더\r\n"
+        "======================================================================\r\n"
+        "■ 용도:\r\n"
+        "  인텔 11세대~14세대 최신 노트북/미니PC(갤럭시북, LG그램 등)에서\r\n"
+        "  WinPE 부팅 시 NVMe SSD가 보이지 않는 현상을 방지하기 위해,\r\n"
+        "  부팅 시 이 폴더에 있는 모든 .inf 드라이버를 drvload로 100% 자동 로드합니다.\r\n"
+        "\r\n"
+        "■ 사용 방법:\r\n"
+        "  자신의 PC 제조사(삼성, LG, Dell, Lenovo, ASUS 등) 홈페이지에서\r\n"
+        "  'Intel Rapid Storage Technology (IRST / VMD)' 드라이버를 다운로드하여\r\n"
+        "  압축을 푼 뒤, 이 폴더(Drivers\\)에 넣어두시면 WinPE 부팅 시 자동 인식됩니다.\r\n"
+        "======================================================================\r\n"
+    )
+    with open(os.path.join(drivers_dir, "README_드라이버안내.txt"), "wb") as f:
+        f.write(drivers_readme.encode("utf-8"))
 
 
 def build_rescue_usb(target_drive: str = DEFAULT_TARGET, iso_path: str = DEFAULT_ISO, auto_format: bool = False) -> bool:

@@ -184,6 +184,8 @@ from web.api_migration import router as migration_router
 app.include_router(migration_router)
 from web.api_diagnostic import router as diagnostic_router
 app.include_router(diagnostic_router)
+from web.api_bitlocker import router as bitlocker_router
+app.include_router(bitlocker_router)
 
 # --- Web UI Route ---
 @app.get("/", response_class=HTMLResponse)

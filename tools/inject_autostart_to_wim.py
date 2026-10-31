@@ -63,6 +63,16 @@ goto :end
 
 :launch
 echo [*] 긴급 복구 USB 감지: %FOUND_DRIVE%\\
+
+:: Intel VMD / 스토리지 컨트롤러 드라이버 자동 감지 및 로드 (WinPE drvload)
+if exist "%FOUND_DRIVE%\\Drivers" (
+    echo [*] Intel VMD 및 스토리지 디스크 드라이버 자동 로드 중...
+    for /r "%FOUND_DRIVE%\\Drivers" %%f in (*.inf) do (
+        echo   - 드라이버 로드: %%~nxf
+        drvload "%%f" >nul 2>&1
+    )
+)
+
 echo [*] 복구 콘솔을 즉시 구동합니다...
 echo.
 cd /d "%FOUND_DRIVE%\\"

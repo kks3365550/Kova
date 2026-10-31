@@ -94,6 +94,34 @@ def find_candidate_target_drives(repo_dir: Optional[str] = None) -> List[str]:
     return candidates
 
 
+def check_bitlocker_locked_drives() -> List[str]:
+    """WinPE 및 복구 환경에서 BitLocker로 잠겨 있는 드라이브 문자 탐색"""
+    import subprocess
+    import re
+    locked: List[str] = []
+    if not sys.platform.startswith("win"):
+        return locked
+    try:
+        res = subprocess.run(
+            ["manage-bde.exe", "-status"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5
+        )
+        if res.returncode == 0 and res.stdout:
+            sections = re.split(r'(?:Volume|볼륨)\s+([A-Za-z]:)', res.stdout)
+            for i in range(1, len(sections), 2):
+                vol_letter = sections[i].upper()
+                vol_text = sections[i+1] if i+1 < len(sections) else ""
+                if re.search(r'(Lock Status|잠금\s*상태)\s*:\s*(Locked|잠김)', vol_text, re.IGNORECASE):
+                    locked.append(vol_letter)
+    except Exception:
+        pass
+    return locked
+
+
 def format_bytes(size: int) -> str:
     power = 1024
     n = 0
@@ -664,6 +692,19 @@ def main():
         else:
             print(f" [OK] 전체 {len(manifest.get('entries', []))}개 파일이 모두 온전해요")
         return
+
+    # BitLocker 잠금 드라이브 감지
+    locked_drives = check_bitlocker_locked_drives()
+    if locked_drives:
+        print("\n" + "=" * 65)
+        print("  ⚠️ [주의] BitLocker로 잠겨 있는 드라이브가 감지되었습니다!")
+        for ld in locked_drives:
+            print(f"   - {ld} 드라이브 (BitLocker 잠금 상태)")
+        print("\n  [잠금 해제 방법]")
+        print("  복구 콘솔 창에서 아래 명령어를 실행하여 먼저 잠금을 해제하세요:")
+        for ld in locked_drives:
+            print(f"  manage-bde -unlock {ld} -RecoveryPassword <48자리복구키>")
+        print("=" * 65 + "\n")
 
     target_drives = find_candidate_target_drives(repo)
     if args.restore:
