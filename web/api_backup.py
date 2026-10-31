@@ -30,6 +30,7 @@ from core.restore import RestoreEngine
 from core.storage import BlobStorage
 from core.app_scanner import get_installed_applications
 from core.driver_backup import export_windows_drivers
+from core.system_power import PowerSleepGuard
 
 # 백업이 거부될 때의 예외 타입.
 #
@@ -67,6 +68,9 @@ class RunCustomSelectionBackupRequest(BaseModel):
 
 def _background_custom_backup_task(params: Dict[str, Any]):
     reg_backup_dir = None
+    profile_name = params.get("profile_name", "내 맞춤형 선택 백업")
+    guard = PowerSleepGuard(reason=f"Web Custom Backup ({profile_name})")
+    guard.__enter__()
     try:
         include_drivers = params.get("include_drivers", True)
         selected_projects = params.get("selected_projects", [])
@@ -427,6 +431,10 @@ def _background_custom_backup_task(params: Dict[str, Any]):
             current_task["error"] = str(e)
             current_task["result"] = None
     finally:
+        try:
+            guard.__exit__(None, None, None)
+        except Exception:
+            pass
         if reg_backup_dir and os.path.exists(reg_backup_dir):
             try:
                 import shutil
@@ -459,6 +467,8 @@ def run_custom_selection_backup(req: RunCustomSelectionBackupRequest, background
 
 
 def _background_backup_task(params: Dict[str, Any]):
+    guard = PowerSleepGuard(reason="Web Backup")
+    guard.__enter__()
     try:
         profile_id = params.get("profile_id")
         profile = None
@@ -734,6 +744,10 @@ def _background_backup_task(params: Dict[str, Any]):
                 profile["last_status"] = "failed"
                 ConfigManager.save_profile(profile)
     finally:
+        try:
+            guard.__exit__(None, None, None)
+        except Exception:
+            pass
         with task_lock:
             current_task["running"] = False
 

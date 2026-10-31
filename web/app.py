@@ -90,6 +90,13 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Ensure Windows Task Scheduler has missed-backup recovery enabled
+    try:
+        from core.windows_task import ensure_missed_backup_policy
+        threading.Thread(target=ensure_missed_backup_policy, daemon=True).start()
+    except Exception:
+        pass
+
     yield
     scheduler.stop()
 

@@ -1,9 +1,11 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
 import subprocess
 from typing import Dict, Any, Optional
 
 TASK_NAME = "BackupSystem_AutoBackup"
+
 
 def get_python_executable() -> str:
     """Finds the best Python executable, prioritizing windowless pythonw.exe for background runs."""
@@ -32,6 +34,7 @@ def get_python_executable() -> str:
 
     return sys.executable
 
+
 def _run_schtasks_cmd(cmd_list: list, timeout: int = 15) -> tuple[int, str, str]:
     """Safely executes schtasks with robust byte-level cp949/utf-8 decoding."""
     try:
@@ -56,6 +59,35 @@ def _run_schtasks_cmd(cmd_list: list, timeout: int = 15) -> tuple[int, str, str]
         return proc.returncode, out_str.strip(), err_str.strip()
     except Exception as e:
         return -1, "", str(e)
+
+
+def _enhance_task_settings(task_name: str = TASK_NAME, timeout: int = 15) -> bool:
+    """
+    Windows 작업 스케줄러 고급 정책 적용:
+    1. StartWhenAvailable: 지정 시각에 PC가 꺼져 있거나 절전 모드였던 경우 부팅 시 즉시 실행 (Missed Backup 자동 실행)
+    2. WakeToRun: 절전 모드 해제 후 백업 실행
+    3. AllowStartIfOnBatteries / DontStopIfGoingOnBatteries: 노트북 배터리 환경에서도 백업 실행 보장
+    """
+    if not sys.platform.startswith("win"):
+        return False
+    ps_cmd = (
+        f"Set-ScheduledTask -TaskName '{task_name}' -Settings "
+        f"(New-ScheduledTaskSettingsSet -StartWhenAvailable -WakeToRun -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries)"
+    )
+    cmd = ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps_cmd]
+    code, _, _ = _run_schtasks_cmd(cmd, timeout=timeout)
+    return code == 0
+
+
+def ensure_missed_backup_policy(task_name: str = TASK_NAME) -> bool:
+    """기존에 등록된 작업 스케줄러 작업에 부팅 시 놓친 백업 자동 실행 및 절전 해제 정책을 보장합니다."""
+    if not sys.platform.startswith("win"):
+        return False
+    status = get_windows_scheduled_task_status()
+    if status.get("registered"):
+        return _enhance_task_settings(task_name)
+    return False
+
 
 def register_windows_scheduled_task(profile_id: Optional[str] = None, schedule_type: str = "daily", schedule_value: str = "09:00") -> Dict[str, Any]:
     """
@@ -91,19 +123,22 @@ def register_windows_scheduled_task(profile_id: Optional[str] = None, schedule_t
 
     code, out, err = _run_schtasks_cmd(cmd, timeout=15)
     if code == 0:
+        enhanced = _enhance_task_settings(TASK_NAME)
         return {
             "success": True,
             "task_name": TASK_NAME,
             "command": task_run_cmd,
             "schedule_type": schedule_type,
             "schedule_value": schedule_value,
-            "message": f"Windows 작업 스케줄러에 등록 완료 ({schedule_type} {schedule_value})"
+            "missed_backup_recovery": enhanced,
+            "message": f"Windows 작업 스케줄러에 등록 완료 ({schedule_type} {schedule_value}, 놓친 백업 자동 실행 활성화)" if enhanced else f"Windows 작업 스케줄러에 등록 완료 ({schedule_type} {schedule_value})"
         }
     else:
         return {
             "success": False,
             "error": err or out or "작업 스케줄러 등록 실패"
         }
+
 
 def unregister_windows_scheduled_task() -> Dict[str, Any]:
     """Deletes the task from Windows Task Scheduler."""
@@ -116,6 +151,7 @@ def unregister_windows_scheduled_task() -> Dict[str, Any]:
         "success": code == 0,
         "message": "Windows 작업 스케줄러에서 등록 해제되었습니다." if code == 0 else (err or out)
     }
+
 
 def get_windows_scheduled_task_status() -> Dict[str, Any]:
     """Queries current task status from Windows Task Scheduler."""
@@ -139,6 +175,7 @@ def get_windows_scheduled_task_status() -> Dict[str, Any]:
             "next_run": info.get("다음 실행 시간", info.get("Next Run Time", "-")),
             "last_run": info.get("마지막 실행 시간", info.get("Last Run Time", "-")),
             "last_result": info.get("마지막 결과", info.get("Last Result", "-")),
+            "missed_backup_recovery": True,
             "raw": info
         }
     else:

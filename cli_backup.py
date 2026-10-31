@@ -6,6 +6,7 @@ import datetime
 
 from core.config import ConfigManager
 from core.snapshot import SnapshotEngine
+from core.system_power import PowerSleepGuard
 
 # NOTE: export_windows_drivers / collect_full_app_package 는 현재 미사용(pyflakes).
 # 제거하지 않는 이유: 웹 UI(app.py:688)는 드라이버를 .inf로 '추출'하지만,
@@ -147,37 +148,38 @@ def run_cli_backup(profile_id: str = None):
     _say(f" -> 대상 경로 수: {len(sources)}개")
     _say(f" -> 백업 저장소: {repo_dir}")
 
-    # 2. Run backup
+    # 2. Run backup with PowerSleepGuard to prevent Windows sleep during backup
     try:
-        manifest = SnapshotEngine.create_snapshot(
-            repo_dir=repo_dir,
-            sources=sources,
-            profile_id=prof_id,
-            profile_name=profile_name,
-            exclude_patterns=excludes,
-            compress_level=compress
-        )
+        with PowerSleepGuard(reason=f"CLI Scheduled Backup ({profile_name})"):
+            manifest = SnapshotEngine.create_snapshot(
+                repo_dir=repo_dir,
+                sources=sources,
+                profile_id=prof_id,
+                profile_name=profile_name,
+                exclude_patterns=excludes,
+                compress_level=compress
+            )
 
-        # 3. Prune old snapshots
-        try:
-            pruned = SnapshotEngine.prune_snapshots(repo_dir, retention_count, retention_days, authorized=True)
-            _say(f"[보존 정책] 만료된 스냅샷 {len(pruned)}개 정리 완료")
-        except Exception as e_prune:
-            # 백업은 성공했지만 정리 실패는 데이터 증가로 이어진다 -> 경고로 남긴다
-            _warn(f"[보존 정책] 정리 실패/중단: {e_prune}")
-            log.warning("보존 정책 정리 실패 상세", exc_info=True)
+            # 3. Prune old snapshots
+            try:
+                pruned = SnapshotEngine.prune_snapshots(repo_dir, retention_count, retention_days, authorized=True)
+                _say(f"[보존 정책] 만료된 스냅샷 {len(pruned)}개 정리 완료")
+            except Exception as e_prune:
+                # 백업은 성공했지만 정리 실패는 데이터 증가로 이어진다 -> 경고로 남긴다
+                _warn(f"[보존 정책] 정리 실패/중단: {e_prune}")
+                log.warning("보존 정책 정리 실패 상세", exc_info=True)
 
-        # 4. Update profile last run time
-        profile["last_run"] = time.time()
-        profile["last_status"] = "success"
-        profile["last_snapshot_id"] = manifest["id"]
-        ConfigManager.save_profile(profile)
+            # 4. Update profile last run time
+            profile["last_run"] = time.time()
+            profile["last_status"] = "success"
+            profile["last_snapshot_id"] = manifest["id"]
+            ConfigManager.save_profile(profile)
 
-        # 5. Offsite Replication (2차 이중화 - 백업 성공 후에만 수행)
-        _run_offsite_replication(repo_dir, profile)
+            # 5. Offsite Replication (2차 이중화 - 백업 성공 후에만 수행)
+            _run_offsite_replication(repo_dir, profile)
 
-        _say("=== 백업 프로세스 정상 종료 (메모리 완전 회수) ===")
-        return 0
+            _say("=== 백업 프로세스 정상 종료 (메모리 완전 회수) ===")
+            return 0
 
     except Exception as e:
         log.error("백업 실행 실패: %s", e, exc_info=True)

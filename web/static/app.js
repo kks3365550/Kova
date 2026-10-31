@@ -1447,6 +1447,218 @@ async function shutdownServer() {
     }
 }
 
+
+// --- Universal Toast Notification ---
+function showToast(message, type = 'info') {
+    let toast = document.getElementById('app-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'app-toast';
+        toast.className = 'fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-2xl transition-all duration-300 transform translate-y-10 opacity-0 pointer-events-none flex items-center gap-2 border';
+        document.body.appendChild(toast);
+    }
+    const bgMap = {
+        success: 'bg-emerald-950 border-emerald-500/50 text-emerald-300',
+        error: 'bg-red-950 border-red-500/50 text-red-300',
+        warning: 'bg-amber-950 border-amber-500/50 text-amber-300',
+        info: 'bg-zinc-900 border-zinc-700 text-zinc-200'
+    };
+    toast.className = `fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-2xl transition-all duration-300 transform flex items-center gap-2 border ${bgMap[type] || bgMap.info}`;
+    toast.textContent = message;
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateY(10px)';
+    }, 3500);
+}
+
+// --- Software Auto-Update Client Logic ---
+let latestUpdateInfo = null;
+
+async function checkForSoftwareUpdate(forceCheck = false, showToastIfLatest = false) {
+    const btnCheck = document.getElementById('btn-check-update');
+    if (btnCheck && forceCheck) {
+        btnCheck.disabled = true;
+        btnCheck.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> 확인 중...`;
+        if (window.lucide) lucide.createIcons();
+    }
+
+    try {
+        const resp = await fetch(`/api/update/status?force_check=${forceCheck ? 'true' : 'false'}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        latestUpdateInfo = data;
+
+        const headerBadge = document.getElementById('header-update-badge');
+        const headerText = document.getElementById('header-update-text');
+        const settingsDot = document.getElementById('settings-update-status-dot');
+        const settingsText = document.getElementById('settings-update-status-text');
+        const settingsTargetVer = document.getElementById('settings-update-target-version');
+        const btnApply = document.getElementById('btn-apply-update');
+
+        if (data && data.update_available) {
+            // Update available!
+            if (headerBadge) {
+                headerBadge.classList.remove('hidden');
+                headerBadge.classList.add('flex');
+                if (headerText) headerText.textContent = `v${data.latest_version} 업데이트`;
+            }
+            if (settingsDot) {
+                settingsDot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse';
+            }
+            if (settingsText) {
+                settingsText.className = 'text-amber-300 font-medium';
+                settingsText.textContent = `새 버전 (v${data.latest_version}) 업데이트가 준비되었습니다!`;
+            }
+            if (settingsTargetVer) {
+                settingsTargetVer.textContent = `최신: v${data.latest_version}`;
+            }
+            if (btnApply) {
+                btnApply.disabled = false;
+                btnApply.classList.remove('opacity-40', 'cursor-not-allowed');
+                btnApply.classList.add('animate-pulse');
+            }
+            updateModalUI(data);
+        } else {
+            // Up to date
+            if (headerBadge) {
+                headerBadge.classList.remove('flex');
+                headerBadge.classList.add('hidden');
+            }
+            if (settingsDot) {
+                settingsDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+            }
+            if (settingsText) {
+                settingsText.className = 'text-zinc-300 font-medium';
+                settingsText.textContent = '현재 최신 버전을 안전하게 사용 중입니다.';
+            }
+            if (settingsTargetVer) {
+                settingsTargetVer.textContent = data.current_version ? `v${data.current_version}` : '';
+            }
+            if (btnApply) {
+                btnApply.disabled = true;
+                btnApply.classList.add('opacity-40', 'cursor-not-allowed');
+                btnApply.classList.remove('animate-pulse');
+            }
+            if (showToastIfLatest) {
+                showToast(`현재 최신 버전(v${data.current_version || '최신'})입니다.`, 'info');
+            }
+        }
+    } catch (e) {
+        console.warn('Update check failed:', e);
+        if (showToastIfLatest) {
+            showToast('업데이트 확인 실패: 네트워크 상태를 확인하세요.', 'error');
+        }
+    } finally {
+        if (btnCheck && forceCheck) {
+            btnCheck.disabled = false;
+            btnCheck.innerHTML = `<i data-lucide="search" class="w-3.5 h-3.5 text-zinc-400"></i> 새 버전 확인`;
+            if (window.lucide) lucide.createIcons();
+        }
+    }
+}
+
+function updateModalUI(info) {
+    if (!info) return;
+    const curElem = document.getElementById('update-modal-current-ver');
+    const targetElem = document.getElementById('update-modal-target-ver');
+    const changelogElem = document.getElementById('update-modal-changelog');
+    const installerLink = document.getElementById('update-modal-installer-link');
+
+    if (curElem && info.current_version) curElem.textContent = `v${info.current_version}`;
+    if (targetElem && info.latest_version) targetElem.textContent = `v${info.latest_version}`;
+    if (changelogElem) {
+        changelogElem.textContent = info.changelog || '주요 보안 패치 및 안정성 향상, 최신 백업 엔진 최적화가 적용되었습니다.';
+    }
+    if (installerLink && info.installer_download_url) {
+        installerLink.href = info.installer_download_url;
+    }
+}
+
+function openSoftwareUpdateModal() {
+    const modal = document.getElementById('software-update-modal');
+    if (!modal) return;
+    if (latestUpdateInfo) {
+        updateModalUI(latestUpdateInfo);
+    }
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    if (window.lucide) lucide.createIcons();
+}
+
+function closeSoftwareUpdateModal() {
+    const modal = document.getElementById('software-update-modal');
+    if (modal) {
+        modal.classList.remove('flex');
+        modal.classList.add('hidden');
+    }
+}
+
+async function applySoftwareUpdate() {
+    const btnModalApply = document.getElementById('btn-modal-apply-update');
+    const progressBox = document.getElementById('update-modal-progress-box');
+    const progressText = document.getElementById('update-modal-progress-text');
+
+    if (progressBox) progressBox.classList.remove('hidden');
+    if (btnModalApply) {
+        btnModalApply.disabled = true;
+        btnModalApply.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> 업데이트 진행 중...`;
+    }
+    if (window.lucide) lucide.createIcons();
+
+    try {
+        const resp = await fetch('/api/update/apply', { method: 'POST' });
+        const res = await resp.json();
+        if (!resp.ok || !res.success) {
+            throw new Error(res.message || '업데이트 적용 요청 실패');
+        }
+
+        if (progressText) {
+            progressText.textContent = '업데이트 패키지 교체 및 서비스 재시작 중입니다. 잠시 후 자동 새로고침됩니다...';
+        }
+        showToast('자동 업데이트가 시작되었습니다. 재시작 후 자동 재접속됩니다.', 'success');
+
+        // Poll server health until it restarts and comes back online
+        let pollCount = 0;
+        const maxPoll = 45; // 90 seconds
+        const pollInterval = setInterval(async () => {
+            pollCount++;
+            try {
+                const health = await fetch('/api/system/storage-health', { cache: 'no-store' });
+                if (health.ok && pollCount > 3) {
+                    clearInterval(pollInterval);
+                    if (progressText) progressText.textContent = '업데이트 완료! 페이지를 새로고침합니다...';
+                    setTimeout(() => {
+                        window.location.reload(true);
+                    }, 1200);
+                }
+            } catch (err) {
+                // Expected while server is restarting
+                if (progressText) {
+                    progressText.textContent = `서비스 재시작 대기 중... (${pollCount}초)`;
+                }
+            }
+            if (pollCount >= maxPoll) {
+                clearInterval(pollInterval);
+                if (progressText) {
+                    progressText.textContent = '재시작 시간이 지연되고 있습니다. 수동으로 새로고침(F5) 해주세요.';
+                }
+            }
+        }, 2000);
+
+    } catch (err) {
+        console.error('Update apply error:', err);
+        showToast(`업데이트 실패: ${err.message}`, 'error');
+        if (progressBox) progressBox.classList.add('hidden');
+        if (btnModalApply) {
+            btnModalApply.disabled = false;
+            btnModalApply.innerHTML = `<i data-lucide="zap" class="w-3.5 h-3.5 fill-current"></i> 다시 시도`;
+        }
+        if (window.lucide) lucide.createIcons();
+    }
+}
+
 // Init
 document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
@@ -1467,4 +1679,9 @@ document.addEventListener('DOMContentLoaded', () => {
     state.pollInterval = setInterval(() => {
         pollTaskStatus();
     }, 1000);
+
+    // Software auto-update silent background check
+    setTimeout(() => {
+        checkForSoftwareUpdate(false, false);
+    }, 3000);
 });
