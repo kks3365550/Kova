@@ -10,13 +10,18 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# 1. 관리자 권한 확인 및 자동 승격
+# 1. 관리자 권한 확인 및 자동 승격 (-NoExit 로 창 유지)
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Write-Host "[*] Hyper-V 제어를 위해 관리자 권한으로 승격합니다..." -ForegroundColor Yellow
-    Start-Process powershell.exe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -SourceDrive `"$SourceDrive`" -VmName `"$VmName`""
+    $absScript = "C:\Users\kksjmj\Desktop\ai\백업시스템\tools\launch_usb_vm.ps1"
+    $parentDir = "C:\Users\kksjmj\Desktop\ai\백업시스템"
+    Start-Process powershell.exe -Verb RunAs -WorkingDirectory $parentDir -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$absScript`" -SourceDrive `"$SourceDrive`" -VmName `"$VmName`""
     exit
 }
+
+$transcriptPath = "C:\Users\kksjmj\Desktop\ai\백업시스템\logs\vm_launch_latest.log"
+try { Start-Transcript -Path $transcriptPath -Force } catch {}
 
 Import-Module Hyper-V -ErrorAction Stop
 
@@ -28,7 +33,7 @@ function Write-Step {
 
 try {
     Write-Host "============================================================" -ForegroundColor Green
-    Write-Host "  [백업시스템] Hyper-V VHDX 1:1 미러링 부팅 검증기" -ForegroundColor Green
+    Write-Host "  🛡️ [백업시스템] Hyper-V VHDX 1:1 미러링 부팅 검증기" -ForegroundColor Green
     Write-Host "============================================================" -ForegroundColor Green
 
     # 원본 드라이브 확인 (G: 또는 RESCUE_DR 라벨 탐색)
@@ -107,7 +112,7 @@ try {
         "/W:1",
         "/MT:8",
         "/NP",
-        "/XD", "System Volume Information", "$RECYCLE.BIN",
+        "/XD", "System Volume Information", '$RECYCLE.BIN',
         "/LOG:$robocopyLog"
     )
     $proc = Start-Process "robocopy.exe" -ArgumentList $copyArgs -Wait -PassThru -NoNewWindow
@@ -140,9 +145,9 @@ try {
     Start-Process "vmconnect.exe" -ArgumentList "localhost", $VmName
 
     Write-Host "============================================================" -ForegroundColor Green
-    Write-Host "  가상머신이 실행되었습니다!" -ForegroundColor Green
-    Write-Host "  잠시 후 가상머신 화면에서 Windows RE 로드 및" -ForegroundColor Yellow
-    Write-Host "  '0초 긴급 복구 콘솔'이 자동 실행되는지 확인하세요." -ForegroundColor Yellow
+    Write-Host "  🎉 가상머신이 성공적으로 실행되었습니다!" -ForegroundColor Green
+    Write-Host "  💡 잠시 후 가상머신 화면에서 Windows RE 로드 및" -ForegroundColor Yellow
+    Write-Host "     '0초 긴급 복구 콘솔'이 자동 실행되는지 확인하세요." -ForegroundColor Yellow
     Write-Host "============================================================" -ForegroundColor Green
 } catch {
     Write-Host "[!] 오류 발생: $_" -ForegroundColor Red
@@ -150,4 +155,6 @@ try {
         Dismount-VHD -Path $vhdxPath -ErrorAction SilentlyContinue
     }
     throw $_
+} finally {
+    try { Stop-Transcript } catch {}
 }
