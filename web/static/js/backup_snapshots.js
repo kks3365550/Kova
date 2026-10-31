@@ -555,3 +555,219 @@ async function runDRDrill(snapshotId = null) {
         alert('복구 모의훈련 실행 오류: ' + friendlyError(err));
     }
 }
+// =========================================================================
+// [원클릭 파일 되돌리기] 타임머신 검색 & 시점별 빠른 복원 마법사
+// =========================================================================
+let fileSearchDebounceTimer = null;
+let currentSearchQuery = '';
+
+function _escapeHtmlSnap(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+function onSearchFileRestoreInput() {
+    clearTimeout(fileSearchDebounceTimer);
+    const q = document.getElementById('file-restore-search-input')?.value?.trim();
+    if (!q || q.length < 2) {
+        const resEl = document.getElementById('file-restore-search-results');
+        const statusEl = document.getElementById('file-search-status');
+        if (resEl) {
+            resEl.classList.add('hidden');
+            resEl.innerHTML = '';
+        }
+        if (statusEl) statusEl.innerHTML = '';
+        return;
+    }
+    fileSearchDebounceTimer = setTimeout(() => {
+        executeFileSearch();
+    }, 250);
+}
+
+async function executeFileSearch() {
+    const inputEl = document.getElementById('file-restore-search-input');
+    const q = inputEl?.value?.trim();
+    if (!q || q.length < 2) return;
+
+    currentSearchQuery = q;
+    const statusEl = document.getElementById('file-search-status');
+    const resEl = document.getElementById('file-restore-search-results');
+    if (statusEl) {
+        statusEl.innerHTML = `<span class="text-blue-400 flex items-center gap-1"><i data-lucide="loader" class="w-3.5 h-3.5 animate-spin"></i> 백업 검색 중...</span>`;
+        if (window.lucide) lucide.createIcons();
+    }
+
+    try {
+        const results = await fetchAPI('/api/snapshots/search-files?q=' + encodeURIComponent(q));
+        renderFileSearchResults(results, q);
+    } catch (e) {
+        console.error('File search failed:', e);
+        if (statusEl) statusEl.innerHTML = `<span class="text-rose-400">검색 실패</span>`;
+    }
+}
+
+function renderFileSearchResults(results, query) {
+    const resEl = document.getElementById('file-restore-search-results');
+    const statusEl = document.getElementById('file-search-status');
+    if (!resEl) return;
+
+    resEl.classList.remove('hidden');
+
+    if (!results || results.length === 0) {
+        if (statusEl) statusEl.innerHTML = `<span class="text-slate-400">결과 없음</span>`;
+        resEl.innerHTML = `
+            <div class="py-6 text-center text-slate-400 text-xs">
+                <i data-lucide="info" class="w-6 h-6 mx-auto mb-2 text-slate-500"></i>
+                <p class="font-medium text-slate-300">'${_escapeHtmlSnap(query)}' 일치하는 파일이 백업에 없습니다.</p>
+                <p class="text-slate-500 mt-1">철자를 확인하거나 다른 단어/확장자로 다시 검색해보세요.</p>
+            </div>
+        `;
+        if (window.lucide) lucide.createIcons();
+        return;
+    }
+
+    if (statusEl) {
+        statusEl.innerHTML = `<span class="text-emerald-400 font-semibold">${results.length}개 파일 발견</span>`;
+    }
+
+    resEl.innerHTML = results.map((f, idx) => {
+        const cardId = `file-card-${idx}`;
+        const versionsId = `file-versions-${idx}`;
+        const hasPastVersions = f.version_count > 1;
+
+        // 과거 버전 리스트 HTML
+        const pastVersionsHtml = (f.versions || []).slice(1).map((v, vIdx) => {
+            return `
+                <div class="flex items-center justify-between p-2 rounded-xl bg-slate-900/60 border border-slate-800 text-xs text-slate-300">
+                    <div class="flex items-center gap-2">
+                        <i data-lucide="clock" class="w-3.5 h-3.5 text-slate-500"></i>
+                        <span class="font-mono text-slate-200">${v.snapshot_time ? v.snapshot_time.replace('T', ' ').slice(0, 19) : v.snapshot_id}</span>
+                        <span class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-slate-400 font-mono">${v.size_formatted}</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                        <button onclick="quickRestoreSingleFile('${v.snapshot_id}', '${encodeURIComponent(v.rel_path)}', '${encodeURIComponent(f.filename)}', 'desktop', '${encodeURIComponent(v.repo_dir || '')}')"
+                                class="px-2 py-1 bg-blue-600/80 hover:bg-blue-600 text-white rounded-lg text-[11px] font-semibold transition flex items-center gap-1 shadow-sm">
+                            <i data-lucide="monitor" class="w-3 h-3"></i> 바탕화면 복원
+                        </button>
+                        <button onclick="quickRestoreSingleFile('${v.snapshot_id}', '${encodeURIComponent(v.rel_path)}', '${encodeURIComponent(f.filename)}', 'inplace', '${encodeURIComponent(v.repo_dir || '')}')"
+                                class="px-2 py-1 bg-slate-800 hover:bg-amber-600/30 text-amber-300 border border-amber-600/40 rounded-lg text-[11px] font-semibold transition flex items-center gap-1">
+                            <i data-lucide="rotate-ccw" class="w-3 h-3"></i> 원래 위치 복원
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        return `
+            <div id="${cardId}" class="p-3 rounded-xl bg-slate-900/70 border border-slate-800 hover:border-slate-700/80 transition space-y-2">
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div class="flex items-start gap-2.5 min-w-0">
+                        <div class="p-1.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-blue-400 mt-0.5 shrink-0">
+                            <i data-lucide="file-text" class="w-4 h-4"></i>
+                        </div>
+                        <div class="min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="font-bold text-sm text-slate-100 truncate">${_escapeHtmlSnap(f.filename)}</span>
+                                <span class="px-2 py-0.5 rounded-full bg-blue-950/70 border border-blue-700/50 text-[11px] text-blue-300 font-mono">
+                                    ${f.version_count}개 시점 버전
+                                </span>
+                                <span class="text-xs text-slate-400 font-mono">
+                                    최신: ${f.latest_size_formatted} (${f.latest_time ? f.latest_time.replace('T', ' ').slice(0, 19) : '-'})
+                                </span>
+                            </div>
+                            <p class="text-[11px] text-slate-500 truncate font-mono mt-0.5" title="${_escapeHtmlSnap(f.path)}">
+                                ${_escapeHtmlSnap(f.path)}
+                            </p>
+                        </div>
+                    </div>
+                    <!-- 최신 버전 원클릭 복원 버튼 그룹 -->
+                    <div class="flex items-center gap-1.5 shrink-0 self-end sm:self-center">
+                        <button onclick="quickRestoreSingleFile('${f.latest_snapshot_id}', '${encodeURIComponent(f.rel_path)}', '${encodeURIComponent(f.filename)}', 'desktop')"
+                                class="px-2.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition flex items-center gap-1 shadow-md shadow-blue-900/30">
+                            <i data-lucide="monitor" class="w-3.5 h-3.5"></i>
+                            <span>바탕화면에 복원</span>
+                        </button>
+                        <button onclick="quickRestoreSingleFile('${f.latest_snapshot_id}', '${encodeURIComponent(f.rel_path)}', '${encodeURIComponent(f.filename)}', 'inplace')"
+                                class="px-2.5 py-1.5 bg-slate-800 hover:bg-amber-600/30 text-amber-300 hover:text-amber-200 border border-amber-600/40 rounded-xl text-xs font-semibold transition flex items-center gap-1">
+                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+                            <span>원래 위치에 복원</span>
+                        </button>
+                    </div>
+                </div>
+
+                ${hasPastVersions ? `
+                    <div class="pt-1.5 border-t border-slate-800/80">
+                        <button onclick="toggleFileVersions('${versionsId}', this)"
+                                class="text-xs text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1 transition">
+                            <i data-lucide="chevron-down" class="w-3.5 h-3.5 transition-transform duration-200"></i>
+                            <span>과거 시점 (${f.version_count - 1}개) 버전 펼치기</span>
+                        </button>
+                        <div id="${versionsId}" class="hidden mt-2 space-y-1.5 pl-4 border-l-2 border-blue-500/30">
+                            ${pastVersionsHtml}
+                        </div>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }).join('');
+
+    if (window.lucide) lucide.createIcons();
+}
+
+function toggleFileVersions(versionsId, btn) {
+    const el = document.getElementById(versionsId);
+    if (!el) return;
+    const isHidden = el.classList.contains('hidden');
+    const labelSpan = btn ? btn.querySelector('span') : null;
+    const iconEl = btn ? btn.querySelector('i') : null;
+
+    if (isHidden) {
+        el.classList.remove('hidden');
+        if (labelSpan) labelSpan.innerText = '과거 시점 버전 접기';
+        if (iconEl) iconEl.classList.add('rotate-180');
+    } else {
+        el.classList.add('hidden');
+        if (labelSpan) labelSpan.innerText = '과거 시점 버전 펼치기';
+        if (iconEl) iconEl.classList.remove('rotate-180');
+    }
+}
+
+async function quickRestoreSingleFile(snapshotId, encodedRelPath, encodedFilename, mode, repoDir = '') {
+    const relPath = decodeURIComponent(encodedRelPath);
+    const fileName = decodeURIComponent(encodedFilename);
+    const decodedRepoDir = repoDir ? decodeURIComponent(repoDir) : null;
+
+    if (mode === 'inplace') {
+        const confirmed = confirm(
+            `[원래 위치에 복원]\n\n'${fileName}' 파일을 백업 당시 원래 위치로 되돌리시겠습니까?\n\n※ 기존 파일이 존재할 경우 이 백업 시점의 파일로 덮어쓰여 교체됩니다.`
+        );
+        if (!confirmed) return;
+    }
+
+    try {
+        switchTab('runner');
+        if (typeof appendTaskLog === 'function') {
+            appendTaskLog(`[원클릭 파일 되돌리기] '${fileName}' 복구 작업 시작 (${mode === 'desktop' ? '바탕화면 복원 폴더' : '원래 위치'})`);
+        }
+
+        await fetchAPI('/api/restore/run', {
+            method: 'POST',
+            body: JSON.stringify({
+                snapshot_id: snapshotId,
+                target_dir: mode === 'desktop' ? '@desktop' : null,
+                overwrite: true,
+                in_place: (mode === 'inplace'),
+                selected_rel_paths: [relPath],
+                repo_dir: decodedRepoDir
+            })
+        });
+    } catch (e) {
+        console.error('Quick restore failed:', e);
+        alert('복구 요청 중 오류가 발생했습니다: ' + (e.message || e));
+    }
+}

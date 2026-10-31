@@ -1079,6 +1079,48 @@
                     </div>
                 </div>
 
+                <!-- 원클릭 파일 되돌리기 (타임머신 검색 마법사) -->
+                <div class="p-4 rounded-2xl glass-card border border-blue-500/30 bg-gradient-to-r from-blue-950/20 via-slate-900/60 to-indigo-950/20 shadow-lg space-y-3">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div class="flex items-center gap-2.5">
+                            <span class="p-2 bg-blue-500/10 border border-blue-500/30 rounded-xl text-blue-400">
+                                <i data-lucide="search" class="w-5 h-5"></i>
+                            </span>
+                            <div>
+                                <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
+                                    <span>원클릭 파일 되돌리기 (타임머신 검색)</span>
+                                    <span class="text-[10px] px-2 py-0.5 bg-blue-900/60 text-blue-300 rounded-full border border-blue-600/40 font-mono">Instant Search</span>
+                                </h3>
+                                <p class="text-xs text-slate-400">되돌리고 싶은 파일명이나 확장자를 검색하세요. 백업 시점별 과거 버전을 찾아 바탕화면이나 원래 위치로 즉시 되돌려 드립니다.</p>
+                            </div>
+                        </div>
+                        <div id="file-search-status" class="text-xs text-slate-400 font-mono"></div>
+                    </div>
+
+                    <div class="relative">
+                        <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                            <i data-lucide="file-search" class="w-4 h-4 text-blue-400"></i>
+                        </div>
+                        <input type="text"
+                               id="file-restore-search-input"
+                               placeholder="되돌릴 파일 이름 또는 확장자 검색 (예: 보고서, .xlsx, 사진, family.jpg, Antigravity)"
+                               oninput="onSearchFileRestoreInput()"
+                               onkeydown="if(event.key==='Enter') executeFileSearch()"
+                               class="w-full pl-10 pr-24 py-2.5 bg-slate-900/90 border border-slate-700/80 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm text-slate-100 placeholder-slate-500 rounded-xl outline-none transition font-sans">
+                        <button type="button"
+                                onclick="executeFileSearch()"
+                                class="absolute right-1.5 top-1.5 bottom-1.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1 shadow-sm">
+                            <i data-lucide="search" class="w-3.5 h-3.5"></i>
+                            <span>검색</span>
+                        </button>
+                    </div>
+
+                    <!-- 검색 결과 영역 -->
+                    <div id="file-restore-search-results" class="hidden space-y-2 pt-2 border-t border-slate-800">
+                        <!-- JS 렌더링 -->
+                    </div>
+                </div>
+
                 <div class="rounded-2xl glass-card border border-slate-700/60 overflow-hidden">
                     <div class="overflow-x-auto">
                         <table class="w-full text-left">

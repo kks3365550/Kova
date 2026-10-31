@@ -847,6 +847,11 @@ def _background_restore_task(params: Dict[str, Any]):
     in_place = params.get("in_place", False)
     cancel_evt = current_task["cancel_event"]
 
+    if not in_place and (not target_dir or target_dir in ("@desktop", "desktop")):
+        desktop_dir = os.path.join(os.path.expanduser("~"), "Desktop", f"복원_{time.strftime('%Y%m%d_%H%M%S')}")
+        os.makedirs(desktop_dir, exist_ok=True)
+        target_dir = desktop_dir
+
     # Fix #9: Use _find_snapshot_repo to auto-discover correct repo instead of blindly using first profile
     repo_dir = params.get("repo_dir")
     if not repo_dir or not os.path.exists(repo_dir):

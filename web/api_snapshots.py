@@ -6,9 +6,11 @@ web/api_snapshots.py
 """
 import os
 import re
-from typing import Optional, List
+import threading
+import time
+from typing import Optional, List, Dict, Any, Tuple
 import psutil
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from core.config import ConfigManager
 from core.snapshot import SnapshotEngine
@@ -17,6 +19,28 @@ from web.paths import BASE_DIR
 from web.state import append_task_log
 
 router = APIRouter()
+
+# In-memory index cache for instant file search: snapshot_id -> (file_mtime, rel_map)
+_SEARCH_INDEX_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_SEARCH_CACHE_LOCK = threading.Lock()
+
+
+def _format_bytes(b: int) -> str:
+    if b < 1024:
+        return f"{b} B"
+    elif b < 1024 * 1024:
+        return f"{b / 1024:.1f} KB"
+    elif b < 1024 * 1024 * 1024:
+        return f"{b / (1024 * 1024):.1f} MB"
+    else:
+        return f"{b / (1024 * 1024 * 1024):.2f} GB"
+
+
+def _format_mtime(ts: float) -> str:
+    try:
+        return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts)) if ts else "-"
+    except Exception:
+        return "-" 
 
 
 def _validate_snapshot_id(snapshot_id: str) -> str:
@@ -88,6 +112,136 @@ def _find_snapshot_repo(snapshot_id: str, repo_dir: Optional[str] = None) -> Opt
         if os.path.exists(snap_file):
             return r
     return None
+
+
+@router.get("/api/snapshots/search-files")
+def search_snapshot_files(
+    q: str = Query(..., min_length=1, description="검색할 파일명 또는 경로"),
+    limit: int = Query(50, ge=1, le=200, description="최대 반환 파일 수"),
+    repo_dir: Optional[str] = None,
+    max_snapshots: int = Query(10, ge=1, le=50, description="탐색할 최대 스냅샷 개수")
+):
+    q_clean = q.strip()
+    if len(q_clean) < 2:
+        return []
+    q_lower = q_clean.lower()
+
+    repos = [repo_dir] if repo_dir and os.path.exists(repo_dir) else _get_all_candidate_repos(repo_dir)
+    all_snaps = []
+    seen_ids = set()
+
+    for r in repos:
+        try:
+            snaps = SnapshotEngine.list_snapshots(r)
+        except Exception:
+            snaps = []
+        for s in snaps:
+            sid = s.get("id")
+            if sid and sid not in seen_ids:
+                seen_ids.add(sid)
+                s_copy = s.copy()
+                s_copy["repo_dir"] = r
+                all_snaps.append(s_copy)
+
+    all_snaps.sort(key=lambda x: _parse_timestamp(x.get("created_at")), reverse=True)
+    all_snaps = all_snaps[:max_snapshots]
+
+    grouped: Dict[str, Dict[str, Any]] = {}
+
+    for s in all_snaps:
+        r = s["repo_dir"]
+        sid = s.get("id")
+        if not sid:
+            continue
+        snap_file = os.path.join(r, "snapshots", f"{sid}.json")
+        if not os.path.exists(snap_file):
+            continue
+        try:
+            snap_mtime = os.path.getmtime(snap_file)
+        except OSError:
+            continue
+
+        with _SEARCH_CACHE_LOCK:
+            cached = _SEARCH_INDEX_CACHE.get(sid)
+            if cached and cached[0] == snap_mtime:
+                rel_map = cached[1]
+            else:
+                rel_map = None
+
+        if rel_map is None:
+            try:
+                _, rel_map, _ = SnapshotEngine._load_snapshot_index_fast(r, sid)
+                with _SEARCH_CACHE_LOCK:
+                    while len(_SEARCH_INDEX_CACHE) >= 20:
+                        _SEARCH_INDEX_CACHE.pop(next(iter(_SEARCH_INDEX_CACHE)))
+                    _SEARCH_INDEX_CACHE[sid] = (snap_mtime, rel_map)
+            except Exception:
+                continue
+
+        for norm_k, entry in rel_map.items():
+            rp = entry.get("rel_path", "")
+            filename = os.path.basename(rp)
+            fname_lower = filename.lower()
+
+            score = 0
+            if fname_lower == q_lower:
+                score = 100
+            elif fname_lower.startswith(q_lower):
+                score = 80
+            elif q_lower in fname_lower:
+                score = 60
+            elif q_lower in norm_k:
+                score = 30
+
+            if score == 0:
+                continue
+
+            sr = entry.get("source_root", "")
+            full_path = os.path.join(sr, rp) if sr else rp
+            canonical_key = full_path.replace("\\", "/").lower()
+
+            if canonical_key not in grouped:
+                grouped[canonical_key] = {
+                    "filename": filename or os.path.basename(full_path),
+                    "path": full_path,
+                    "rel_path": rp,
+                    "source_root": sr,
+                    "relevance": score,
+                    "versions": []
+                }
+            else:
+                if score > grouped[canonical_key]["relevance"]:
+                    grouped[canonical_key]["relevance"] = score
+
+            mtime_val = entry.get("mtime", 0)
+            size_val = entry.get("size", 0)
+            grouped[canonical_key]["versions"].append({
+                "snapshot_id": sid,
+                "snapshot_time": s.get("created_at") or s.get("iso_time") or "",
+                "profile_name": s.get("profile_name") or ("선택 백업" if sid.startswith("snap_custom") else "일반 백업"),
+                "size": size_val,
+                "size_formatted": _format_bytes(size_val),
+                "mtime": mtime_val,
+                "mtime_formatted": _format_mtime(mtime_val),
+                "blob_id": entry.get("blob_id") or entry.get("sha256", ""),
+                "repo_dir": r,
+                "rel_path": rp
+            })
+
+    results = list(grouped.values())
+    for item in results:
+        item["versions"].sort(key=lambda v: _parse_timestamp(v.get("snapshot_time")), reverse=True)
+        latest_ver = item["versions"][0]
+        item["latest_snapshot_id"] = latest_ver["snapshot_id"]
+        item["latest_time"] = latest_ver["snapshot_time"]
+        item["latest_size"] = latest_ver["size"]
+        item["latest_size_formatted"] = latest_ver["size_formatted"]
+        item["latest_mtime"] = latest_ver["mtime"]
+        item["latest_mtime_formatted"] = latest_ver["mtime_formatted"]
+        item["version_count"] = len(item["versions"])
+
+    results.sort(key=lambda x: (x["relevance"], x.get("latest_mtime", 0)), reverse=True)
+    return results[:limit]
 
 
 @router.get("/api/snapshots")
