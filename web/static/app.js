@@ -62,6 +62,13 @@ function switchTab(tabId) {
     if (tabId === 'snapshots') loadSnapshots();
     if (tabId === 'dashboard') loadDashboard();
     if (tabId === 'settings') {
+        const anyVisible = ['schedule', 'targets', 'cloud', 'security'].some(sec => {
+            const el = document.getElementById(`settings-sec-${sec}`);
+            return el && !el.classList.contains('hidden');
+        });
+        if (!anyVisible) {
+            switchSettingsSection('schedule');
+        }
         loadProfiles();
         if (typeof loadCustomSelectionData === 'function') loadCustomSelectionData();
         if (typeof loadOffsiteStatus === 'function') loadOffsiteStatus();
@@ -78,8 +85,8 @@ function switchTab(tabId) {
 
 // Settings Sub-Section Switching (targets, schedule, cloud, security)
 function switchSettingsSection(sectionId) {
-    const validSections = ['targets', 'schedule', 'cloud', 'security'];
-    const activeSec = validSections.includes(sectionId) ? sectionId : 'targets';
+    const validSections = ['schedule', 'targets', 'cloud', 'security'];
+    const activeSec = validSections.includes(sectionId) ? sectionId : 'schedule';
 
     validSections.forEach(sec => {
         const secEl = document.getElementById(`settings-sec-${sec}`);

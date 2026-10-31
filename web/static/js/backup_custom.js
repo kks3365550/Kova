@@ -77,9 +77,7 @@ function renderInstalledApps(filterText = '') {
                     </div>
                 </div>
                 <div class="shrink-0 ml-3">
-                    <span class="text-[11px] px-2.5 py-1 rounded-lg font-medium transition ${isChecked ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200'}">
-                        ${isChecked ? '선택됨' : '선택'}
-                    </span>
+                    ${isChecked ? `<span class="text-[11px] px-2 py-0.5 rounded-md font-medium text-blue-400 bg-blue-950/40 border border-blue-800/40 flex items-center gap-1"><i data-lucide="check" class="w-3 h-3"></i> 선택됨</span>` : ''}
                 </div>
             </div>
         `;
