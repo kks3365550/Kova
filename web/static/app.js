@@ -278,6 +278,9 @@ function renderOffsiteStatusWidget() {
 function openOnboardingWizard(force = false) {
     initOnboardingDrives();
     openModal('onboarding-modal');
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
+    }
 }
 
 function initOnboardingDrives() {
@@ -338,20 +341,29 @@ function checkOnboardingWizard() {
     }
 }
 
-async function completeOnboardingWizard() {
+async function completeOnboardingWizard(startImmediate = true) {
     try {
-        const desktopChecked = document.getElementById('onboard-src-desktop')?.checked;
-        const documentsChecked = document.getElementById('onboard-src-documents')?.checked;
-        const repoDir = document.getElementById('onboard-repo-dir')?.value?.trim() || 'C:\\BackupRepository';
+        const desktopChecked = document.getElementById('onboard-src-desktop')?.checked ?? true;
+        const documentsChecked = document.getElementById('onboard-src-documents')?.checked ?? true;
+        const picturesChecked = document.getElementById('onboard-src-pictures')?.checked ?? false;
+        const driversChecked = document.getElementById('onboard-src-drivers')?.checked ?? true;
+        const repoDir = document.getElementById('onboard-repo-dir')?.value?.trim() || 'D:\\BackupRepository';
         const sched = document.getElementById('onboard-schedule-time')?.value || '09:00';
 
         const sources = [];
         if (desktopChecked) sources.push('Desktop');
         if (documentsChecked) sources.push('Documents');
+        if (picturesChecked) sources.push('Pictures');
+
+        if (sources.length === 0 && !driversChecked) {
+            sources.push('Documents');
+        }
 
         const newProfile = {
+            id: 'prof_default',
             name: "내 PC 기본 백업",
-            sources: sources.length > 0 ? sources : ["Desktop"],
+            sources: sources,
+            include_drivers: driversChecked,
             repo_dir: repoDir,
             schedule_type: (sched === 'manual') ? 'manual' : 'daily',
             schedule_value: (sched === 'manual') ? '' : sched,
@@ -370,10 +382,18 @@ async function completeOnboardingWizard() {
 
         localStorage.setItem('onboarding_completed', 'true');
         closeModal('onboarding-modal');
-        alert('🎉 설정이 끝났어요!\n이제 정해진 시간에 자동으로 내 파일을 백업해 드려요.');
         await loadDashboard();
+
+        if (startImmediate) {
+            // Trigger first backup immediately with zero friction
+            if (typeof triggerQuickBackup === 'function') {
+                await triggerQuickBackup();
+            }
+        } else {
+            alert('🎉 설정이 완료되었습니다!\n설정하신 일정에 맞춰 자동으로 백업이 실행됩니다.');
+        }
     } catch (err) {
-        alert('설정을 저장하지 못했어요. ' + friendlyError(err));
+        alert('설정을 저장하지 못했어요: ' + friendlyError(err));
     }
 }
 

@@ -1522,81 +1522,118 @@
         </div>
     </div>
 
-    <!-- MODAL 1.5: First-Run Onboarding Wizard Modal -->
+    <!-- MODAL 1.5: First-Run Onboarding Wizard Modal (3-Click Backup) -->
     <div id="onboarding-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
-        <div class="bg-slate-900 border border-blue-500/40 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden animate-fade-in">
-            <div class="p-5 bg-gradient-to-r from-blue-950/80 to-slate-900 border-b border-slate-800 flex justify-between items-center">
-                <div class="flex items-center gap-2.5">
-                    <div class="w-8 h-8 rounded-lg bg-blue-600/30 border border-blue-500/50 flex items-center justify-center text-blue-400 font-bold">
-                        <i data-lucide="sparkles" class="w-4 h-4 text-blue-400"></i>
+        <div class="bg-zinc-900 border border-blue-500/40 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-fade-in">
+            <!-- Header -->
+            <div class="p-5 bg-gradient-to-r from-blue-950/80 via-indigo-950/60 to-zinc-900 border-b border-zinc-800 flex justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-xl bg-blue-600/30 border border-blue-500/50 flex items-center justify-center text-blue-400 font-bold shadow-inner">
+                        <i data-lucide="sparkles" class="w-5 h-5 text-blue-400"></i>
                     </div>
                     <div>
-                        <h3 class="font-bold text-sm text-slate-100">처음 백업 설정 도우미</h3>
-                        <p class="text-[11px] text-blue-300/80">세 가지만 고르면 자동으로 내 파일을 지켜 드려요</p>
+                        <h3 class="font-bold text-sm text-zinc-100 flex items-center gap-1.5">
+                            처음 백업 설정 도우미
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 font-normal border border-blue-500/30">3클릭 완료</span>
+                        </h3>
+                        <p class="text-[11px] text-blue-300/80 mt-0.5">3가지만 확인하면 내 소중한 파일이 자동으로 안전하게 보호돼요.</p>
                     </div>
                 </div>
-                <button onclick="closeModal('onboarding-modal')" class="text-slate-400 hover:text-slate-200">
+                <button onclick="closeModal('onboarding-modal')" class="text-zinc-400 hover:text-white p-1 rounded-lg transition" title="닫기">
                     <i data-lucide="x" class="w-5 h-5"></i>
                 </button>
             </div>
+
+            <!-- Body -->
             <div class="p-5 space-y-4 text-xs">
-                <!-- Step 1: Backup Sources -->
+                <!-- Step 1: Backup Sources (4 Easy Checkboxes) -->
                 <div>
-                    <label class="block text-slate-300 font-semibold mb-1.5 flex items-center gap-1.5">
+                    <label class="block text-zinc-200 font-bold mb-1.5 flex items-center gap-1.5">
                         <span class="w-4 h-4 rounded-full bg-blue-600 text-[10px] text-white flex items-center justify-center font-bold">1</span>
-                        <span>백업할 폴더 (보통은 그대로 두셔도 돼요)</span>
+                        <span>무엇을 백업할까요? (보통 그대로 두시면 돼요)</span>
                     </label>
-                    <div class="space-y-1.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
-                        <label class="flex items-center gap-2 cursor-pointer hover:text-blue-300 text-slate-300">
-                            <input type="checkbox" id="onboard-src-desktop" checked class="rounded border-slate-700 text-blue-600 focus:ring-0">
-                            <i data-lucide="monitor" class="w-3.5 h-3.5 text-blue-400"></i>
-                            <span>바탕화면 폴더</span>
+                    <div class="grid grid-cols-2 gap-2 bg-zinc-950/70 p-3 rounded-xl border border-zinc-800/80">
+                        <label class="flex items-center gap-2.5 p-2 rounded-lg bg-zinc-900/60 hover:bg-zinc-800/70 cursor-pointer text-zinc-200 transition border border-zinc-800">
+                            <input type="checkbox" id="onboard-src-desktop" checked class="rounded border-zinc-700 bg-zinc-800 text-blue-600 focus:ring-0 w-4 h-4">
+                            <i data-lucide="monitor" class="w-4 h-4 text-blue-400 shrink-0"></i>
+                            <div class="truncate">
+                                <div class="font-medium text-[11px]">바탕화면</div>
+                                <div class="text-[10px] text-zinc-500">자주 쓰는 바로가기·파일</div>
+                            </div>
                         </label>
-                        <label class="flex items-center gap-2 cursor-pointer hover:text-blue-300 text-slate-300">
-                            <input type="checkbox" id="onboard-src-documents" checked class="rounded border-slate-700 text-blue-600 focus:ring-0">
-                            <i data-lucide="file-text" class="w-3.5 h-3.5 text-blue-400"></i>
-                            <span>내 문서 폴더</span>
+                        <label class="flex items-center gap-2.5 p-2 rounded-lg bg-zinc-900/60 hover:bg-zinc-800/70 cursor-pointer text-zinc-200 transition border border-zinc-800">
+                            <input type="checkbox" id="onboard-src-documents" checked class="rounded border-zinc-700 bg-zinc-800 text-blue-600 focus:ring-0 w-4 h-4">
+                            <i data-lucide="file-text" class="w-4 h-4 text-amber-400 shrink-0"></i>
+                            <div class="truncate">
+                                <div class="font-medium text-[11px]">내 문서</div>
+                                <div class="text-[10px] text-zinc-500">한글, 엑셀, 보고서</div>
+                            </div>
+                        </label>
+                        <label class="flex items-center gap-2.5 p-2 rounded-lg bg-zinc-900/60 hover:bg-zinc-800/70 cursor-pointer text-zinc-200 transition border border-zinc-800">
+                            <input type="checkbox" id="onboard-src-pictures" checked class="rounded border-zinc-700 bg-zinc-800 text-blue-600 focus:ring-0 w-4 h-4">
+                            <i data-lucide="image" class="w-4 h-4 text-purple-400 shrink-0"></i>
+                            <div class="truncate">
+                                <div class="font-medium text-[11px]">사진 폴더</div>
+                                <div class="text-[10px] text-zinc-500">소중한 가족·업무 사진</div>
+                            </div>
+                        </label>
+                        <label class="flex items-center gap-2.5 p-2 rounded-lg bg-zinc-900/60 hover:bg-zinc-800/70 cursor-pointer text-zinc-200 transition border border-zinc-800">
+                            <input type="checkbox" id="onboard-src-drivers" checked class="rounded border-zinc-700 bg-zinc-800 text-blue-600 focus:ring-0 w-4 h-4">
+                            <i data-lucide="cpu" class="w-4 h-4 text-emerald-400 shrink-0"></i>
+                            <div class="truncate">
+                                <div class="font-medium text-[11px]">PC 드라이버</div>
+                                <div class="text-[10px] text-zinc-500">그래픽·와이파이 복구용</div>
+                            </div>
                         </label>
                     </div>
                 </div>
 
-                <!-- Step 2: Storage Location -->
+                <!-- Step 2: Storage Location (Auto Smart Detection) -->
                 <div>
                     <div class="flex items-center justify-between mb-1.5">
-                        <label class="text-slate-300 font-semibold flex items-center gap-1.5">
+                        <label class="text-zinc-200 font-bold flex items-center gap-1.5">
                             <span class="w-4 h-4 rounded-full bg-blue-600 text-[10px] text-white flex items-center justify-center font-bold">2</span>
-                            <span>백업을 저장할 곳</span>
+                            <span>어디에 보관할까요?</span>
                         </label>
-                        <span id="onboard-drive-badge" class="text-[10px] text-blue-400 bg-blue-950/70 border border-blue-800/60 px-2 py-0.5 rounded-full font-mono">저장할 곳을 찾는 중...</span>
+                        <span id="onboard-drive-badge" class="text-[10px] text-blue-300 bg-blue-950/70 border border-blue-800/60 px-2 py-0.5 rounded-full font-mono">가장 안전한 드라이브 감지 중...</span>
                     </div>
-                    <input type="text" id="onboard-repo-dir" placeholder="저장할 곳을 찾는 중..." class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 text-xs font-mono focus:border-blue-500 focus:outline-none">
+                    <div class="flex gap-2">
+                        <input type="text" id="onboard-repo-dir" placeholder="보관함 경로를 탐색 중입니다..." class="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-zinc-200 text-xs font-mono focus:border-blue-500 focus:outline-none">
+                        <button type="button" onclick="openDirectoryPicker('onboard-repo-dir')" class="px-2.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-medium border border-zinc-700 shrink-0">폴더 선택</button>
+                    </div>
+                    <!-- Drive Recommendation Chips -->
                     <div id="onboard-drive-chips" class="flex flex-wrap gap-1.5 mt-2"></div>
-                    <p class="text-[10px] text-slate-400 mt-1">빈 공간이 넉넉한 드라이브를 자동으로 골라 드려요. 다른 곳에 저장하고 싶으면 직접 바꿀 수 있어요.</p>
+                    <p class="text-[10px] text-zinc-400 mt-1">💡 윈도우(C:)가 고장 나도 안전하도록 다른 드라이브(D: 등)를 추천해 드려요.</p>
                 </div>
 
                 <!-- Step 3: Schedule -->
                 <div>
-                    <label class="block text-slate-300 font-semibold mb-1.5 flex items-center gap-1.5">
+                    <label class="block text-zinc-200 font-bold mb-1.5 flex items-center gap-1.5">
                         <span class="w-4 h-4 rounded-full bg-blue-600 text-[10px] text-white flex items-center justify-center font-bold">3</span>
-                        <span>자동 백업 일정</span>
+                        <span>언제 자동으로 백업할까요?</span>
                     </label>
-                    <select id="onboard-schedule-time" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-slate-200 text-xs focus:border-blue-500 focus:outline-none">
-                        <option value="09:00" selected>매일 오전 9시에 자동으로 백업 (추천)</option>
-                        <option value="18:00">매일 오후 6시에 자동으로 백업 (퇴근 전)</option>
-                        <option value="manual">자동으로 하지 않고, 제가 직접 누를 때만 백업</option>
+                    <select id="onboard-schedule-time" class="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-zinc-200 text-xs focus:border-blue-500 focus:outline-none">
+                        <option value="09:00" selected>매일 오전 9시에 자동으로 백업 (추천 - 업무 시작 전 조용히)</option>
+                        <option value="18:00">매일 오후 6시에 자동으로 백업 (퇴근 전 마무리)</option>
+                        <option value="manual">자동으로 하지 않고, 내가 직접 [지금 백업하기] 누를 때만</option>
                     </select>
                 </div>
             </div>
 
-            <!-- Modal Footer -->
-            <div class="p-4 bg-slate-950/80 border-t border-slate-800 flex justify-end gap-2 text-xs">
-                <button type="button" onclick="closeModal('onboarding-modal')" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl font-medium">
+            <!-- Footer: 2 Buttons (Save Only vs Save & Start First Backup Now) -->
+            <div class="p-4 bg-zinc-950/90 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <button type="button" onclick="closeModal('onboarding-modal')" class="px-3 py-2 text-zinc-400 hover:text-zinc-200 rounded-xl font-medium transition">
                     나중에 설정
                 </button>
-                <button type="button" onclick="completeOnboardingWizard()" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold flex items-center gap-1.5 shadow-lg shadow-blue-900/30">
-                    <i data-lucide="check-circle" class="w-3.5 h-3.5"></i>
-                    <span>설정 끝내기</span>
-                </button>
+                <div class="flex items-center gap-2">
+                    <button type="button" onclick="completeOnboardingWizard(false)" class="px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl font-medium transition border border-zinc-700">
+                        설정만 저장
+                    </button>
+                    <button type="button" onclick="completeOnboardingWizard(true)" class="px-4 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white rounded-xl font-bold flex items-center gap-2 shadow-lg shadow-blue-600/30 transition transform active:scale-95">
+                        <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+                        <span>완료 & 지금 첫 백업 시작!</span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>

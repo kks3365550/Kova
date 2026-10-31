@@ -51,6 +51,7 @@ class RunBackupRequest(BaseModel):
     sources: Optional[List[str]] = None
     exclude_patterns: Optional[List[str]] = None
     compression_level: Optional[int] = 6
+    include_drivers: Optional[bool] = None
 
 
 class RunCustomSelectionBackupRequest(BaseModel):
@@ -479,7 +480,39 @@ def _background_backup_task(params: Dict[str, Any]):
         if not repo_dir:
             repo_dir = "D:\\MyBackup_Repository" if os.path.exists("D:\\") else os.path.join(BASE_DIR, "backup_repository")
 
-        sources = params.get("sources") or profile.get("sources") or [BASE_DIR]
+        raw_sources = params.get("sources") or profile.get("sources") or [BASE_DIR]
+        user_home = os.path.expanduser("~")
+        std_dirs = {
+            "desktop": os.path.join(user_home, "Desktop"),
+            "documents": os.path.join(user_home, "Documents"),
+            "downloads": os.path.join(user_home, "Downloads"),
+            "pictures": os.path.join(user_home, "Pictures"),
+            "music": os.path.join(user_home, "Music"),
+            "videos": os.path.join(user_home, "Videos"),
+        }
+        sources = []
+        for s in raw_sources:
+            s_str = str(s).strip()
+            if s_str.lower() in std_dirs and os.path.exists(std_dirs[s_str.lower()]):
+                sources.append(std_dirs[s_str.lower()])
+            elif os.path.exists(s_str):
+                sources.append(os.path.abspath(s_str))
+            else:
+                sources.append(s_str)
+
+        inc_drivers = params.get("include_drivers")
+        if inc_drivers is None:
+            inc_drivers = profile.get("include_drivers", False)
+        if inc_drivers:
+            driver_dir = os.path.join(user_home, "Windows_Drivers")
+            try:
+                from core.app_scanner import export_windows_drivers
+                d_res = export_windows_drivers(driver_dir)
+                if d_res.get("success") and driver_dir not in sources:
+                    sources.append(driver_dir)
+                    append_task_log(f"드라이버 {d_res.get('driver_count')}개 패키지 추출 완료 -> {driver_dir}")
+            except Exception as d_err:
+                append_task_log(f"드라이버 추출 중 알림: {d_err}", level="WARNING")
         excludes = params.get("exclude_patterns") or profile.get("exclude_patterns") or []
         compress = params.get("compression_level") or profile.get("compression_level") or 6
         profile_name = profile.get("name", "수동 백업")

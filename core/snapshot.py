@@ -55,7 +55,19 @@ class SnapshotEngine:
         active_tasks = 0
         cond = threading.Condition(lock)
 
+        user_home = os.path.expanduser("~")
+        std_dirs = {
+            "desktop": os.path.join(user_home, "Desktop"),
+            "documents": os.path.join(user_home, "Documents"),
+            "downloads": os.path.join(user_home, "Downloads"),
+            "pictures": os.path.join(user_home, "Pictures"),
+            "music": os.path.join(user_home, "Music"),
+            "videos": os.path.join(user_home, "Videos"),
+        }
         for src in sources:
+            src_str = str(src).strip()
+            if src_str.lower() in std_dirs and os.path.exists(std_dirs[src_str.lower()]):
+                src = std_dirs[src_str.lower()]
             src = os.path.abspath(src)
             if not os.path.exists(src):
                 continue
