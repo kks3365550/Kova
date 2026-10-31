@@ -42,6 +42,58 @@ except ImportError:
     HAS_CRYPTO = False
 
 
+def timed_input(prompt: str, timeout: float = 5.0, default: str = "") -> str:
+    """Windows 콘솔 타임아웃 입력기 (키 입력 없을 시 기본값 자동 적용)"""
+    print(prompt, end="", flush=True)
+    try:
+        import msvcrt
+        start = time.time()
+        chars = []
+        while time.time() - start < timeout:
+            if msvcrt.kbhit():
+                while True:
+                    ch = msvcrt.getwche()
+                    if ch in ('\r', '\n'):
+                        print()
+                        return "".join(chars).strip()
+                    elif ch == '\x08':  # Backspace
+                        if chars:
+                            chars.pop()
+                    else:
+                        chars.append(ch)
+            time.sleep(0.05)
+        print(f"\n[*] {int(timeout)}초 자동 진행 타임아웃 -> 기본값 적용: '{default}'")
+        return default
+    except Exception:
+        print()
+        return default
+
+
+def find_candidate_target_drives(repo_dir: Optional[str] = None) -> List[str]:
+    """WinPE 및 복구 환경에서 복원 대상이 될 수 있는 유효 쓰기 가능 드라이브 탐색"""
+    import string
+    script_drive = os.path.splitdrive(os.path.abspath(__file__))[0].upper()
+    repo_drive = os.path.splitdrive(os.path.abspath(repo_dir))[0].upper() if repo_dir else ""
+    sys_drive = os.environ.get("SYSTEMDRIVE", "X:").upper()
+
+    candidates = []
+    for letter in string.ascii_uppercase:
+        drv = f"{letter}:"
+        if drv in (script_drive, repo_drive, sys_drive):
+            continue
+        root = f"{drv}\\"
+        if os.path.exists(root):
+            try:
+                test_file = os.path.join(root, ".dr_target_probe.tmp")
+                with open(test_file, "w") as f_probe:
+                    f_probe.write("probe")
+                os.remove(test_file)
+                candidates.append(drv)
+            except Exception:
+                pass
+    return candidates
+
+
 def format_bytes(size: int) -> str:
     power = 1024
     n = 0
@@ -70,9 +122,14 @@ def get_candidate_repositories() -> List[str]:
                 candidates.append(os.path.join(part.mountpoint, "MyBackup_Repository"))
                 candidates.append(os.path.join(part.mountpoint, "backup_repository"))
     except Exception:
-        for letter in "CDEFG":
-            candidates.append(f"{letter}:\\MyBackup_Repository")
-            candidates.append(f"{letter}:\\backup_repository")
+        pass
+
+    import string
+    for letter in string.ascii_uppercase:
+        if letter == "X":
+            continue
+        candidates.append(f"{letter}:\\MyBackup_Repository")
+        candidates.append(f"{letter}:\\backup_repository")
 
     valid = []
     seen = set()
@@ -608,11 +665,17 @@ def main():
             print(f" [OK] 전체 {len(manifest.get('entries', []))}개 참조 블롭 물리적 무결성 확인 완료")
         return
 
+    target_drives = find_candidate_target_drives(repo)
     if args.restore:
+        dest = args.dest
+        if dest == "auto":
+            dest = target_drives[0] + "\\" if target_drives else None
+            if dest:
+                print(f"[*] 자동 선택된 복원 대상 드라이브: {dest}")
         restore_snapshot(
             repo_dir=repo,
             snapshot_id=args.restore,
-            dest_dir=args.dest,
+            dest_dir=dest,
             verify_hash=True,
             filter_keyword=args.filter,
             passphrase=args.passphrase,
@@ -628,7 +691,7 @@ def main():
         print(f"[{idx:2d}] {s['id']} | {s['iso_time'][:19]} | {s['profile_name']} | {s['file_count']}개 | {s['sig_status']}")
     print(f"{'='*75}")
 
-    choice = input("\n복원할 스냅샷 번호 또는 ID를 입력하세요 (기본값: 1, Q=종료): ").strip()
+    choice = timed_input("\n복원할 스냅샷 번호 또는 ID를 입력하세요 (기본값: 1, 5초 타임아웃, Q=종료): ", timeout=5.0, default="1").strip()
     if choice.lower() == 'q':
         return
 
@@ -645,9 +708,19 @@ def main():
         selected_snap = snapshots[0]
 
     dest = args.dest
-    if not dest:
-        dest_in = input("복원 대상 폴더 경로를 입력하세요 (엔터 시 원본 위치): ").strip('"\' ')
-        dest = dest_in if dest_in else None
+    if dest == "auto":
+        dest = target_drives[0] + "\\" if target_drives else None
+        if dest:
+            print(f"[*] 자동 선택된 복원 대상 드라이브: {dest}")
+    elif not dest:
+        default_target = (target_drives[0] + "\\") if target_drives else ""
+        rec_hint = f" (추천: {target_drives[0]}\\)" if target_drives else " (엔터 시 원본 위치)"
+        dest_in = timed_input(f"복원 대상 폴더 경로를 입력하세요{rec_hint} (5초 타임아웃): ", timeout=5.0, default=default_target).strip('"\' ')
+        if not dest_in and target_drives:
+            dest = target_drives[0] + "\\"
+            print(f"[*] 선택된 대상 드라이브: {dest}")
+        else:
+            dest = dest_in if dest_in else None
 
     restore_snapshot(
         repo_dir=repo,

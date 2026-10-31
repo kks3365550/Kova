@@ -38,12 +38,18 @@ if ($existingVm) {
 }
 
 # 3. VHDX 디마운트 및 파일 삭제
-$vhdxPath = Join-Path $VhdxDir "$VmName.vhdx"
-if (Test-Path $vhdxPath) {
-    Write-Host "[*] VHDX 디마운트 및 파일 삭제 중..." -ForegroundColor White
-    Dismount-VHD -Path $vhdxPath -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
-    Remove-Item -Path $vhdxPath -Force -ErrorAction SilentlyContinue
+$vhdxFiles = @(
+    Join-Path $VhdxDir "$VmName.vhdx",
+    Join-Path $VhdxDir "Test_Repository.vhdx",
+    Join-Path $VhdxDir "Target_Disk.vhdx"
+)
+foreach ($vhdx in $vhdxFiles) {
+    if (Test-Path $vhdx) {
+        Write-Host "[*] VHDX 디마운트 및 삭제: $(Split-Path $vhdx -Leaf)" -ForegroundColor White
+        Dismount-VHD -Path $vhdx -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 300
+        Remove-Item -Path $vhdx -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # 4. 임시 디렉터리 정리
