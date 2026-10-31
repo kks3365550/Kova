@@ -55,7 +55,8 @@ def test_elevated_worker_execution_permissions():
     # 1. dism 확인
     rc_dism, out_dism, _ = run_elevated_command(["dism.exe", "/?"], timeout=30)
     assert rc_dism == 0, f"DISM elevated 실행 실패: rc={rc_dism}"
-    assert "Deployment Image Servicing and Management" in out_dism
+    # 한글 윈도우는 출력이 한글이므로 언어와 무관하게 DISM 도움말임을 확인
+    assert "DISM" in out_dism or "Deployment Image Servicing and Management" in out_dism
 
     # 2. vssadmin 확인 (관리자 권한 도구 호출 성공 여부 및 권한 오류 부재 확인)
     rc_vss, out_vss, err_vss = run_elevated_command(["vssadmin.exe", "list", "shadows"], timeout=30)

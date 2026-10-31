@@ -237,7 +237,7 @@ async function checkGlobalAlerts() {
         if (status === 'critical' && alerts.length > 0) {
             banner.className = 'shrink-0 border-b border-red-700/80 bg-red-950/90 px-6 py-2.5 flex items-center justify-between text-xs z-30 transition-all duration-300';
             if (badge) badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm bg-red-600 text-white animate-pulse';
-            if (statusText) statusText.innerText = '심각 경보 (CRITICAL)';
+            if (statusText) statusText.innerText = '심각 경보';
             const topAlert = alerts[0];
             const extraCount = alerts.length > 1 ? ` (외 ${alerts.length - 1}건)` : '';
             if (msgText) msgText.innerText = `[${topAlert.title || '경보'}] ${topAlert.message}${extraCount}`;

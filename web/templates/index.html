@@ -139,7 +139,7 @@
         <div class="flex items-center gap-3">
             <span id="alert-banner-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
                 <i data-lucide="alert-triangle" id="alert-banner-icon" class="w-3.5 h-3.5"></i>
-                <span id="alert-banner-status">CRITICAL</span>
+                <span id="alert-banner-status">심각</span>
             </span>
             <span id="alert-banner-message" class="font-medium text-slate-200"></span>
         </div>
@@ -267,7 +267,7 @@
                             <div class="flex justify-between items-center pb-2.5 border-b border-zinc-800/80 mb-3">
                                 <div class="flex items-center gap-2">
                                     <div class="w-2 h-2 rounded-full bg-blue-400"></div>
-                                    <span class="text-xs font-bold text-zinc-100 font-mono uppercase tracking-wide">Snapshot Volume & Growth</span>
+                                    <span class="text-xs font-bold text-zinc-100 font-mono uppercase tracking-wide">백업 개수와 용량 변화</span>
                                     <span id="chart-meta-summary" class="text-[10px] text-zinc-500 font-mono">| 실측 DB 연동 백업 시점 추이</span>
                                 </div>
                                 <div class="flex items-center gap-3 text-[11px] font-mono text-zinc-400">
@@ -364,14 +364,14 @@
                     <!-- RIGHT COLUMN: STORAGE TOPOLOGY, DISKS & LIVE TELEMETRY (Col Span 5) -->
                     <div class="lg:col-span-5 flex flex-col space-y-4">
                         
-                        <!-- SYSTEM DRIVES STATUS (C:, D:, E:) -->
+                        <!-- 내 드라이브와 백업 보관함 (C:, D:, E:) -->
                         <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
                             <div class="flex items-center justify-between text-xs font-bold text-zinc-300 font-mono">
                                 <div class="flex items-center gap-2">
                                     <i data-lucide="hard-drive" class="w-4 h-4 text-amber-400"></i>
-                                    <span>SYSTEM DRIVES & REPOSITORY</span>
+                                    <span>내 드라이브와 백업 보관함</span>
                                 </div>
-                                <span class="text-[10px] text-zinc-500 font-normal">Real-Time IO</span>
+                                <span class="text-[10px] text-zinc-500 font-normal">실시간 읽기·쓰기</span>
                             </div>
                             <div id="system-drives-list" class="space-y-2 font-mono">
                                 <!-- Injected by JS -->
@@ -385,7 +385,7 @@
                                     <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
                                     <span>내 저장 장치(디스크) 건강 상태</span>
                                 </div>
-                                <span id="storage-overall-badge" class="px-1.5 py-0.5 bg-emerald-950 text-emerald-300 text-[10px] rounded border border-emerald-800">HEALTHY</span>
+                                <span id="storage-overall-badge" class="px-1.5 py-0.5 bg-emerald-950 text-emerald-300 text-[10px] rounded border border-emerald-800">정상</span>
                             </div>
                             <div id="physical-disks-list" class="space-y-2 font-mono text-xs">
                                 <div class="text-zinc-500 text-[11px] py-1">저장 장치 상태를 확인하는 중...</div>
@@ -410,8 +410,8 @@
                                 </div>
                                 <div class="p-2.5 rounded-lg bg-zinc-950/80 border border-zinc-800/80">
                                     <span class="text-[10px] text-zinc-500 block uppercase">2. 다른 장소 복사본</span>
-                                    <span class="text-zinc-200 font-bold block mt-0.5">Cloud / NAS / Offsite</span>
-                                    <span class="text-[10px] text-cyan-400">Encrypted Transport</span>
+                                    <span class="text-zinc-200 font-bold block mt-0.5">클라우드 · 네트워크 저장소 · 다른 장소</span>
+                                    <span class="text-[10px] text-cyan-400">암호화해서 전송</span>
                                 </div>
                             </div>
 

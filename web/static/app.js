@@ -408,13 +408,13 @@ function renderStorageHealth() {
     if (badge) {
         if (data.overall_status === 'healthy') {
             badge.className = 'px-1.5 py-0.5 bg-emerald-950 text-emerald-300 text-[10px] rounded border border-emerald-800';
-            badge.innerText = 'HEALTHY';
+            badge.innerText = '정상';
         } else if (data.overall_status === 'warning') {
             badge.className = 'px-1.5 py-0.5 bg-amber-950 text-amber-300 text-[10px] rounded border border-amber-800';
-            badge.innerText = 'WARNING';
+            badge.innerText = '주의';
         } else {
             badge.className = 'px-1.5 py-0.5 bg-rose-950 text-rose-300 text-[10px] rounded border border-rose-800 animate-pulse';
-            badge.innerText = 'CRITICAL';
+            badge.innerText = '심각';
         }
     }
 
