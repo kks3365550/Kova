@@ -472,14 +472,14 @@ def restore_snapshot(
                 crypto_engine = CryptoAtRestEngine.from_key_file(key_file, repo_dir)
                 print(f"[*] 오프라인 키 파일 로드 완료: {key_file}")
             except Exception as e:
-                print("[!] 암호 키 파일을 읽지 못했어요. 키 파일 위치를 확인한 뒤 다시 시도해 주세요.")
+                print(f"[!] 암호 키 파일을 읽지 못했어요. 키 파일 위치를 확인한 뒤 다시 시도해 주세요. (자세한 원인: {e})")
         elif passphrase:
             try:
                 from core.crypto_at_rest import CryptoAtRestEngine
                 crypto_engine = CryptoAtRestEngine.from_passphrase(passphrase, repo_dir, create_if_missing=False)
                 print("[*] 패스프레이즈 기반 복호화 키 초기화 완료")
             except Exception as e:
-                print("[!] 입력한 암호로 백업을 열지 못했어요. 암호를 다시 확인해 주세요.")
+                print(f"[!] 입력한 암호로 백업을 열지 못했어요. 암호를 다시 확인해 주세요. (자세한 원인: {e})")
 
     # 무결성 검증 (Ed25519 & Manifest 지문)
     pubkey = os.path.join(repo_dir, "keys", "backup_ed25519.pub")
