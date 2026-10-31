@@ -1008,6 +1008,44 @@
                                 </a>
                             </div>
                         </div>
+
+                        <!-- Card 6: One-Click System Diagnostics & Support Bundle -->
+                        <div class="p-5 bg-zinc-900/60 rounded-2xl border border-zinc-800/80 space-y-4 shadow-lg lg:col-span-2">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="p-2 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20">
+                                        <i data-lucide="file-archive" class="w-4 h-4"></i>
+                                    </div>
+                                    <div>
+                                        <h4 class="text-xs font-bold text-zinc-100">원클릭 시스템 진단 로그 패키징 (ZIP)</h4>
+                                        <p class="text-[11px] text-zinc-400 mt-0.5">고객지원, 장애 분석 및 유지보수를 위한 하드웨어·스케줄러·로그 자동 압축</p>
+                                    </div>
+                                </div>
+                                <span class="text-[10px] px-2.5 py-0.5 bg-zinc-800 text-zinc-400 rounded-full font-mono border border-zinc-700">개인정보 보호(마스킹) 적용</span>
+                            </div>
+
+                            <div class="p-3 bg-zinc-950/60 rounded-xl border border-zinc-800/60 text-xs space-y-2 text-zinc-300">
+                                <div class="flex items-center gap-2 text-zinc-400 text-[11px]">
+                                    <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i>
+                                    <span>비밀번호, 보안 키, 인증 토큰 등 민감 정보는 자동으로 안전하게 마스킹(***MASKED***) 처리됩니다.</span>
+                                </div>
+                                <div class="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-zinc-500 font-mono">
+                                    <span>✓ 하드웨어 제원 (CPU/RAM/디스크)</span>
+                                    <span>✓ OS 작업 스케줄러 & 절전 정책</span>
+                                    <span>✓ 백업 보관함 & 스냅샷 메타데이터</span>
+                                    <span>✓ 서버 & 백업 엔진 로그 (최근 3MB)</span>
+                                </div>
+                            </div>
+
+                            <div class="flex flex-wrap items-center gap-2 pt-1">
+                                <button onclick="downloadDiagnosticBundle()" id="btn-download-diagnostic" class="flex-1 py-2.5 bg-gradient-to-r from-amber-600/90 to-amber-700/90 hover:from-amber-600 hover:to-amber-700 text-white rounded-xl text-xs font-bold transition shadow-md flex items-center justify-center gap-1.5 cursor-pointer">
+                                    <i data-lucide="download" class="w-3.5 h-3.5"></i> 원클릭 진단 로그 다운로드 (ZIP)
+                                </button>
+                                <button onclick="previewDiagnosticInfo()" class="px-4 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-xl text-xs font-semibold border border-zinc-700 transition flex items-center gap-1.5 cursor-pointer" title="화면에서 요약 미리보기">
+                                    <i data-lucide="eye" class="w-3.5 h-3.5 text-zinc-400"></i> 요약 미리보기
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -2540,6 +2578,48 @@
                     </button>
                     <button id="btn-modal-apply-update" onclick="applySoftwareUpdate()" class="px-5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-purple-600/30 flex items-center gap-1.5 cursor-pointer">
                         <i data-lucide="zap" class="w-3.5 h-3.5 fill-current"></i> 지금 1클릭 업데이트
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Diagnostic Summary Preview Modal -->
+    <div id="diagnostic-preview-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 hidden">
+        <div class="bg-zinc-900 border border-amber-500/50 rounded-2xl w-full max-w-3xl max-h-[85vh] shadow-2xl overflow-hidden animate-fade-in flex flex-col">
+            <div class="p-4 bg-gradient-to-r from-amber-950/80 via-zinc-900 to-zinc-900 border-b border-zinc-800 flex justify-between items-center shrink-0">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 font-bold">
+                        <i data-lucide="file-text" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-white text-sm">시스템 종합 진단 보고서 요약</h3>
+                        <p class="text-[11px] text-zinc-400">민감정보 마스킹 및 전수 하드웨어·스케줄러 상태 요약</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="copyDiagnosticSummary(this)" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg text-xs font-semibold border border-zinc-700 transition flex items-center gap-1.5 cursor-pointer shadow-sm">
+                        <i data-lucide="clipboard-copy" class="w-3.5 h-3.5 text-amber-400"></i>
+                        <span>텍스트 복사</span>
+                    </button>
+                    <button onclick="closeModal('diagnostic-preview-modal')" class="text-zinc-400 hover:text-white p-1 rounded-lg hover:bg-zinc-800 transition cursor-pointer">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-4 flex-1 overflow-y-auto">
+                <pre id="diagnostic-preview-text" class="p-4 bg-zinc-950 rounded-xl border border-zinc-800 text-[11px] font-mono text-zinc-300 whitespace-pre-wrap leading-relaxed select-all">진단 보고서를 생성하는 중입니다...</pre>
+            </div>
+
+            <div class="p-4 bg-zinc-950 border-t border-zinc-800 flex justify-between items-center gap-2 shrink-0">
+                <span class="text-[11px] text-zinc-500">ZIP 패키지에는 상세 JSON 메타데이터 및 최근 로그 원본(최대 3MB)이 함께 포함됩니다.</span>
+                <div class="flex items-center gap-2">
+                    <button onclick="closeModal('diagnostic-preview-modal')" class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl text-xs font-semibold transition cursor-pointer">
+                        닫기
+                    </button>
+                    <button onclick="downloadDiagnosticBundle()" class="px-5 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-amber-600/30 flex items-center gap-1.5 cursor-pointer">
+                        <i data-lucide="download" class="w-3.5 h-3.5"></i> 전체 진단 패키지 다운로드 (ZIP)
                     </button>
                 </div>
             </div>

@@ -1659,6 +1659,94 @@ async function applySoftwareUpdate() {
     }
 }
 
+
+// --- 1-Click Diagnostic Bundle Export ---
+async function downloadDiagnosticBundle() {
+    const btn = document.getElementById('btn-download-diagnostic');
+    let origHtml = '';
+    if (btn) {
+        origHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = `<i data-lucide="loader-2" class="w-3.5 h-3.5 animate-spin"></i> 진단 ZIP 압축 중...`;
+        if (window.lucide) lucide.createIcons();
+    }
+    showToast('시스템 진단 패키지(ZIP) 압축 생성을 시작합니다...', 'info');
+
+    try {
+        const resp = await fetch('/api/system/diagnostic-bundle');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+        const blob = await resp.blob();
+        const disposition = resp.headers.get('Content-Disposition');
+        let filename = 'Kova_Diagnostic_Bundle.zip';
+        if (disposition && disposition.indexOf('filename=') !== -1) {
+            const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
+            if (matches != null && matches[1]) {
+                filename = matches[1].replace(/['"]/g, '');
+            }
+        }
+
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            document.body.removeChild(a);
+            window.URL.revokeObjectURL(url);
+        }, 2000);
+
+        showToast('진단 로그 패키지(ZIP) 다운로드가 완료되었습니다.', 'success');
+    } catch (err) {
+        console.error('Diagnostic bundle download error:', err);
+        showToast(`진단 로그 생성 실패: ${err.message}`, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
+            if (window.lucide) lucide.createIcons();
+        }
+    }
+}
+
+async function previewDiagnosticInfo() {
+    const modal = document.getElementById('diagnostic-preview-modal');
+    const previewBox = document.getElementById('diagnostic-preview-text');
+    if (!modal || !previewBox) return;
+
+    previewBox.textContent = '시스템 진단 데이터를 분석하고 보고서를 생성하는 중입니다...';
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    if (window.lucide) lucide.createIcons();
+
+    try {
+        const resp = await fetch('/api/system/diagnostic-overview');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        previewBox.textContent = data.summary_text || JSON.stringify(data, null, 2);
+    } catch (err) {
+        previewBox.textContent = `진단 요약 조회 실패: ${err.message}`;
+    }
+}
+
+function copyDiagnosticSummary(btn) {
+    const previewBox = document.getElementById('diagnostic-preview-text');
+    if (!previewBox) return;
+    navigator.clipboard.writeText(previewBox.textContent).then(() => {
+        const orig = btn.innerHTML;
+        btn.innerHTML = `<i data-lucide="check" class="w-3.5 h-3.5 text-emerald-400"></i> 복사 완료!`;
+        if (window.lucide) lucide.createIcons();
+        setTimeout(() => {
+            btn.innerHTML = orig;
+            if (window.lucide) lucide.createIcons();
+        }, 2000);
+    }).catch(() => {
+        showToast('클립보드 복사 권한이 없습니다.', 'warning');
+    });
+}
+
 // Init
 document.addEventListener('DOMContentLoaded', () => {
     lucide.createIcons();
