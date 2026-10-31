@@ -20,7 +20,31 @@ function friendlyError(e) {
 
 // Tab Switching
 function switchTab(tabId) {
+    if (tabId === 'migration') {
+        switchTab('system-image');
+        return;
+    }
+    if (tabId === 'custom') {
+        switchTab('settings');
+        switchSettingsSection('targets');
+        return;
+    }
+    if (tabId === 'profiles') {
+        switchTab('settings');
+        switchSettingsSection('schedule');
+        return;
+    }
+
     state.activeTab = tabId;
+
+    // Show/hide runner tab button in header if runner is active
+    const runnerNavBtn = document.getElementById('nav-tab-runner');
+    if (runnerNavBtn) {
+        if (tabId === 'runner') {
+            runnerNavBtn.classList.remove('hidden');
+        }
+    }
+
     document.querySelectorAll('.tab-btn').forEach(btn => {
         if (btn.dataset.tab === tabId) {
             btn.classList.add('bg-white/10', 'text-white', 'shadow-sm');
@@ -35,21 +59,47 @@ function switchTab(tabId) {
         view.classList.toggle('hidden', view.id !== `tab-${tabId}`);
     });
 
-    if (tabId === 'migration') {
-        switchTab('system-image');
-        return;
-    }
-
     if (tabId === 'snapshots') loadSnapshots();
-    if (tabId === 'profiles') loadProfiles();
     if (tabId === 'dashboard') loadDashboard();
-    if (tabId === 'custom') loadCustomSelectionData();
+    if (tabId === 'settings') {
+        loadProfiles();
+        if (typeof loadCustomSelectionData === 'function') loadCustomSelectionData();
+        if (typeof loadOffsiteStatus === 'function') loadOffsiteStatus();
+        if (typeof loadWindowsTaskStatus === 'function') loadWindowsTaskStatus();
+    }
     if (tabId === 'system-image') {
         loadSystemImageStatus();
         loadVhdxList();
         if (typeof loadMigrationDrives === 'function') loadMigrationDrives();
         if (typeof loadArchiveList === 'function') loadArchiveList();
         if (typeof startArchivePolling === 'function') startArchivePolling();
+    }
+}
+
+// Settings Sub-Section Switching (targets, schedule, cloud, security)
+function switchSettingsSection(sectionId) {
+    const validSections = ['targets', 'schedule', 'cloud', 'security'];
+    const activeSec = validSections.includes(sectionId) ? sectionId : 'targets';
+
+    validSections.forEach(sec => {
+        const secEl = document.getElementById(`settings-sec-${sec}`);
+        const secBtn = document.getElementById(`btn-settings-${sec}`);
+        if (secEl) {
+            secEl.classList.toggle('hidden', sec !== activeSec);
+        }
+        if (secBtn) {
+            if (sec === activeSec) {
+                secBtn.classList.add('bg-white/10', 'text-white', 'shadow-sm');
+                secBtn.classList.remove('text-zinc-400', 'hover:text-zinc-200', 'hover:bg-white/5');
+            } else {
+                secBtn.classList.remove('bg-white/10', 'text-white', 'shadow-sm');
+                secBtn.classList.add('text-zinc-400', 'hover:text-zinc-200', 'hover:bg-white/5');
+            }
+        }
+    });
+
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
     }
 }
 

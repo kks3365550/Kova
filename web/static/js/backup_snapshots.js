@@ -442,12 +442,17 @@ async function pollTaskStatus() {
         if (wasRunning && !isRunning) {
             loadDashboard();
             loadSnapshots();
-            if (state.activeTab === 'profiles') loadProfiles();
+            if (state.activeTab === 'profiles' || state.activeTab === 'settings') loadProfiles();
         }
 
         const progress = task.progress || {};
 
         // Update Runner UI
+        const runnerNavBtn = document.getElementById('nav-tab-runner');
+        if (runnerNavBtn) {
+            runnerNavBtn.classList.toggle('hidden', !isRunning && state.activeTab !== 'runner');
+        }
+
         const runnerStatusEl = document.getElementById('runner-status-badge');
         const runnerProgressBar = document.getElementById('runner-progress-bar');
         const runnerPercentText = document.getElementById('runner-percent-text');
