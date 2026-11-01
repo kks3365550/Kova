@@ -128,7 +128,9 @@ class BackupScheduler:
             "progress": {}
         }
 
-        self._log(profile_name, "스케줄 자동 백업 작업을 시작합니다...")
+        # [폐기] 웹서버 내장 스케줄 백업 폐기 -> Windows OS 작업 스케줄러(BackupSystem_AutoBackup) 전담
+        self._log(profile_name, "웹 서버 내장 백업 엔진은 폐기되었습니다. 모든 자동 스케줄 백업은 Windows OS 작업 스케줄러가 전담합니다.", level="WARNING")
+        return
 
         try:
             repo_dir = profile.get("repo_dir")
@@ -460,21 +462,10 @@ class BackupScheduler:
     def _run_loop(self):
         while not self.stop_event.is_set():
             try:
+                # [폐기] 웹 서버 내장 프로필 스케줄 백업 루프 폐기 -> Windows OS 작업 스케줄러(BackupSystem_AutoBackup)로 100% 일원화
+                # 프로필 자동 백업을 웹 서버 스레드에서 직접 트리거하지 않는다 (중복 실행/잠금 경합 차단).
                 profiles = ConfigManager.get_profiles()
-                for prof in profiles:
-                    prof_id = prof.get("id")
-                    if prof_id and self.active_jobs.get(prof_id, {}).get("running"):
-                        continue
-                    if self._should_run_profile(prof):
-                        # Run in worker thread
-                        worker = threading.Thread(
-                            target=self._run_profile_backup,
-                            args=(prof,),
-                            daemon=True
-                        )
-                        worker.start()
-
-                # Deep Scan 주기 점검
+                # Deep Scan (Tier 2/3 주간·월간 무결성 감사) 주기 점검만 수행
                 self._check_deep_scans(profiles)
             except Exception as e:
                 self._log("Scheduler", f"스케줄러 루프 오류: {e}", level="ERROR")

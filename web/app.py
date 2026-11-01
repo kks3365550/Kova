@@ -70,7 +70,7 @@ scheduler.register_log_callback(append_task_log)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     scheduler.start()
-    append_task_log("백업 스케줄러 서비스가 시작되었습니다.")
+    append_task_log("KOVA 백업 서비스가 시작되었습니다 (스케줄 백업: Windows 작업 스케줄러 전담).")
     # Durable Replication Queue: auto-resume interrupted tasks on startup
     try:
         from core.replication_queue import ReplicationQueueManager
