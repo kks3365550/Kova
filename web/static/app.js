@@ -230,7 +230,7 @@ function renderOffsiteStatusWidget() {
     let modeText = '원격';
     let targetText = '-';
     if (off.provider === 'gdrive') {
-        modeText = '구글 드라이브 (Cloud)';
+        modeText = '구글 드라이브';
         targetText = `GDrive: ${off.gdrive_folder_id || 'BackupSystem_Offsite'}`;
     } else {
         modeText = off.replication_type === 'robocopy' ? 'Robocopy (LAN/NAS)' : (off.replication_type === 'rclone' ? 'Rclone (Cloud/S3)' : (off.replication_type || '원격'));
@@ -257,9 +257,9 @@ function renderOffsiteStatusWidget() {
     const hasSnaps = (state.snapshots || []).some(s => s.is_offsite_protected || s.offsite_status === 'COMMITTED');
     if (dashState) {
         if (hasSnaps) {
-            dashState.innerHTML = '<span class="text-blue-400 font-semibold whitespace-nowrap">🌐 최신 백업 시점 동기화 완료</span>';
+            dashState.innerHTML = '<span class="text-blue-400 font-semibold whitespace-nowrap">🌐 동기화 완료</span>';
         } else {
-            dashState.innerHTML = '<span class="text-amber-400 font-semibold whitespace-nowrap">⏳ 백업 시점 복제 대기/진행 중</span>';
+            dashState.innerHTML = '<span class="text-amber-400 font-semibold whitespace-nowrap">⏳ 복제 대기/진행 중</span>';
         }
     }
     if (heroScoreBadge) {

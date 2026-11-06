@@ -409,13 +409,31 @@ async function triggerQuickBackup() {
     const profId = activeProf ? activeProf.id : 'prof_default';
 
     switchTab('runner');
+    const runnerStatusEl = document.getElementById('runner-status-badge');
+    const runnerFileText = document.getElementById('runner-current-file');
+    if (runnerStatusEl) {
+        runnerStatusEl.className = 'px-3 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full text-xs font-semibold animate-pulse';
+        runnerStatusEl.innerText = '백업 시작 준비 중...';
+    }
+    if (runnerFileText) {
+        runnerFileText.innerText = '백업 작업 초기화 및 고속 스캔 준비 중...';
+    }
+
     try {
         await fetchAPI('/api/backup/run', {
             method: 'POST',
             body: JSON.stringify({ profile_id: profId })
         });
+        if (typeof pollTaskStatus === 'function') {
+            await pollTaskStatus();
+        }
     } catch (e) {
-        alert('백업 시작 실패: ' + friendlyError(e));
+        const msg = friendlyError(e);
+        if (msg.includes('이미 다른') || msg.includes('실행 중')) {
+            if (typeof pollTaskStatus === 'function') pollTaskStatus();
+        } else {
+            alert('백업 시작 실패: ' + msg);
+        }
     }
 }
 
@@ -495,7 +513,6 @@ async function pollTaskStatus() {
             runnerCancelBtn.classList.add('hidden');
         }
 
-        const pct = progress.percent || 0;
         runnerProgressBar.style.width = `${pct}%`;
         runnerPercentText.innerText = `${pct}%`;
         runnerFileText.innerText = progress.current_file ? `처리 중: ${progress.current_file}` : (isRunning ? '스캔 및 분석 중...' : '대기 중');
