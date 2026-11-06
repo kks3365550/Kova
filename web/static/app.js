@@ -111,6 +111,7 @@ function switchSettingsSection(sectionId) {
 // API Calls
 
 async function loadDashboard() {
+    const __t0 = performance.now();
     try {
         // [1단계: 초고속 핵심 경로 (Critical Path - SLA < 50ms)]
         // 스냅샷 목록, 프로필, 시스템 기본 정보, 오프사이트 상태를 병렬 조회하여 홈 화면 백업 기록 즉시 렌더링
@@ -120,6 +121,7 @@ async function loadDashboard() {
             fetchAPI('/api/snapshots'),
             fetchAPI('/api/offsite').catch(() => null)
         ]);
+        const __t_api = performance.now();
 
         state.systemInfo = sys;
         state.profiles = profiles;
@@ -132,6 +134,16 @@ async function loadDashboard() {
         renderSystemDrives();
         renderOffsiteStatusWidget();
         checkOnboardingWizard();
+        const __t_dom = performance.now();
+
+        window.__kova_load_perf = {
+            api_fetch_ms: Number((__t_api - __t0).toFixed(2)),
+            dom_render_ms: Number((__t_dom - __t_api).toFixed(2)),
+            total_critical_ms: Number((__t_dom - __t0).toFixed(2)),
+            snapshots_count: snaps ? snaps.length : 0,
+            timestamp: new Date().toISOString()
+        };
+        console.log('[PERF_DASHBOARD] Critical Path rendered in ' + window.__kova_load_perf.total_critical_ms + 'ms (API: ' + window.__kova_load_perf.api_fetch_ms + 'ms, DOM: ' + window.__kova_load_perf.dom_render_ms + 'ms, Snaps: ' + window.__kova_load_perf.snapshots_count + ')');
 
         if (typeof loadSystemImageStatus === 'function') {
             loadSystemImageStatus();

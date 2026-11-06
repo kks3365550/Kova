@@ -313,6 +313,9 @@ try:
     import googleapiclient.discovery as g_discovery
     GDRIVE_SDK_AVAILABLE = True
 except ImportError:
+    g_service_account = None
+    g_credentials = None
+    g_discovery = None
     GDRIVE_SDK_AVAILABLE = False
 
 
@@ -366,10 +369,14 @@ class GoogleDriveOffsiteReplicator:
 
     def _get_service(self):
         """Google Drive API v3 클라이언트 빌드."""
+        if self.credentials_file and not os.path.exists(self.credentials_file):
+            raise FileNotFoundError(
+                f"지정된 구글 드라이브 인증 파일을 찾을 수 없습니다: {self.credentials_file}. "
+                "개인 계정 연동을 위한 'OAuth 클라이언트 ID JSON' 또는 '서비스 계정 JSON' 경로를 확인해 주십시오."
+            )
+
         if not GDRIVE_SDK_AVAILABLE:
             raise RuntimeError("google-api-python-client 및 google-auth 패키지가 필요합니다.")
-
-        if self.credentials_file and not os.path.exists(self.credentials_file):
             raise FileNotFoundError(
                 f"지정된 구글 드라이브 인증 파일을 찾을 수 없습니다: {self.credentials_file}. "
                 "개인 계정 연동을 위한 'OAuth 클라이언트 ID JSON' 또는 '서비스 계정 JSON' 경로를 확인해 주십시오."

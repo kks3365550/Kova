@@ -161,7 +161,8 @@ class TestGoogleDriveOffsite(unittest.TestCase):
         with open(cred_path, "w", encoding="utf-8") as f:
             f.write('{"client_email": "backup-bot@gdrive.iam.gserviceaccount.com"}')
 
-        with patch("core.offsite.g_service_account") as mock_sa, \
+        with patch("core.offsite.GDRIVE_SDK_AVAILABLE", True), \
+             patch("core.offsite.g_service_account") as mock_sa, \
              patch("core.offsite.g_discovery") as mock_disc, \
              patch("subprocess.Popen") as mock_popen, \
              patch.object(GoogleDriveOffsiteReplicator, "_get_rclone_exe", return_value="mock_rclone.exe"), \
