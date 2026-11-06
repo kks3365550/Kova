@@ -56,22 +56,22 @@
                 </div>
             </div>
 
-            <!-- Top Center: Consolidated Navigation Tabs (4 Core Tabs + Dynamic Runner) -->
+            <!-- Top Center: Consolidated Navigation Tabs (5 Core Tabs) -->
             <nav class="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-lg border border-zinc-800/80">
-                <button onclick="switchTab('dashboard')" data-tab="dashboard" class="tab-btn w-24 justify-center py-1.5 rounded-md text-xs font-semibold bg-white/10 text-white transition flex items-center gap-1.5 shadow-sm whitespace-nowrap">
+                <button onclick="switchTab('dashboard')" data-tab="dashboard" class="tab-btn min-w-[90px] justify-center py-1.5 rounded-md text-xs font-semibold bg-white/10 text-white transition flex items-center gap-1.5 shadow-sm whitespace-nowrap">
                     <i data-lucide="layout-dashboard" class="w-3.5 h-3.5 text-blue-400"></i> 홈
                 </button>
-                <button onclick="switchTab('snapshots')" data-tab="snapshots" class="tab-btn w-24 justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
+                <button id="nav-tab-runner" onclick="switchTab('runner')" data-tab="runner" class="tab-btn min-w-[115px] justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
+                    <i data-lucide="activity" class="w-3.5 h-3.5 text-cyan-400"></i> <span id="nav-runner-text">실시간 모니터</span>
+                </button>
+                <button onclick="switchTab('snapshots')" data-tab="snapshots" class="tab-btn min-w-[90px] justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
                     <i data-lucide="history" class="w-3.5 h-3.5 text-amber-400"></i> 되돌리기
                 </button>
-                <button onclick="switchTab('system-image')" data-tab="system-image" class="tab-btn w-24 justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
+                <button onclick="switchTab('system-image')" data-tab="system-image" class="tab-btn min-w-[90px] justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
                     <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-emerald-400"></i> 복구 도구
                 </button>
-                <button onclick="switchTab('settings')" data-tab="settings" class="tab-btn w-24 justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
+                <button onclick="switchTab('settings')" data-tab="settings" class="tab-btn min-w-[90px] justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
                     <i data-lucide="settings" class="w-3.5 h-3.5 text-indigo-400"></i> 환경설정
-                </button>
-                <button id="nav-tab-runner" onclick="switchTab('runner')" data-tab="runner" class="hidden tab-btn min-w-[96px] px-3 justify-center py-1.5 rounded-md text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40 transition flex items-center gap-1.5 animate-pulse whitespace-nowrap">
-                    <i data-lucide="activity" class="w-3.5 h-3.5 text-blue-400"></i> <span id="nav-runner-text">작업 진행 중</span>
                 </button>
             </nav>
 
@@ -226,22 +226,24 @@
                     </div>
 
                     <!-- METRIC 4: OFFSITE REPLICATION -->
-                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2">
+                    <div onclick="switchTab('runner')" class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 hover:border-cyan-500/60 cursor-pointer transition shadow-md flex items-center justify-between gap-2 group" title="클릭하여 실시간 클라우드 복제 모니터 확인">
                         <div class="space-y-1 min-w-0 flex-1">
                             <div class="flex items-center gap-1.5 flex-wrap">
-                                <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400 whitespace-nowrap">다른 장소 복사본</span>
+                                <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400 whitespace-nowrap group-hover:text-cyan-400 transition">다른 장소 복사본</span>
                                 <span id="dashboard-offsite-badge" class="hidden text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap"></span>
                             </div>
                             <div class="flex flex-col gap-0.5 font-mono">
                                 <span id="dashboard-offsite-sync-state" class="text-xs font-bold text-cyan-400 whitespace-nowrap">동기화됨</span>
-                                <span id="dashboard-offsite-mode" class="text-[10px] text-zinc-400 font-mono whitespace-nowrap">지연 없음</span>
+                                <div class="flex items-center justify-between gap-1">
+                                    <span id="dashboard-offsite-mode" class="text-[10px] text-zinc-400 font-mono whitespace-nowrap">지연 없음</span>
+                                    <span class="text-[9px] text-cyan-400/80 font-sans group-hover:underline flex items-center gap-0.5">모니터 ➔</span>
+                                </div>
                             </div>
                         </div>
-                        <div class="w-8 h-8 rounded-lg bg-cyan-950/40 border border-cyan-800/40 flex items-center justify-center text-cyan-400 shrink-0">
+                        <div class="w-8 h-8 rounded-lg bg-cyan-950/40 border border-cyan-800/40 group-hover:border-cyan-500/60 flex items-center justify-center text-cyan-400 shrink-0 transition">
                             <i data-lucide="cloud" class="w-4 h-4"></i>
                         </div>
                         <div class="hidden" id="dashboard-offsite-target">-</div>
-
                     </div>
 
                     <!-- METRIC 5: FAST AUDIT ACTION (Col Span on desktop) -->
@@ -1074,50 +1076,115 @@
             <div id="tab-custom" class="hidden"></div>
             <div id="tab-profiles" class="hidden"></div>
 
-<!-- TAB 2: 실시간 백업 러너 (Live Runner) -->
-            <div id="tab-runner" class="tab-content hidden space-y-6">
+<!-- TAB 2: 실시간 백업 러너 & 클라우드 복제 모니터 (Live Runner) -->
+            <div id="tab-runner" class="tab-content hidden space-y-6 max-w-[1700px] mx-auto">
                 <div class="p-6 rounded-2xl glass-card border border-slate-700/60 space-y-6">
-                    <div class="flex justify-between items-center">
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                         <div class="flex items-center gap-3">
                             <button onclick="switchTab('dashboard')" class="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition flex items-center gap-1.5 border border-zinc-700 shadow-sm" title="홈 화면으로 돌아가기">
                                 <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> 홈으로
                             </button>
-                            <div class="p-3 bg-blue-600/20 text-blue-400 rounded-xl border border-blue-500/30">
-                                <i data-lucide="cpu" class="w-6 h-6"></i>
+                            <div class="p-2.5 bg-cyan-600/20 text-cyan-400 rounded-xl border border-cyan-500/30">
+                                <i data-lucide="activity" class="w-6 h-6"></i>
                             </div>
                             <div>
-                                <h2 class="text-base font-bold text-slate-100">실시간 백업 & 되돌리기 엔진 모니터</h2>
-                                <p class="text-xs text-slate-400">백업/되돌리기 작업 진행 상황과 파일 I/O 및 실시간 로그를 표시합니다.</p>
+                                <h2 class="text-base font-bold text-slate-100 flex items-center gap-2">
+                                    <span>실시간 작업 & 클라우드 복제 모니터</span>
+                                </h2>
+                                <p class="text-xs text-slate-400">로컬 고속 백업/복원 엔진 및 3-2-1 클라우드(구글 드라이브) 원격 복제 파이프라인의 실시간 진행 상황을 한눈에 확인합니다.</p>
                             </div>
                         </div>
                         <div class="flex items-center gap-2">
-                            <span id="runner-status-badge" class="px-3 py-1 bg-slate-700 text-slate-300 rounded-full text-xs font-semibold">대기 중</span>
-                            <button id="runner-cancel-btn" onclick="cancelCurrentTask()" class="hidden px-3 py-1 bg-red-600/80 hover:bg-red-600 text-white rounded-full text-xs font-semibold transition">
-                                작업 취소
+                            <button onclick="switchTab('settings'); switchSettingsSection('cloud');" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition flex items-center gap-1.5 border border-zinc-700 shadow-sm">
+                                <i data-lucide="settings" class="w-3.5 h-3.5 text-indigo-400"></i> 클라우드 설정
+                            </button>
+                            <button onclick="triggerQuickBackup()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-1.5">
+                                <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i> 즉시 백업 실행
                             </button>
                         </div>
                     </div>
 
-                    <!-- Progress Indicator -->
-                    <div class="space-y-2 bg-slate-900/60 p-5 rounded-2xl border border-slate-800">
-                        <div class="flex justify-between items-center text-xs font-semibold">
-                            <span id="runner-current-file" class="text-slate-300 truncate max-w-xl">대기 중</span>
-                            <span id="runner-percent-text" class="text-blue-400 font-mono text-base">0%</span>
+                    <!-- 2-COLUMN GRID: 1. LOCAL BACKUP ENGINE | 2. CLOUD OFFSITE PIPELINE -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        
+                        <!-- CARD 1: 로컬 백업 & 복원 엔진 상태 -->
+                        <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+                            <div class="flex justify-between items-center">
+                                <div class="flex items-center gap-2">
+                                    <div class="p-1.5 bg-blue-600/20 text-blue-400 rounded-lg border border-blue-500/30">
+                                        <i data-lucide="hard-drive" class="w-4 h-4"></i>
+                                    </div>
+                                    <span class="text-sm font-bold text-slate-200">로컬 백업 & 복원 엔진</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span id="runner-status-badge" class="px-3 py-1 bg-slate-700 text-slate-300 rounded-full text-xs font-semibold">대기 중</span>
+                                    <button id="runner-cancel-btn" onclick="cancelCurrentTask()" class="hidden px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white rounded-lg text-xs font-semibold transition">
+                                        작업 취소
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="space-y-2 bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
+                                <div class="flex justify-between items-center text-xs font-semibold">
+                                    <span id="runner-current-file" class="text-slate-300 truncate max-w-sm">대기 중</span>
+                                    <span id="runner-percent-text" class="text-blue-400 font-mono text-base">0%</span>
+                                </div>
+                                <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                                    <div id="runner-progress-bar" class="bg-gradient-to-r from-blue-500 to-indigo-500 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                                <div class="flex justify-between items-center text-[11px] text-slate-400">
+                                    <span id="runner-stats-text" class="font-mono">파일: 0 / 0</span>
+                                    <span class="text-slate-500">FastCDC 증분 변경분 탐색</span>
+                                </div>
+                            </div>
                         </div>
-                        <div class="w-full bg-slate-800 rounded-full h-3 overflow-hidden">
-                            <div id="runner-progress-bar" class="bg-gradient-to-r from-blue-500 to-indigo-500 h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+
+                        <!-- CARD 2: 3-2-1 클라우드 (구글 드라이브) 원격 복제 상태 -->
+                        <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+                            <div class="flex justify-between items-center">
+                                <div class="flex items-center gap-2">
+                                    <div class="p-1.5 bg-cyan-600/20 text-cyan-400 rounded-lg border border-cyan-500/30">
+                                        <i data-lucide="cloud" class="w-4 h-4"></i>
+                                    </div>
+                                    <span class="text-sm font-bold text-slate-200">3-2-1 클라우드 (원격 복제)</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span id="runner-cloud-conn-badge" class="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-800">
+                                        구글 드라이브 (Cloud)
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="space-y-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
+                                <div class="flex justify-between items-center text-xs">
+                                    <span id="runner-cloud-sync-badge" class="font-bold text-cyan-400 flex items-center gap-1.5">
+                                        <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i> 최신 백업 시점 동기화 완료
+                                    </span>
+                                </div>
+                                <div class="text-[11px] font-mono text-slate-400 truncate" id="runner-cloud-target-text">
+                                    대상: GDrive: BackupSystem_Offsite
+                                </div>
+                                <div class="text-[11px] text-slate-400 flex flex-wrap justify-between items-center gap-2 pt-1 border-t border-slate-800/60">
+                                    <span id="runner-cloud-detail-text">로컬 백업 완료 시 백그라운드 자동 2차 복제</span>
+                                    <div class="flex items-center gap-1.5 shrink-0">
+                                        <button onclick="testOffsiteFromUI()" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] font-medium border border-cyan-800/50 transition">
+                                            연결 테스트
+                                        </button>
+                                        <button onclick="triggerOffsiteSyncFromUI()" class="px-2 py-0.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-bold transition flex items-center gap-1">
+                                            <i data-lucide="refresh-cw" class="w-3 h-3"></i> 원격 복제
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div class="flex justify-between items-center text-[11px] text-slate-400">
-                            <span id="runner-stats-text">파일: 0 / 0</span>
-                            <span>바뀐 것만 점검 활성화</span>
-                        </div>
+
                     </div>
 
                     <!-- Live Terminal Output -->
                     <div class="space-y-2">
                         <div class="flex justify-between items-center text-xs text-slate-400">
                             <span class="font-semibold text-slate-300 flex items-center gap-1.5">
-                                <i data-lucide="terminal" class="w-4 h-4 text-blue-400"></i> 작업 실행 로그
+                                <i data-lucide="terminal" class="w-4 h-4 text-blue-400"></i> 작업 실행 로그 (로컬 백업 & 클라우드 전송 실시간 스트리밍)
                             </span>
                             <div class="flex items-center gap-2">
                                 <button onclick="copyDiagnosticLogs(this)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] font-semibold border border-slate-700 transition flex items-center gap-1.5 shadow-sm">
@@ -1127,7 +1194,7 @@
                                 <span class="text-[11px]">최근 30건 실시간 스트리밍</span>
                             </div>
                         </div>
-                        <div id="terminal-log-box" class="terminal-box h-72 rounded-xl p-4 overflow-y-auto text-xs leading-relaxed space-y-1">
+                        <div id="terminal-log-box" class="terminal-box h-72 rounded-xl p-4 overflow-y-auto text-xs leading-relaxed space-y-1 font-mono">
                             <div class="text-slate-500">준비됐어요. 백업이 시작되면 진행 상황이 여기에 표시돼요.</div>
                         </div>
                     </div>

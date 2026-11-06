@@ -449,8 +449,25 @@ async function pollTaskStatus() {
 
         // Update Runner UI
         const runnerNavBtn = document.getElementById('nav-tab-runner');
+        const runnerNavText = document.getElementById('nav-runner-text');
+        const pct = progress.percent || 0;
         if (runnerNavBtn) {
-            runnerNavBtn.classList.toggle('hidden', !isRunning && state.activeTab !== 'runner');
+            runnerNavBtn.classList.remove('hidden');
+            if (isRunning) {
+                runnerNavBtn.classList.add('animate-pulse', 'border', 'border-blue-500/40', 'bg-blue-500/20', 'text-blue-300');
+                runnerNavBtn.classList.remove('text-zinc-400');
+                if (runnerNavText) runnerNavText.innerText = (pct > 0 ? `작업 중 ${pct}%` : '작업 진행 중');
+            } else {
+                runnerNavBtn.classList.remove('animate-pulse', 'border', 'border-blue-500/40', 'bg-blue-500/20', 'text-blue-300');
+                if (state.activeTab === 'runner') {
+                    runnerNavBtn.classList.add('bg-white/10', 'text-white', 'shadow-sm');
+                    runnerNavBtn.classList.remove('text-zinc-400');
+                } else {
+                    runnerNavBtn.classList.remove('bg-white/10', 'text-white', 'shadow-sm');
+                    runnerNavBtn.classList.add('text-zinc-400');
+                }
+                if (runnerNavText) runnerNavText.innerText = '실시간 모니터';
+            }
         }
 
         const runnerStatusEl = document.getElementById('runner-status-badge');

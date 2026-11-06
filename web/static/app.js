@@ -37,12 +37,9 @@ function switchTab(tabId) {
 
     state.activeTab = tabId;
 
-    // Show/hide runner tab button in header if runner is active
-    const runnerNavBtn = document.getElementById('nav-tab-runner');
-    if (runnerNavBtn) {
-        if (tabId === 'runner') {
-            runnerNavBtn.classList.remove('hidden');
-        }
+    if (tabId === 'runner') {
+        if (typeof pollTaskStatus === 'function') pollTaskStatus();
+        renderOffsiteStatusWidget();
     }
 
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -173,6 +170,10 @@ function renderOffsiteStatusWidget() {
     const topoTarget = document.getElementById('topology-offsite-target');
     const topoStatus = document.getElementById('topology-offsite-status');
     const dashProtPill = document.getElementById('dash-protection-pill');
+    const runnerCloudConn = document.getElementById('runner-cloud-conn-badge');
+    const runnerCloudSync = document.getElementById('runner-cloud-sync-badge');
+    const runnerCloudTarget = document.getElementById('runner-cloud-target-text');
+    const runnerCloudDetail = document.getElementById('runner-cloud-detail-text');
 
     if (!off || !off.enabled) {
         const noSnaps = !state.snapshots || state.snapshots.length === 0;
@@ -214,6 +215,15 @@ function renderOffsiteStatusWidget() {
             dashProtPill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span><span>' + (noSnaps ? '아직 백업이 없어요' : '이 PC에 잠금 보호 중') + '</span>';
             dashProtPill.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-950 text-amber-300 border border-amber-800 flex items-center gap-1.5';
         }
+        if (runnerCloudConn) {
+            runnerCloudConn.innerText = '로컬 전용 (미사용)';
+            runnerCloudConn.className = 'text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700';
+        }
+        if (runnerCloudSync) {
+            runnerCloudSync.innerHTML = '<span class="text-zinc-400 font-medium">3-2-1 다른 장소 보관 미설정 (로컬 백업만 수행)</span>';
+        }
+        if (runnerCloudTarget) runnerCloudTarget.innerText = '원격 복제 대상: 설정 안 됨';
+        if (runnerCloudDetail) runnerCloudDetail.innerText = '환경설정에서 구글 드라이브 또는 원격 NAS를 활성화하면 2차 복제됩니다.';
         return;
     }
 
@@ -283,6 +293,28 @@ function renderOffsiteStatusWidget() {
     if (dashProtPill) {
         dashProtPill.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>안전 보관 정상</span>';
         dashProtPill.className = 'px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-950 text-emerald-300 border border-emerald-800 flex items-center gap-1.5';
+    }
+
+    if (runnerCloudConn) {
+        runnerCloudConn.innerText = modeText;
+        runnerCloudConn.className = 'text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-800';
+    }
+    if (runnerCloudSync) {
+        if (hasSnaps) {
+            runnerCloudSync.innerHTML = '<span class="text-emerald-400 font-bold flex items-center gap-1.5"><i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i> 최신 백업 시점 동기화 완료</span>';
+        } else {
+            runnerCloudSync.innerHTML = '<span class="text-amber-400 font-bold flex items-center gap-1.5"><i data-lucide="clock" class="w-4 h-4 text-amber-400 animate-pulse"></i> 백업 시점 복제 대기/진행 중</span>';
+        }
+    }
+    if (runnerCloudTarget) {
+        runnerCloudTarget.innerText = `대상: ${targetText}`;
+        runnerCloudTarget.title = targetText;
+    }
+    if (runnerCloudDetail) {
+        runnerCloudDetail.innerText = off.auto_sync ? '✓ 완료 후 자동 동기화 켜짐 (로컬 백업 완료 즉시 백그라운드 2차 복제)' : '수동 동기화 모드 (원격 복제 버튼 클릭 시 전송)';
+    }
+    if (window.lucide && typeof lucide.createIcons === 'function') {
+        lucide.createIcons();
     }
 }
 
