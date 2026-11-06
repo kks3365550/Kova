@@ -272,7 +272,6 @@ let _installerDownloadUrl = null;
 async function checkRemoteRelease() {
     try {
         const res = await fetchAPI('/api/system/check-remote-release');
-        const banner = document.getElementById('remote-release-banner');
         const statusBadge = document.getElementById('header-release-status');
         const statusText = document.getElementById('header-release-text');
         const statusIcon = document.getElementById('header-release-icon');
@@ -296,7 +295,6 @@ async function checkRemoteRelease() {
         if (data.error) {
             // 통신 오류 시 배지 조용히 숨김 (최신 버전 오인 방지)
             if (statusBadge) statusBadge.classList.add('hidden');
-            if (banner) banner.classList.add('hidden');
             return;
         }
 
@@ -325,7 +323,7 @@ async function checkRemoteRelease() {
                 statusBadge.title = 'GitHub 공식 릴리즈와 일치하는 최신 상태입니다.';
                 statusBadge.classList.remove('hidden');
             }
-            if (banner) banner.classList.add('hidden');
+
         }
         if (window.lucide) lucide.createIcons();
     } catch (e) {
