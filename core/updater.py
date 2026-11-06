@@ -130,7 +130,7 @@ def _check_github_release(current_ver: str) -> Optional[Dict[str, Any]]:
 
         if latest_tuple <= cur_tuple:
             logger.info("UPDATE_CHECK_GITHUB already_up_to_date (%s >= %s)", current_ver, latest_tag)
-            return None
+            return {"update_available": False, "latest_version": latest_tag.lstrip("vV")}
 
         assets = data.get("assets", [])
         zip_url = None
@@ -220,7 +220,7 @@ def _check_github_web_fallback(current_ver: str) -> Optional[Dict[str, Any]]:
                 latest_tuple = parse_version(latest_tag)
                 if latest_tuple <= cur_tuple:
                     logger.info("UPDATE_CHECK_WEB already_up_to_date (%s >= %s)", current_ver, latest_tag)
-                    return None
+                    return {"update_available": False, "latest_version": latest_tag.lstrip("vV")}
 
                 clean_tag = latest_tag.lstrip("vV")
                 zip_url = f"https://github.com/{GITHUB_REPO}/releases/download/{latest_tag}/release_{latest_tag}.zip"
@@ -246,7 +246,9 @@ def _check_github_web_fallback(current_ver: str) -> Optional[Dict[str, Any]]:
 
 
 def _check_local_dist_fallback(current_ver: str) -> Optional[Dict[str, Any]]:
-    """로컬 배포 디렉토리(D:\백업시스템_설치용 등)의 최신 릴리즈 확인"""
+    """로컬 배포 디렉토리(D:\백업시스템_설치용 등)의 최신 릴리즈 확인 (테스트 환경에서는 격리)"""
+    if os.environ.get("PYTEST_CURRENT_TEST") or "pytest" in sys.modules:
+        return None
     candidates = ["D:\\백업시스템_설치용", "F:\\백업시스템_설치용", "D:\\MyBackup_Repository\\disaster_recovery_kit"]
     cur_tuple = parse_version(current_ver)
     for cand in candidates:
@@ -284,12 +286,23 @@ def check_for_update(current_ver: Optional[str] = None) -> Optional[Dict[str, An
         current_ver = get_current_installed_version()
 
     logger.info("UPDATE_CHECK_START current_version=%s", current_ver)
+    
+    # 1. GitHub Releases API (1차 공식 채널)
     res = _check_github_release(current_ver)
-    if not res:
-        res = _check_github_web_fallback(current_ver)
-    if not res:
-        res = _check_local_dist_fallback(current_ver)
-    return res
+    if res is not None:
+        return res if res.get("update_available") else None
+
+    # 2. GitHub HTML Web Redirect Fallback (API 403 Rate Limit 대응 무제한 채널)
+    web_res = _check_github_web_fallback(current_ver)
+    if web_res is not None:
+        return web_res if web_res.get("update_available") else None
+
+    # 3. 로컬 배포 마스터 Fallback (사내 폐쇄망 환경 대응)
+    local_res = _check_local_dist_fallback(current_ver)
+    if local_res is not None:
+        return local_res if local_res.get("update_available") else None
+
+    return None
 
 
 def download_update(release_info: Dict[str, Any], temp_dir: Optional[str] = None) -> Optional[str]:
