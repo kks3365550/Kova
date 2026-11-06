@@ -622,8 +622,19 @@ def _check_gdrive_connection(credentials_file: Optional[str], folder_id: Optiona
             "error": str(e)
         }
 
+_offsite_status_cache = {"timestamp": 0.0, "data": None}
+
+def invalidate_offsite_cache():
+    global _offsite_status_cache
+    _offsite_status_cache = {"timestamp": 0.0, "data": None}
+
 @app.get("/api/offsite")
-def get_offsite_status():
+def get_offsite_status(force: bool = False):
+    global _offsite_status_cache
+    now = time.time()
+    if not force and _offsite_status_cache["data"] is not None and (now - _offsite_status_cache["timestamp"] < 60.0):
+        return _offsite_status_cache["data"]
+
     cfg = ConfigManager.get_offsite_config()
     provider = cfg.get("provider", "local")
     remote = (cfg.get("remote_path", "") or "").strip().strip('"').strip("'")
@@ -635,7 +646,7 @@ def get_offsite_status():
     else:
         status = _check_remote_path(remote)
 
-    return {
+    result = {
         "success": True,
         "enabled": cfg.get("enabled", False),
         "provider": provider,
@@ -645,9 +656,12 @@ def get_offsite_status():
         "auto_sync": cfg.get("auto_sync", True),
         "status": status
     }
+    _offsite_status_cache = {"timestamp": now, "data": result}
+    return result
 
 @app.post("/api/offsite")
 def save_offsite_settings(req: OffsiteSaveRequest):
+    invalidate_offsite_cache()
     remote_clean = (req.remote_path or "").strip().strip('"').strip("'")
     creds_clean = (req.gdrive_credentials_file or "").strip().strip('"').strip("'")
     folder_clean = (req.gdrive_folder_id or "").strip().strip('"').strip("'")
@@ -892,6 +906,7 @@ def test_offsite_connection(req: OffsiteTestRequest):
 
 @app.post("/api/offsite/sync")
 def trigger_manual_offsite_sync(req: OffsiteSyncRequest):
+    invalidate_offsite_cache()
     global is_offsite_syncing
     with offsite_sync_lock:
         if is_offsite_syncing:

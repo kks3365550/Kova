@@ -112,27 +112,45 @@ function switchSettingsSection(sectionId) {
 
 async function loadDashboard() {
     const __t0 = performance.now();
+
+    // [0단계: 0ms 즉시 하이드레이션 (Zero-Delay Instant UI)]
+    // 이전에 캐시된 스냅샷 데이터가 있으면 API 응답 대기 없이 0ms 즉시 차트와 목록을 먼저 그린다!
+    if (!state.snapshots || state.snapshots.length === 0) {
+        try {
+            const cachedSnapsRaw = localStorage.getItem('kova_cached_snapshots');
+            if (cachedSnapsRaw) {
+                state.snapshots = JSON.parse(cachedSnapsRaw);
+                renderRecentSnapshots();
+                renderDashboardSnapshotChart();
+            }
+        } catch (e) {}
+    }
+
     try {
         // [1단계: 초고속 핵심 경로 (Critical Path - SLA < 50ms)]
-        // 스냅샷 목록, 프로필, 시스템 기본 정보, 오프사이트 상태를 병렬 조회하여 홈 화면 백업 기록 즉시 렌더링
-        const [sys, profiles, snaps, offsite] = await Promise.all([
+        // 스냅샷 목록, 프로필, 시스템 기본 정보만 병렬 조회하여 홈 화면 백업 기록 즉시 렌더링 (오프사이트 완전 분리)
+        const [sys, profiles, snaps] = await Promise.all([
             fetchAPI('/api/system-info'),
             fetchAPI('/api/profiles'),
-            fetchAPI('/api/snapshots'),
-            fetchAPI('/api/offsite').catch(() => null)
+            fetchAPI('/api/snapshots')
         ]);
         const __t_api = performance.now();
 
         state.systemInfo = sys;
         state.profiles = profiles;
         state.snapshots = snaps;
-        state.offsite = offsite;
+
+        // 캐시 갱신
+        try {
+            if (snaps && snaps.length > 0) {
+                localStorage.setItem('kova_cached_snapshots', JSON.stringify(snaps));
+            }
+        } catch(e) {}
 
         // 1단계 즉시 렌더링 (0.05초 만에 홈 화면 스냅샷 목록 표출)
         renderDashboardStats();
         renderRecentSnapshots();
         renderSystemDrives();
-        renderOffsiteStatusWidget();
         checkOnboardingWizard();
         const __t_dom = performance.now();
 
@@ -148,9 +166,15 @@ async function loadDashboard() {
         if (typeof loadSystemImageStatus === 'function') {
             loadSystemImageStatus();
         }
-        if (typeof loadOffsiteStatus === 'function') {
-            loadOffsiteStatus();
-        }
+
+        // [2단계: 백그라운드 비차단 경로 (Background Non-Blocking)]
+        // 오프사이트 상태를 비동기 백그라운드 조회하여 차트 렌더링 지연 없이 상태 위젯만 부드럽게 갱신
+        fetchAPI('/api/offsite').then(offsite => {
+            if (offsite) {
+                state.offsite = offsite;
+                renderOffsiteStatusWidget();
+            }
+        }).catch(() => null);
         if (typeof checkForSoftwareUpdate === 'function') {
             checkForSoftwareUpdate(false, false);
         }
@@ -696,6 +720,11 @@ function renderRecentSnapshots() {
 
     lucide.createIcons();
     renderDashboardSnapshotChart();
+
+    // [0ms 무지연 복원용 최근 스냅샷 HTML 캐시 저장]
+    try {
+        localStorage.setItem('kova_cached_recent_snaps_html', container.innerHTML);
+    } catch(e) {}
 }
 
 function renderDashboardSnapshotChart() {
@@ -816,6 +845,14 @@ function renderDashboardSnapshotChart() {
             <span class="text-emerald-400">최신 백업 시점: <b>${lastDate} (Live)</b></span>
         `;
     }
+
+    // [0ms 무지연 복원용 차트 HTML 및 메타데이터 캐시 저장]
+    try {
+        localStorage.setItem('kova_cached_chart_html', container.innerHTML);
+        if (metaSummary) localStorage.setItem('kova_cached_chart_meta', metaSummary.innerText);
+        if (dateLabels) localStorage.setItem('kova_cached_chart_dates', dateLabels.innerHTML);
+        if (state.snapshots) localStorage.setItem('kova_cached_total_snaps', String(state.snapshots.length));
+    } catch(e) {}
 }
 
 // =========================================================================

@@ -184,7 +184,7 @@
                         <div class="space-y-0.5 min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-500/30 text-purple-300 border border-purple-500/40 font-mono">신규 업데이트 출시</span>
-                                <span id="dash-update-target-ver" class="text-xs font-mono font-bold text-white">v2.17.61</span>
+                                <span id="dash-update-target-ver" class="text-xs font-mono font-bold text-white">v2.17.62</span>
                                 <span class="text-[11px] text-zinc-400 font-mono">(현재: <span id="dash-update-current-ver">v{{ version if version else '2.17.60' }}</span>)</span>
                             </div>
                             <p id="dash-update-desc" class="text-xs text-zinc-300 truncate max-w-xl font-medium">새로운 기능과 성능 개선 및 버그 패치가 포함되어 있습니다. 원클릭으로 안전하게 업데이트하세요.</p>
@@ -316,6 +316,27 @@
                                 <span>과거 백업 시점</span>
                                 <span class="text-blue-400">최신 백업 시점 (Live)</span>
                             </div>
+                            <script>
+                                (function() {
+                                    try {
+                                        var h = localStorage.getItem('kova_cached_chart_html');
+                                        if (h) {
+                                            var c = document.getElementById('dashboard-snapshot-chart');
+                                            if (c) c.innerHTML = h;
+                                        }
+                                        var m = localStorage.getItem('kova_cached_chart_meta');
+                                        if (m) {
+                                            var el = document.getElementById('chart-meta-summary');
+                                            if (el) el.innerText = m;
+                                        }
+                                        var d = localStorage.getItem('kova_cached_chart_dates');
+                                        if (d) {
+                                            var dl = document.getElementById('chart-date-labels');
+                                            if (dl) dl.innerHTML = d;
+                                        }
+                                    } catch(e) {}
+                                })();
+                            </script>
                         </div>
 
                         <!-- FASTCDC CHUNKING & DEDUPLICATION TELEMETRY -->
@@ -375,6 +396,22 @@
                                 <div id="recent-snapshots-list" class="space-y-2">
                                     <!-- Injected by JS -->
                                 </div>
+                                <script>
+                                    (function() {
+                                        try {
+                                            var rh = localStorage.getItem('kova_cached_recent_snaps_html');
+                                            if (rh) {
+                                                var rl = document.getElementById('recent-snapshots-list');
+                                                if (rl) rl.innerHTML = rh;
+                                            }
+                                            var sc = localStorage.getItem('kova_cached_total_snaps');
+                                            if (sc) {
+                                                var el = document.getElementById('stat-total-snaps');
+                                                if (el) el.innerText = sc;
+                                            }
+                                        } catch(e) {}
+                                    })();
+                                </script>
                             </div>
 
                             <div class="pt-3 border-t border-zinc-800/80 mt-3 flex items-center justify-between text-[11px] font-mono text-zinc-400">
