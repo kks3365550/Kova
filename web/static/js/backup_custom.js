@@ -286,6 +286,9 @@ async function startCustomSelectionBackup() {
     }
 
     saveCustomSelectionState();
+    try {
+        localStorage.setItem('kova_last_used_profile_id', 'prof_custom_selected');
+    } catch(e) {}
     switchTab('runner');
 
     try {

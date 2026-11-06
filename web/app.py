@@ -313,6 +313,29 @@ def _build_ssr_dashboard_data():
                 </div>
             </div>''')
 
+        # Resolve target profile name
+        target_p_name = "내 맞춤형 핵심 백업"
+        try:
+            from core.config import ConfigManager
+            all_profs = ConfigManager.get_profiles()
+            user_profs = [p for p in all_profs if p.get("id") != "prof_default"]
+            if user_profs:
+                matched = None
+                if snaps:
+                    snaps_by_time = sorted(snaps, key=lambda s: float(s.get("created_at") or 0), reverse=True)
+                    last_pid = snaps_by_time[0].get("profile_id")
+                    matched = next((p for p in user_profs if p.get("id") == last_pid), None)
+                if not matched:
+                    matched = next((p for p in user_profs if p.get("id") == "prof_custom_selected"), None)
+                if not matched:
+                    matched = user_profs[0]
+                if matched:
+                    target_p_name = matched.get("name", target_p_name)
+            elif all_profs:
+                target_p_name = all_profs[0].get("name", target_p_name)
+        except Exception:
+            pass
+
         import json
         return {
             "chart_html": chart_html,
@@ -320,7 +343,8 @@ def _build_ssr_dashboard_data():
             "chart_dates": chart_dates,
             "recents_html": "".join(recents_html_items),
             "snapshots_json": json.dumps(snaps),
-            "total_snaps": str(len(snaps))
+            "total_snaps": str(len(snaps)),
+            "target_profile_name": target_p_name
         }
     except Exception as e:
         logger.warning(f"[SSR] Dashboard pre-render error: {e}")
@@ -347,7 +371,8 @@ async def index_page(request: Request):
         "initial_chart_dates": ssr["chart_dates"],
         "initial_recents_html": ssr["recents_html"],
         "initial_snapshots_json": ssr["snapshots_json"],
-        "initial_total_snaps": ssr["total_snaps"]
+        "initial_total_snaps": ssr["total_snaps"],
+        "initial_target_profile_name": ssr.get("target_profile_name", "내 맞춤형 핵심 백업")
     }
     return templates.TemplateResponse(request=request, name="index.html", context=ctx)
 

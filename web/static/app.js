@@ -40,6 +40,7 @@ function switchTab(tabId) {
     if (tabId === 'runner') {
         if (typeof pollTaskStatus === 'function') pollTaskStatus();
         renderOffsiteStatusWidget();
+        if (typeof updateQuickBackupTargetUI === 'function') updateQuickBackupTargetUI();
     }
 
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -143,6 +144,7 @@ async function loadDashboard() {
         renderDashboardStats();
         renderSystemDrives();
         checkOnboardingWizard();
+        if (typeof updateQuickBackupTargetUI === 'function') updateQuickBackupTargetUI();
 
         // SSR 또는 캐시와 데이터가 동일하면 불필요한 차트 깜빡임/재애니메이션 억제
         const currentCount = (state.snapshots && state.snapshots.length) || 0;
@@ -1140,6 +1142,9 @@ async function saveProfileFromModal() {
 }
 
 async function triggerProfileBackup(profileId) {
+    try {
+        localStorage.setItem('kova_last_used_profile_id', profileId);
+    } catch(e) {}
     switchTab('runner');
     try {
         await fetchAPI('/api/backup/run', {

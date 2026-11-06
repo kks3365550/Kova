@@ -402,11 +402,86 @@ async function startRestore() {
     }
 }
 
+// Quick Backup Target Resolution (Prioritizes: Last used profile -> Latest snapshot's profile -> Custom selected -> Auto profile -> Default)
+async function getQuickBackupProfile() {
+    if (!state.profiles || state.profiles.length === 0) {
+        try {
+            state.profiles = await fetchAPI('/api/profiles');
+        } catch (e) {
+            state.profiles = [];
+        }
+    }
+    const profiles = state.profiles || [];
+    if (profiles.length === 0) {
+        return { id: 'prof_default', name: '기본 백업' };
+    }
+
+    // 1. Last used profile from localStorage
+    try {
+        const lastId = localStorage.getItem('kova_last_used_profile_id');
+        if (lastId) {
+            const found = profiles.find(p => p.id === lastId);
+            if (found) return found;
+        }
+    } catch(e) {}
+
+    // 2. Latest snapshot's profile_id
+    if (state.snapshots && state.snapshots.length > 0) {
+        const latestSnap = state.snapshots[0];
+        const latestProfId = latestSnap.profile_id;
+        if (latestProfId) {
+            const found = profiles.find(p => p.id === latestProfId);
+            if (found) return found;
+        }
+    }
+
+    // 3. Custom selection profile if exists
+    const customProf = profiles.find(p => p.id === 'prof_custom_selected');
+    if (customProf) return customProf;
+
+    // 4. Active auto backup profile (prefer non-default if available)
+    const activeAuto = profiles.find(p => p.auto_backup_enabled && p.id !== 'prof_default');
+    if (activeAuto) return activeAuto;
+
+    // 5. Any non-default user profile
+    const nonDefault = profiles.find(p => p.id !== 'prof_default');
+    if (nonDefault) return nonDefault;
+
+    // 6. Fallback
+    return profiles[0];
+}
+
+async function updateQuickBackupTargetUI() {
+    try {
+        const prof = await getQuickBackupProfile();
+        const pName = prof.name || '기본 백업';
+        
+        const runnerBadge = document.getElementById('runner-target-profile-badge');
+        const runnerNameEl = document.getElementById('runner-target-profile-name');
+        if (runnerBadge) runnerBadge.classList.remove('hidden');
+        if (runnerNameEl) runnerNameEl.innerText = pName;
+
+        const dashTargetEl = document.getElementById('dash-quick-target-profile');
+        if (dashTargetEl) dashTargetEl.innerText = `대상: ${pName}`;
+
+        const runnerBtn = document.getElementById('btn-runner-quick-backup');
+        if (runnerBtn) {
+            runnerBtn.title = `마지막 백업 프로필 '${pName}'을(를) 지금 즉시 실행합니다`;
+        }
+    } catch (e) {
+        console.warn('Failed to update quick backup UI:', e);
+    }
+}
+
 // Quick Backup Trigger (Uses currently scheduled / active profile)
 async function triggerQuickBackup() {
-    const profiles = state.profiles || [];
-    const activeProf = profiles.find(p => p.auto_backup_enabled) || (profiles.length > 0 ? profiles[0] : null);
-    const profId = activeProf ? activeProf.id : 'prof_default';
+    const targetProf = await getQuickBackupProfile();
+    const profId = targetProf.id;
+    const profName = targetProf.name || '기본 백업';
+
+    try {
+        localStorage.setItem('kova_last_used_profile_id', profId);
+    } catch(e) {}
 
     switchTab('runner');
     const runnerStatusEl = document.getElementById('runner-status-badge');
@@ -416,7 +491,7 @@ async function triggerQuickBackup() {
         runnerStatusEl.innerText = '백업 시작 준비 중...';
     }
     if (runnerFileText) {
-        runnerFileText.innerText = '백업 작업 초기화 및 고속 스캔 준비 중...';
+        runnerFileText.innerText = `[${profName}] 백업 작업 초기화 및 고속 스캔 준비 중...`;
     }
 
     try {

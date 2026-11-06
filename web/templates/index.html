@@ -184,7 +184,7 @@
                         <div class="space-y-0.5 min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-500/30 text-purple-300 border border-purple-500/40 font-mono">신규 업데이트 출시</span>
-                                <span id="dash-update-target-ver" class="text-xs font-mono font-bold text-white">v2.17.63</span>
+                                <span id="dash-update-target-ver" class="text-xs font-mono font-bold text-white">v2.17.64</span>
                                 <span class="text-[11px] text-zinc-400 font-mono">(현재: <span id="dash-update-current-ver">v{{ version if version else '2.17.60' }}</span>)</span>
                             </div>
                             <p id="dash-update-desc" class="text-xs text-zinc-300 truncate max-w-xl font-medium">새로운 기능과 성능 개선 및 버그 패치가 포함되어 있습니다. 원클릭으로 안전하게 업데이트하세요.</p>
@@ -276,9 +276,12 @@
 
                     <!-- METRIC 5: FAST AUDIT ACTION (Col Span on desktop) -->
                     <div class="col-span-2 md:col-span-4 lg:col-span-1 p-2 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2">
-                        <button onclick="triggerQuickBackup()" class="flex-1 py-2.5 px-3 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white rounded-lg text-xs font-bold font-mono transition shadow-lg shadow-blue-600/25 flex items-center justify-center gap-1.5">
-                            <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
-                            <span>지금 백업하기</span>
+                        <button onclick="triggerQuickBackup()" class="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white rounded-lg text-xs font-bold font-mono transition shadow-lg shadow-blue-600/25 flex flex-col items-center justify-center gap-0.5" title="마지막 백업 프로필을 지금 즉시 실행합니다">
+                            <div class="flex items-center gap-1.5">
+                                <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+                                <span>지금 백업하기</span>
+                            </div>
+                            <span id="dash-quick-target-profile" class="text-[10px] text-blue-200 font-normal truncate max-w-[150px]">대상: {{ initial_target_profile_name or '내 맞춤형 핵심 백업' }}</span>
                         </button>
                     </div>
 
@@ -1169,11 +1172,16 @@
                             </div>
                         </div>
                         <div class="flex items-center gap-2">
+                            <span id="runner-target-profile-badge" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/90 border border-zinc-700/70 text-xs font-mono text-zinc-300 shadow-sm" title="현재 실행 대상 백업 프로필">
+                                <i data-lucide="layers" class="w-3.5 h-3.5 text-blue-400"></i>
+                                <span>대상: <b id="runner-target-profile-name" class="text-blue-300">{{ initial_target_profile_name or '내 맞춤형 핵심 백업' }}</b></span>
+                            </span>
                             <button onclick="switchTab('settings'); switchSettingsSection('cloud');" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition flex items-center gap-1.5 border border-zinc-700 shadow-sm">
                                 <i data-lucide="settings" class="w-3.5 h-3.5 text-indigo-400"></i> 클라우드 설정
                             </button>
-                            <button onclick="triggerQuickBackup()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-1.5">
-                                <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i> 즉시 백업 실행
+                            <button onclick="triggerQuickBackup()" id="btn-runner-quick-backup" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-1.5" title="마지막 백업 프로필을 지금 즉시 실행합니다">
+                                <i data-lucide="play" class="w-3.5 h-3.5 fill-current"></i>
+                                <span>즉시 백업 실행</span>
                             </button>
                         </div>
                     </div>

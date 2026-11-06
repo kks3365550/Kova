@@ -482,9 +482,41 @@ def _background_backup_task(params: Dict[str, Any]):
         if profile_id:
             profile = ConfigManager.get_profile(profile_id)
 
+        # 프로필이 없거나 'prof_default'(서버/시스템 메인)로 요청된 경우:
+        # 사용자가 생성한 맞춤 핵심 백업이나 마지막 실행한 백업 프로필이 있는지 스마트 감지하여 자동 적용
+        if not profile or profile_id == "prof_default":
+            profiles = ConfigManager.get_profiles()
+            user_profiles = [p for p in profiles if p.get("id") != "prof_default"]
+            if user_profiles:
+                target_p = None
+                try:
+                    for cand in _get_all_candidate_repos():
+                        if os.path.exists(os.path.join(cand, "snapshots")):
+                            from core.snapshot import SnapshotEngine
+                            snaps = SnapshotEngine.list_snapshots(cand)
+                            if snaps:
+                                s_sorted = sorted(snaps, key=lambda s: float(s.get("created_at") or 0), reverse=True)
+                                last_prof_id = s_sorted[0].get("profile_id")
+                                if last_prof_id:
+                                    target_p = next((p for p in user_profiles if p.get("id") == last_prof_id), None)
+                                    if target_p:
+                                        break
+                except Exception:
+                    pass
+
+                if not target_p:
+                    target_p = next((p for p in user_profiles if p.get("id") == "prof_custom_selected"), None)
+                if not target_p:
+                    target_p = next((p for p in user_profiles if p.get("auto_backup_enabled")), None)
+                if not target_p:
+                    target_p = user_profiles[0]
+
+                if target_p:
+                    profile = target_p
+                    profile_id = target_p.get("id")
+
         if not profile:
             profiles = ConfigManager.get_profiles()
-            # Find active profile with auto_backup_enabled == True, or first profile
             profile = next((p for p in profiles if p.get("auto_backup_enabled")), (profiles[0] if profiles else {}))
             profile_id = profile.get("id", "prof_default")
         
