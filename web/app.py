@@ -940,7 +940,14 @@ def trigger_manual_offsite_sync(req: OffsiteSyncRequest):
                 log_callback=append_task_log
             )
             if res.get("success"):
-                append_task_log(f"[3-2-1 오프사이트] 동기화 성공: 복사/업로드 {res.get('files_copied', 0)}개 / 전체 {res.get('files_total', 0)}개 ({res.get('duration_sec', 0.0):.1f}초)")
+                copied = res.get("files_copied", 0)
+                trans_str = res.get("transferred_bytes_str") or ""
+                dur = res.get("duration_sec", 0.0)
+                if copied > 0:
+                    detail = f"신규 {copied}개 파일 업로드 완료" + (f" ({trans_str})" if trans_str else "")
+                    append_task_log(f"[3-2-1 오프사이트] 동기화 성공: {detail} ({dur:.1f}초)")
+                else:
+                    append_task_log(f"[3-2-1 오프사이트] 동기화 성공: 클라우드 보관함이 이미 최신 상태입니다 (신규 변경 0개 / 100% 무결성 일치 확인, {dur:.1f}초)")
             else:
                 append_task_log(f"[3-2-1 오프사이트] 동기화 실패: {res.get('reason', '알 수 없음')}", level="WARNING")
         except Exception as e_sync:

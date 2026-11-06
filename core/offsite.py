@@ -683,6 +683,7 @@ hash_type = md5
             "--fast-list",
             "--stats", "5s",
             "--stats-one-line",
+            "-v",
             "--exclude", ".quarantine_blobs/**",
             "--exclude", "*.db-wal",
             "--exclude", "*.db-shm",
@@ -709,6 +710,8 @@ hash_type = md5
                 creationflags=creationflags
             )
 
+            copied_count = 0
+            transferred_str = ""
             last_log_t = time.time()
             if proc.stdout:
                 for line in proc.stdout:
@@ -716,10 +719,16 @@ hash_type = md5
                     if not line_s:
                         continue
                     now = time.time()
-                    # Rclone stats line 실시간 UI 반영
-                    if ("ETA" in line_s or "%" in line_s or "Transferred:" in line_s) and (now - last_log_t >= 3.0):
+                    if ": Copied" in line_s:
+                        copied_count += 1
+                        clean_f = re.sub(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} INFO\s*:\s*", "", line_s)
+                        self._log(f"[구글 드라이브 Rclone] 업로드 완료: {clean_f}")
+                    elif ("ETA" in line_s or "%" in line_s or "Transferred:" in line_s) and (now - last_log_t >= 3.0):
                         clean_msg = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", line_s)
-                        clean_msg = re.sub(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} (NOTICE|INFO): ", "", clean_msg)
+                        clean_msg = re.sub(r"^\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2} (NOTICE|INFO):\s*", "", clean_msg)
+                        m_bytes = re.search(r'([\d\.]+\s*[KMGT]?i?B)\s*/\s*([\d\.]+\s*[KMGT]?i?B)', clean_msg)
+                        if m_bytes:
+                            transferred_str = m_bytes.group(1)
                         self._log(f"[구글 드라이브 Rclone] {clean_msg}")
                         last_log_t = now
                     elif "ERROR" in line_s:
@@ -727,6 +736,8 @@ hash_type = md5
 
             ret = proc.wait()
             result["duration_sec"] = time.time() - started
+            result["files_copied"] = copied_count
+            result["transferred_bytes_str"] = transferred_str
             if ret == 0:
                 result["success"] = True
                 result["reason"] = "Rclone 기반 구글 드라이브 초고속 복제 완료"

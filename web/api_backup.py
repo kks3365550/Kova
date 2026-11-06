@@ -377,7 +377,14 @@ def _background_custom_backup_task(params: Dict[str, Any]):
                                 log_callback=append_task_log
                             )
                             if off_res.get("success"):
-                                append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: 복제 {off_res.get('files_copied', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
+                                copied = off_res.get("files_copied", 0)
+                                trans_str = off_res.get("transferred_bytes_str") or ""
+                                dur = off_res.get("duration_sec", 0.0)
+                                if copied > 0:
+                                    detail = f"신규 {copied}개 파일 복제 완료" + (f" ({trans_str})" if trans_str else "")
+                                    append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: {detail} ({dur:.1f}초)")
+                                else:
+                                    append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: 클라우드 보관함이 이미 최신 상태입니다 (신규 변경 0개 / 100% 일치, {dur:.1f}초)")
                             else:
                                 append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
                     else:
@@ -687,7 +694,14 @@ def _background_backup_task(params: Dict[str, Any]):
                                 log_callback=append_task_log
                             )
                             if off_res.get("success"):
-                                append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: 복제 {off_res.get('files_copied', 0)}개 / 전체 {off_res.get('files_total', 0)}개 ({off_res.get('duration_sec', 0.0):.1f}초)")
+                                copied = off_res.get("files_copied", 0)
+                                trans_str = off_res.get("transferred_bytes_str") or ""
+                                dur = off_res.get("duration_sec", 0.0)
+                                if copied > 0:
+                                    detail = f"신규 {copied}개 파일 복제 완료" + (f" ({trans_str})" if trans_str else "")
+                                    append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: {detail} ({dur:.1f}초)")
+                                else:
+                                    append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 성공: 클라우드 보관함이 이미 최신 상태입니다 (신규 변경 0개 / 100% 일치, {dur:.1f}초)")
                             else:
                                 append_task_log(f"[3-2-1 오프사이트] 구글 드라이브 동기화 실패: {off_res.get('reason', '원인 불명')}", level="WARNING")
                     else:
