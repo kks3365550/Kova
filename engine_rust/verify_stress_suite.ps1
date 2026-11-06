@@ -4,9 +4,9 @@
 # ==============================================================================
 $ErrorActionPreference = "Stop"
 
-$Engine = "C:\Users\kksjmj\Desktop\ai\target_rust\release\kova_fast_engine.exe"
+$Engine = "$PSScriptRoot\kova_fast_engine.exe"
 if (-not (Test-Path $Engine)) {
-    $Engine = "C:\Users\kksjmj\Desktop\ai\백업시스템\engine_rust\kova_fast_engine.exe"
+    $Engine = "C:\Users\kksjmj\Desktop\ai\target_rust\release\kova_fast_engine.exe"
 }
 
 $BaseDir = "C:\Users\kksjmj\Desktop\ai\stress_test_workspace"

@@ -182,13 +182,13 @@ function renderOffsiteStatusWidget() {
         }
         if (dashBadge) {
             dashBadge.innerText = '비활성화';
-            dashBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-medium bg-slate-800 text-slate-400 border border-slate-700';
+            dashBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-medium bg-slate-800 text-slate-400 border border-slate-700 whitespace-nowrap inline-flex items-center';
         }
         if (dashMode) dashMode.innerText = '로컬 전용';
         if (dashTarget) dashTarget.innerText = '설정 안 됨';
         if (dashState) {
             dashState.innerText = '로컬 백업만 수행';
-            dashState.className = 'text-slate-400 font-medium';
+            dashState.className = 'text-slate-400 font-medium whitespace-nowrap';
         }
         if (heroScoreBadge) {
             heroScoreBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span><span>' + (noSnaps ? '아직 백업이 없어요 (먼저 백업을 해 주세요)' : '이 PC에 잠금 보호 중 (다른 장소 보관은 미설정)') + '</span>';
@@ -233,9 +233,12 @@ function renderOffsiteStatusWidget() {
     }
     if (dashBadge) {
         dashBadge.innerText = '안전 보관 켜짐';
-        dashBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-900/60 text-blue-300 border border-blue-700';
+        dashBadge.className = 'text-[10px] px-2 py-0.5 rounded-full font-medium bg-blue-900/60 text-blue-300 border border-blue-700 whitespace-nowrap inline-flex items-center';
     }
-    if (dashMode) dashMode.innerText = modeText;
+    if (dashMode) {
+        dashMode.innerText = modeText;
+        dashMode.className = 'text-[10px] text-zinc-400 font-mono whitespace-nowrap';
+    }
     if (dashTarget) {
         dashTarget.innerText = targetText;
         dashTarget.title = targetText;
@@ -244,9 +247,9 @@ function renderOffsiteStatusWidget() {
     const hasSnaps = (state.snapshots || []).some(s => s.is_offsite_protected || s.offsite_status === 'COMMITTED');
     if (dashState) {
         if (hasSnaps) {
-            dashState.innerHTML = '<span class="text-blue-400 font-semibold">🌐 최신 백업 시점 동기화 완료</span>';
+            dashState.innerHTML = '<span class="text-blue-400 font-semibold whitespace-nowrap">🌐 최신 백업 시점 동기화 완료</span>';
         } else {
-            dashState.innerHTML = '<span class="text-amber-400 font-semibold">⏳ 백업 시점 복제 대기/진행 중</span>';
+            dashState.innerHTML = '<span class="text-amber-400 font-semibold whitespace-nowrap">⏳ 백업 시점 복제 대기/진행 중</span>';
         }
     }
     if (heroScoreBadge) {

@@ -58,19 +58,19 @@
 
             <!-- Top Center: Consolidated Navigation Tabs (4 Core Tabs + Dynamic Runner) -->
             <nav class="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-lg border border-zinc-800/80">
-                <button onclick="switchTab('dashboard')" data-tab="dashboard" class="tab-btn px-3 py-1.5 rounded-md text-xs font-semibold bg-white/10 text-white transition flex items-center gap-1.5 shadow-sm">
+                <button onclick="switchTab('dashboard')" data-tab="dashboard" class="tab-btn w-24 justify-center py-1.5 rounded-md text-xs font-semibold bg-white/10 text-white transition flex items-center gap-1.5 shadow-sm whitespace-nowrap">
                     <i data-lucide="layout-dashboard" class="w-3.5 h-3.5 text-blue-400"></i> 홈
                 </button>
-                <button onclick="switchTab('snapshots')" data-tab="snapshots" class="tab-btn px-3 py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5">
+                <button onclick="switchTab('snapshots')" data-tab="snapshots" class="tab-btn w-24 justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
                     <i data-lucide="history" class="w-3.5 h-3.5 text-amber-400"></i> 되돌리기
                 </button>
-                <button onclick="switchTab('system-image')" data-tab="system-image" class="tab-btn px-3 py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5">
+                <button onclick="switchTab('system-image')" data-tab="system-image" class="tab-btn w-24 justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
                     <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-emerald-400"></i> 복구 도구
                 </button>
-                <button onclick="switchTab('settings')" data-tab="settings" class="tab-btn px-3 py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5">
+                <button onclick="switchTab('settings')" data-tab="settings" class="tab-btn w-24 justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
                     <i data-lucide="settings" class="w-3.5 h-3.5 text-indigo-400"></i> 환경설정
                 </button>
-                <button id="nav-tab-runner" onclick="switchTab('runner')" data-tab="runner" class="hidden tab-btn px-3 py-1.5 rounded-md text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40 transition flex items-center gap-1.5 animate-pulse">
+                <button id="nav-tab-runner" onclick="switchTab('runner')" data-tab="runner" class="hidden tab-btn min-w-[96px] px-3 justify-center py-1.5 rounded-md text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40 transition flex items-center gap-1.5 animate-pulse whitespace-nowrap">
                     <i data-lucide="activity" class="w-3.5 h-3.5 text-blue-400"></i> <span id="nav-runner-text">작업 진행 중</span>
                 </button>
             </nav>
@@ -179,7 +179,7 @@
                 <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     
                     <!-- METRIC 1: PROTECTION STATE -->
-                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between">
+                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2">
                         <div class="space-y-1">
                             <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-1.5">
                                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
@@ -198,7 +198,7 @@
                     </div>
 
                     <!-- METRIC 2: WORM VAULT & INTEGRITY -->
-                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between">
+                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2">
                         <div class="space-y-1">
                             <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">잠금 보관함 상태</span>
                             <div class="flex items-center gap-1.5 font-mono">
@@ -212,7 +212,7 @@
                     </div>
 
                     <!-- METRIC 3: STORAGE REDUCTION & EFFICIENCY -->
-                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between">
+                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2">
                         <div class="space-y-1">
                             <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">저장 공간 절약</span>
                             <div class="flex items-center gap-1.5 font-mono">
@@ -226,19 +226,22 @@
                     </div>
 
                     <!-- METRIC 4: OFFSITE REPLICATION -->
-                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between">
-                        <div class="space-y-1">
-                            <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400">다른 장소 복사본</span>
-                            <div class="flex items-center gap-1.5 font-mono">
-                                <span id="dashboard-offsite-sync-state" class="text-xs font-bold text-cyan-400">동기화됨</span>
-                                <span id="dashboard-offsite-mode" class="text-[10px] text-zinc-400 font-mono">지연 없음</span>
+                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2">
+                        <div class="space-y-1 min-w-0 flex-1">
+                            <div class="flex items-center gap-1.5 flex-wrap">
+                                <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400 whitespace-nowrap">다른 장소 복사본</span>
+                                <span id="dashboard-offsite-badge" class="hidden text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap"></span>
+                            </div>
+                            <div class="flex flex-col gap-0.5 font-mono">
+                                <span id="dashboard-offsite-sync-state" class="text-xs font-bold text-cyan-400 whitespace-nowrap">동기화됨</span>
+                                <span id="dashboard-offsite-mode" class="text-[10px] text-zinc-400 font-mono whitespace-nowrap">지연 없음</span>
                             </div>
                         </div>
-                        <div class="w-8 h-8 rounded-lg bg-cyan-950/40 border border-cyan-800/40 flex items-center justify-center text-cyan-400">
+                        <div class="w-8 h-8 rounded-lg bg-cyan-950/40 border border-cyan-800/40 flex items-center justify-center text-cyan-400 shrink-0">
                             <i data-lucide="cloud" class="w-4 h-4"></i>
                         </div>
                         <div class="hidden" id="dashboard-offsite-target">-</div>
-                        <div class="hidden" id="dashboard-offsite-badge"></div>
+
                     </div>
 
                     <!-- METRIC 5: FAST AUDIT ACTION (Col Span on desktop) -->
