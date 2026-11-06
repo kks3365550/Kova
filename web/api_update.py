@@ -390,7 +390,9 @@ def get_software_update_status(force_check: bool = False):
     """최신 소프트웨어 릴리즈 업데이트 상태 반환 (온라인/오프라인 지원)"""
     now = time.time()
     # Cache for 10 minutes unless force_check is requested
-    if force_check or _cached_update_info.get("data") is None or (now - _cached_update_info.get("checked_at", 0) > 600):
+    cached_data = _cached_update_info.get("data")
+    ttl = 600 if (cached_data and cached_data.get("update_available")) else 30
+    if force_check or cached_data is None or (now - _cached_update_info.get("checked_at", 0) > ttl):
         try:
             info = check_for_update()
             _cached_update_info["checked_at"] = now

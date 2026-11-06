@@ -200,16 +200,96 @@ def _check_github_release(current_ver: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _check_github_web_fallback(current_ver: str) -> Optional[Dict[str, Any]]:
+    """GitHub API Rate Limit(403) 등으로 API 조회가 차단될 때,
+    공식 HTML 리다이렉트(https://github.com/kks3365550/Kova/releases/latest)를 통해
+    최신 태그명을 무제한으로 감지하는 100% 무중단 폴백 엔진."""
+    try:
+        url = f"https://github.com/{GITHUB_REPO}/releases/latest"
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=6) as resp:
+            final_url = resp.geturl()
+            if "/releases/tag/" in final_url:
+                latest_tag = final_url.split("/releases/tag/")[-1].strip()
+                cur_tuple = parse_version(current_ver)
+                latest_tuple = parse_version(latest_tag)
+                if latest_tuple <= cur_tuple:
+                    logger.info("UPDATE_CHECK_WEB already_up_to_date (%s >= %s)", current_ver, latest_tag)
+                    return None
+
+                clean_tag = latest_tag.lstrip("vV")
+                zip_url = f"https://github.com/{GITHUB_REPO}/releases/download/{latest_tag}/release_{latest_tag}.zip"
+                installer_url = f"https://github.com/{GITHUB_REPO}/releases/download/{latest_tag}/Kova_Setup_{latest_tag}.exe"
+                release_info = {
+                    "update_available": True,
+                    "current_version": current_ver,
+                    "latest_version": clean_tag,
+                    "download_url": zip_url,
+                    "installer_download_url": installer_url,
+                    "sha256": "",
+                    "signature": "",
+                    "mandatory": False,
+                    "changelog": f"GitHub 공식 신규 릴리즈 {latest_tag} 출시 (고속 Web Fallback 감지)",
+                    "min_supported_version": "1.0.0",
+                    "source": "github_web"
+                }
+                logger.info("UPDATE_AVAILABLE_WEB version=%s url=%s", latest_tag, zip_url)
+                return release_info
+    except Exception as e:
+        logger.warning("UPDATE_CHECK_WEB_FALLBACK_FAILED: %s", e)
+    return None
+
+
+def _check_local_dist_fallback(current_ver: str) -> Optional[Dict[str, Any]]:
+    """로컬 배포 디렉토리(D:\백업시스템_설치용 등)의 최신 릴리즈 확인"""
+    candidates = ["D:\\백업시스템_설치용", "F:\\백업시스템_설치용", "D:\\MyBackup_Repository\\disaster_recovery_kit"]
+    cur_tuple = parse_version(current_ver)
+    for cand in candidates:
+        v_file = os.path.join(cand, "VERSION")
+        if os.path.exists(v_file):
+            try:
+                with open(v_file, "r", encoding="utf-8") as f:
+                    dist_ver = f.read().strip()
+                if dist_ver and parse_version(dist_ver) > cur_tuple:
+                    clean_v = dist_ver.lstrip("vV")
+                    return {
+                        "update_available": True,
+                        "current_version": current_ver,
+                        "latest_version": clean_v,
+                        "download_url": "/api/system/update-package",
+                        "installer_download_url": "/api/system/download-installer",
+                        "sha256": "",
+                        "signature": "",
+                        "mandatory": False,
+                        "changelog": f"로컬 마스터 배포본 v{clean_v} 준비 완료",
+                        "min_supported_version": "1.0.0",
+                        "source": "local_dist"
+                    }
+            except Exception:
+                pass
+    return None
+
+
 def check_for_update(current_ver: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     공식 GitHub Releases API를 조회하여 신규 소프트웨어 업데이트를 확인합니다.
-    네트워크 장애 또는 최신 버전일 경우 예외 없이 None 반환 (Fail-Safe).
+    GitHub API Rate Limit(403) 발생 시 Web 리다이렉트 및 로컬 배포본으로 스마트 자동 폴백.
     """
     if current_ver is None:
         current_ver = get_current_installed_version()
 
     logger.info("UPDATE_CHECK_START current_version=%s", current_ver)
-    return _check_github_release(current_ver)
+    res = _check_github_release(current_ver)
+    if not res:
+        res = _check_github_web_fallback(current_ver)
+    if not res:
+        res = _check_local_dist_fallback(current_ver)
+    return res
 
 
 def download_update(release_info: Dict[str, Any], temp_dir: Optional[str] = None) -> Optional[str]:
