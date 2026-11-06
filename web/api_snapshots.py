@@ -127,6 +127,24 @@ def search_snapshot_files(
     q_lower = q_clean.lower()
 
     repos = [repo_dir] if repo_dir and os.path.exists(repo_dir) else _get_all_candidate_repos(repo_dir)
+
+    # 1. Rust Ultra-Fast Search Engine (kova_fast_engine)
+    try:
+        from core.rust_adapter import search_snapshot_files_rust
+        rust_results = []
+        rust_ok = False
+        for r in repos:
+            res = search_snapshot_files_rust(r, q_clean, max_snapshots=max_snapshots, limit=limit)
+            if res is not None:
+                rust_results.extend(res)
+                rust_ok = True
+        if rust_ok:
+            if len(repos) > 1:
+                rust_results.sort(key=lambda x: (x.get("relevance", 0), x.get("latest_mtime", 0)), reverse=True)
+            return rust_results[:limit]
+    except Exception:
+        pass
+
     all_snaps = []
     seen_ids = set()
 

@@ -345,3 +345,71 @@ def run_rust_backup(
         is_synced_to_sqlite=is_synced,
         raw_summary=summary_data
     )
+
+
+def search_snapshot_files_rust(
+    repo_dir: str,
+    query: str,
+    max_snapshots: int = 10,
+    limit: int = 50,
+    timeout_seconds: float = 15.0,
+) -> Optional[List[Dict[str, Any]]]:
+    """
+    Ultra-Fast Historical Snapshot File Search via Rust CAS Engine (kova_fast_engine search).
+    Leverages memory mapping (mmap), Rayon multi-threading, and Korean chosung decomposition.
+    Returns:
+        List[Dict[str, Any]] on success, or None if the Rust engine binary is unavailable or errors.
+    """
+    binary_path = find_rust_engine_binary()
+    if not binary_path:
+        log.warning("[RustAdapter] search_snapshot_files: kova_fast_engine 바이너리를 찾을 수 없어 Python 검색으로 폴백합니다.")
+        return None
+
+    if not repo_dir or not os.path.isdir(repo_dir):
+        return None
+
+    cmd = [
+        binary_path,
+        "search",
+        "--repo", str(Path(repo_dir).resolve()),
+        "--query", query,
+        "--max-snapshots", str(max_snapshots),
+        "--limit", str(limit),
+        "--json",
+    ]
+
+    try:
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NO_WINDOW
+
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+            creationflags=creationflags,
+        )
+
+        if proc.returncode != 0:
+            err_msg = proc.stderr.strip() if proc.stderr else f"Exit code {proc.returncode}"
+            log.warning(f"[RustAdapter] Rust 검색 실패 (rc={proc.returncode}): {err_msg} -> Python 폴백")
+            return None
+
+        raw_output = proc.stdout.strip()
+        if not raw_output:
+            return []
+
+        results = json.loads(raw_output)
+        if isinstance(results, list):
+            return results
+        return None
+
+    except subprocess.TimeoutExpired:
+        log.warning(f"[RustAdapter] Rust 검색 타임아웃 ({timeout_seconds}s) -> Python 폴백")
+        return None
+    except Exception as e:
+        log.warning(f"[RustAdapter] Rust 검색 중 예외 발생: {e} -> Python 폴백")
+        return None

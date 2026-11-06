@@ -3,6 +3,7 @@ mod chunker;
 mod compressor;
 mod hasher;
 mod scanner;
+mod search;
 mod storage;
 
 use clap::{Parser, Subcommand};
@@ -57,6 +58,26 @@ enum Commands {
         #[arg(short, long)]
         target: PathBuf,
     },
+    /// Search files across historical snapshots with ultra-fast parallel matching
+    Search {
+        #[arg(short, long)]
+        repo: PathBuf,
+
+        #[arg(short, long)]
+        query: String,
+
+        #[arg(long, default_value_t = 10)]
+        max_snapshots: usize,
+
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+
+        #[arg(long, default_value_t = true)]
+        chosung: bool,
+
+        #[arg(long)]
+        json: bool,
+    },
     /// Run in-memory pipeline throughput benchmark (FastCDC + BLAKE3 + Zstd)
     Benchmark {
         #[arg(long, default_value_t = 256)]
@@ -105,6 +126,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             repo,
             target,
         } => run_restore(&session_id, &repo, &target)?,
+
+        Commands::Search {
+            repo,
+            query,
+            max_snapshots,
+            limit,
+            chosung,
+            json,
+        } => run_search(&repo, &query, max_snapshots, limit, chosung, json)?,
 
         Commands::Benchmark { size_mb } => run_benchmark(size_mb)?,
 
@@ -627,6 +657,53 @@ fn run_benchmark(size_mb: usize) -> Result<(), Box<dyn std::error::Error>> {
     println!("Total Throughput : {:.2} MB/s", (size_mb as f64) / total_elapsed);
     println!("Compression Ratio: {:.2}%", (total_comp_bytes as f64 / bytes_len as f64) * 100.0);
     println!("========================================================\n");
+
+    Ok(())
+}
+
+fn run_search(
+    repo: &Path,
+    query: &str,
+    max_snapshots: usize,
+    limit: usize,
+    chosung: bool,
+    json_mode: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let start = Instant::now();
+    let results = search::search_snapshots(repo, query, max_snapshots, limit, chosung)?;
+    let elapsed = start.elapsed().as_secs_f64();
+
+    if json_mode {
+        let json_str = serde_json::to_string(&results)?;
+        println!("{}", json_str);
+    } else {
+        println!("========================================================");
+        println!("       KOVA FAST ENGINE SNAPSHOT SEARCH RESULT          ");
+        println!("========================================================");
+        println!("Query        : {}", query);
+        println!("Max Snapshots: {}", max_snapshots);
+        println!("Found Items  : {}", results.len());
+        println!("Elapsed Time : {:.3}s ({:.1}ms)", elapsed, elapsed * 1000.0);
+        println!("========================================================");
+
+        for (idx, item) in results.iter().enumerate() {
+            println!(
+                "[{}] {} (점수: {}) - {}개 버전 (최신: {}, {})",
+                idx + 1,
+                item.path,
+                item.relevance,
+                item.version_count,
+                item.latest_size_formatted,
+                item.latest_time
+            );
+            for v in &item.versions {
+                println!(
+                    "    -> [{}] {} | {} | {}",
+                    v.snapshot_id, v.snapshot_time, v.size_formatted, v.mtime_formatted
+                );
+            }
+        }
+    }
 
     Ok(())
 }
