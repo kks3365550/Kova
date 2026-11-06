@@ -112,34 +112,50 @@ function switchSettingsSection(sectionId) {
 
 async function loadDashboard() {
     try {
-        const [sys, stats, profiles, snaps, offsite, storageHealth] = await Promise.all([
+        // [1단계: 초고속 핵심 경로 (Critical Path - SLA < 50ms)]
+        // 스냅샷 목록, 프로필, 시스템 기본 정보, 오프사이트 상태를 병렬 조회하여 홈 화면 백업 기록 즉시 렌더링
+        const [sys, profiles, snaps, offsite] = await Promise.all([
             fetchAPI('/api/system-info'),
-            fetchAPI('/api/storage-stats'),
             fetchAPI('/api/profiles'),
             fetchAPI('/api/snapshots'),
-            fetchAPI('/api/offsite').catch(() => null),
-            fetchAPI('/api/system/storage-health').catch(() => null)
+            fetchAPI('/api/offsite').catch(() => null)
         ]);
 
         state.systemInfo = sys;
-        state.storageStats = stats;
         state.profiles = profiles;
         state.snapshots = snaps;
         state.offsite = offsite;
-        state.storageHealth = storageHealth;
 
+        // 1단계 즉시 렌더링 (0.05초 만에 홈 화면 스냅샷 목록 표출)
         renderDashboardStats();
         renderRecentSnapshots();
         renderSystemDrives();
-        renderStorageHealth();
         renderOffsiteStatusWidget();
         checkOnboardingWizard();
+
         if (typeof loadSystemImageStatus === 'function') {
             loadSystemImageStatus();
         }
         if (typeof loadOffsiteStatus === 'function') {
-            await loadOffsiteStatus();
+            loadOffsiteStatus();
         }
+
+        // [2단계: 백그라운드 비차단 경로 (Background Non-Blocking)]
+        // 대용량 저장소 바이트 집계 및 WMI 하드웨어 진단을 비동기로 백그라운드에서 조회하여 자연스럽게 채움
+        fetchAPI('/api/storage-stats').then(stats => {
+            if (stats) {
+                state.storageStats = stats;
+                renderDashboardStats();
+            }
+        }).catch(err => console.warn('Non-blocking storage-stats error:', err));
+
+        fetchAPI('/api/system/storage-health').then(storageHealth => {
+            if (storageHealth) {
+                state.storageHealth = storageHealth;
+                renderStorageHealth();
+            }
+        }).catch(err => console.warn('Non-blocking storage-health error:', err));
+
     } catch (err) {
         console.error('Failed to load dashboard:', err);
     }
@@ -447,10 +463,30 @@ function renderDashboardStats() {
     const logicalBytesEl = document.getElementById('stat-logical-bytes');
     const dedupSavedEl = document.getElementById('stat-dedup-saved');
 
-    if (totalSnapsEl) totalSnapsEl.innerText = stats.total_snapshots || '0';
-    if (storedBytesEl) storedBytesEl.innerText = formatBytes(stats.stored_bytes);
-    if (logicalBytesEl) logicalBytesEl.innerText = formatBytes(stats.logical_bytes);
-    if (dedupSavedEl) dedupSavedEl.innerText = `${formatBytes(stats.dedup_saved_bytes)} (${stats.savings_percentage || 0}%)`;
+    if (totalSnapsEl) {
+        totalSnapsEl.innerText = (stats.total_snapshots !== undefined && stats.total_snapshots !== null)
+            ? stats.total_snapshots
+            : ((state.snapshots && state.snapshots.length) || '0');
+    }
+    if (storedBytesEl) {
+        if (stats.stored_bytes !== undefined) {
+            storedBytesEl.innerText = formatBytes(stats.stored_bytes);
+        } else if (!storedBytesEl.innerText || storedBytesEl.innerText === '-') {
+            storedBytesEl.innerText = '계산 중...';
+        }
+    }
+    if (logicalBytesEl) {
+        if (stats.logical_bytes !== undefined) {
+            logicalBytesEl.innerText = formatBytes(stats.logical_bytes);
+        } else if (!logicalBytesEl.innerText || logicalBytesEl.innerText === '-') {
+            logicalBytesEl.innerText = '계산 중...';
+        }
+    }
+    if (dedupSavedEl) {
+        if (stats.dedup_saved_bytes !== undefined) {
+            dedupSavedEl.innerText = `${formatBytes(stats.dedup_saved_bytes)} (${stats.savings_percentage || 0}%)`;
+        }
+    }
 
     // Active profiles count
     const activeProfCount = (state.profiles || []).filter(p => p.auto_backup_enabled).length;
@@ -515,7 +551,14 @@ function renderSystemDrives() {
 function renderStorageHealth() {
     const container = document.getElementById('physical-disks-list');
     const badge = document.getElementById('storage-overall-badge');
-    if (!container || !state.storageHealth || !state.storageHealth.physical_disks) return;
+    if (!container) return;
+    if (!state.storageHealth || !state.storageHealth.physical_disks) {
+        if (badge && (!badge.innerText || badge.innerText.trim() === '')) {
+            badge.className = 'px-1.5 py-0.5 bg-zinc-800 text-zinc-400 text-[10px] rounded border border-zinc-700';
+            badge.innerText = '진단 중...';
+        }
+        return;
+    }
 
     const data = state.storageHealth;
     if (badge) {

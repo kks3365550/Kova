@@ -16,6 +16,17 @@ PROJECT_ROOT = r"C:\Users\kksjmj\Desktop\ai\백업시스템"
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 def run_method_1():
     print("\n========================================================")
     print(" [METHOD 1] verify_stress_suite.ps1 (18/18 Stress Suite)")
