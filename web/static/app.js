@@ -151,6 +151,9 @@ async function loadDashboard() {
         if (typeof loadOffsiteStatus === 'function') {
             loadOffsiteStatus();
         }
+        if (typeof checkForSoftwareUpdate === 'function') {
+            checkForSoftwareUpdate(false, false);
+        }
 
         // [2단계: 백그라운드 비차단 경로 (Background Non-Blocking)]
         // 대용량 저장소 바이트 집계 및 WMI 하드웨어 진단을 비동기로 백그라운드에서 조회하여 자연스럽게 채움
@@ -1595,8 +1598,31 @@ async function checkForSoftwareUpdate(forceCheck = false, showToastIfLatest = fa
         const settingsTargetVer = document.getElementById('settings-update-target-version');
         const btnApply = document.getElementById('btn-apply-update');
 
+        const dashBanner = document.getElementById('dashboard-update-banner');
+        const dashTargetVer = document.getElementById('dash-update-target-ver');
+        const dashCurrentVer = document.getElementById('dash-update-current-ver');
+        const dashDesc = document.getElementById('dash-update-desc');
+
         if (data && data.update_available) {
             // Update available!
+            if (dashBanner) {
+                dashBanner.classList.remove('hidden');
+                dashBanner.classList.add('flex');
+            }
+            if (dashTargetVer) {
+                dashTargetVer.textContent = `v${data.latest_version}`;
+            }
+            if (dashCurrentVer) {
+                dashCurrentVer.textContent = `v${data.current_version || ''}`;
+            }
+            if (dashDesc) {
+                if (data.changelog) {
+                    const firstLine = data.changelog.split('\n')[0].replace(/^#+\s*/, '').trim();
+                    dashDesc.textContent = firstLine || '새로운 기능과 성능 개선 및 버그 수정이 포함되어 있습니다. 원클릭으로 안전하게 업데이트하세요.';
+                } else if (data.message) {
+                    dashDesc.textContent = data.message;
+                }
+            }
             if (headerBadge) {
                 headerBadge.classList.remove('hidden');
                 headerBadge.classList.add('flex');
@@ -1620,6 +1646,10 @@ async function checkForSoftwareUpdate(forceCheck = false, showToastIfLatest = fa
             updateModalUI(data);
         } else {
             // Up to date
+            if (dashBanner) {
+                dashBanner.classList.remove('flex');
+                dashBanner.classList.add('hidden');
+            }
             if (headerBadge) {
                 headerBadge.classList.remove('flex');
                 headerBadge.classList.add('hidden');
@@ -1690,6 +1720,22 @@ function closeSoftwareUpdateModal() {
     if (modal) {
         modal.classList.remove('flex');
         modal.classList.add('hidden');
+    }
+}
+
+function quickApplyUpdateFromDashboard() {
+    openSoftwareUpdateModal();
+    // 모달 오픈 후 즉시 원클릭 자동 업데이트 파이프라인 가동
+    setTimeout(() => {
+        applySoftwareUpdate();
+    }, 250);
+}
+
+function dismissDashboardUpdateBanner() {
+    const banner = document.getElementById('dashboard-update-banner');
+    if (banner) {
+        banner.classList.add('hidden');
+        banner.classList.remove('flex');
     }
 }
 
@@ -1869,5 +1915,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Software auto-update silent background check
     setTimeout(() => {
         checkForSoftwareUpdate(false, false);
-    }, 3000);
+    }, 1500);
+    // Periodic background check every 5 minutes
+    setInterval(() => {
+        checkForSoftwareUpdate(false, false);
+    }, 5 * 60 * 1000);
 });

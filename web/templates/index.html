@@ -175,6 +175,34 @@
             <!-- TAB 1: 대시보드 (Dashboard) - Concept A: Observability Operations Console (Datadog x Cloudflare Zero Trust) -->
             <div id="tab-dashboard" class="tab-content max-w-[1700px] mx-auto space-y-4">
                 
+                <!-- 0. SOFTWARE UPDATE HERO BANNER (Home Screen One-Click Update) -->
+                <div id="dashboard-update-banner" class="hidden rounded-2xl p-4 bg-gradient-to-r from-purple-950/90 via-zinc-900 to-indigo-950/90 border border-purple-500/50 shadow-xl shadow-purple-950/40 flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all duration-300">
+                    <div class="flex items-center gap-3.5 min-w-0">
+                        <div class="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300 shrink-0 shadow-inner">
+                            <i data-lucide="sparkles" class="w-5 h-5 text-purple-400 animate-pulse"></i>
+                        </div>
+                        <div class="space-y-0.5 min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-500/30 text-purple-300 border border-purple-500/40 font-mono">신규 업데이트 출시</span>
+                                <span id="dash-update-target-ver" class="text-xs font-mono font-bold text-white">v2.17.61</span>
+                                <span class="text-[11px] text-zinc-400 font-mono">(현재: <span id="dash-update-current-ver">v{{ version if version else '2.17.60' }}</span>)</span>
+                            </div>
+                            <p id="dash-update-desc" class="text-xs text-zinc-300 truncate max-w-xl font-medium">새로운 기능과 성능 개선 및 버그 패치가 포함되어 있습니다. 원클릭으로 안전하게 업데이트하세요.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2.5 shrink-0 w-full sm:w-auto justify-end">
+                        <button onclick="openSoftwareUpdateModal()" class="px-3.5 py-2 bg-zinc-800/90 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-xl text-xs font-semibold border border-zinc-700/80 transition flex items-center gap-1.5 cursor-pointer shadow-sm" title="변경 내용 및 상세 정보 보기">
+                            <i data-lucide="file-text" class="w-3.5 h-3.5 text-zinc-400"></i> 변경 사항
+                        </button>
+                        <button onclick="quickApplyUpdateFromDashboard()" id="btn-dash-quick-apply" class="px-4 py-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-purple-600/30 flex items-center gap-1.5 cursor-pointer animate-pulse" title="지금 즉시 원클릭 자동 업데이트">
+                            <i data-lucide="zap" class="w-4 h-4 fill-current text-amber-300"></i> 지금 원클릭 업데이트
+                        </button>
+                        <button onclick="dismissDashboardUpdateBanner()" class="text-zinc-500 hover:text-zinc-300 p-1.5 rounded-lg hover:bg-zinc-800/60 transition cursor-pointer" title="닫기">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- 1. TOP GLOBAL HEALTH STRIP (Datadog Style Metric Strip) -->
                 <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     
