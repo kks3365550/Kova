@@ -23,6 +23,8 @@ import logging
 import subprocess
 import re
 import glob
+import json
+import urllib.request
 from typing import Dict, Any, Optional, Callable
 
 logger = logging.getLogger("BackupSystem")
@@ -377,10 +379,6 @@ class GoogleDriveOffsiteReplicator:
 
         if not GDRIVE_SDK_AVAILABLE:
             raise RuntimeError("google-api-python-client 및 google-auth 패키지가 필요합니다.")
-            raise FileNotFoundError(
-                f"지정된 구글 드라이브 인증 파일을 찾을 수 없습니다: {self.credentials_file}. "
-                "개인 계정 연동을 위한 'OAuth 클라이언트 ID JSON' 또는 '서비스 계정 JSON' 경로를 확인해 주십시오."
-            )
 
         creds = None
         base_data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
@@ -504,7 +502,7 @@ class GoogleDriveOffsiteReplicator:
         return created.get("id")
 
     def preflight(self) -> Dict[str, Any]:
-        """구글 드라이브 연결 상태, 계정 정보, 저장소 쿼터 확인."""
+        """구글 드라이브 연결 상태, 계정 정보, 저장소 쿼터 확인 (Rclone 1차 우선, Python SDK 폴백)."""
         result = {
             "ok": False,
             "reachable": False,
@@ -521,38 +519,99 @@ class GoogleDriveOffsiteReplicator:
             result["reason"] = f"로컬 저장소 없음: {self.local_repo_dir}"
             return result
 
-        try:
-            service = self._get_service()
-            about = service.about().get(fields="storageQuota,user").execute()
-            quota = about.get("storageQuota", {})
-            user = about.get("user", {})
-
-            result["user_email"] = user.get("emailAddress", "ServiceAccount")
-            limit = int(quota.get("limit", 0))
-            usage = int(quota.get("usage", 0))
-
-            if limit > 0:
-                free = max(0, limit - usage)
-                result["total_gb"] = round(limit / (1024 ** 3), 1)
-                result["used_gb"] = round(usage / (1024 ** 3), 1)
-                result["free_gb"] = round(free / (1024 ** 3), 1)
-                result["free_percent"] = round((free / limit) * 100, 1)
-            else:
-                # 무제한 조직 계정
-                result["total_gb"] = 9999.0
-                result["used_gb"] = round(usage / (1024 ** 3), 1)
-                result["free_gb"] = 9999.0
-                result["free_percent"] = 100.0
-
-            result["target_folder_id"] = self._get_or_create_folder(service, self.folder_name_or_id)
-            result["ok"] = True
-            result["reachable"] = True
+        if self.credentials_file and not os.path.exists(self.credentials_file):
+            result["reason"] = (
+                f"지정된 구글 드라이브 인증 파일을 찾을 수 없습니다: {self.credentials_file}. "
+                "개인 계정 연동을 위한 'OAuth 클라이언트 ID JSON' 또는 '서비스 계정 JSON' 경로를 확인해 주십시오."
+            )
             return result
 
-        except Exception as e:
-            result["reason"] = str(e)
-            logger.warning(f"[구글 드라이브 사전 점검 실패] {e}")
-            return result
+        # 1. Rclone 기반 고속 쿼터 및 연결 점검 (네이티브 초고속 조회)
+        rclone_exe = self._get_rclone_exe()
+        if rclone_exe:
+            try:
+                rclone_conf = self._ensure_rclone_config(self.folder_name_or_id)
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                cmd = [rclone_exe, "about", "gdrive:", "--config", rclone_conf, "--json"]
+                proc = subprocess.run(cmd, capture_output=True, text=True, timeout=12, creationflags=creationflags)
+                if proc.returncode == 0 and proc.stdout:
+                    quota = json.loads(proc.stdout)
+                    total = int(quota.get("total", 0))
+                    used = int(quota.get("used", 0))
+                    free = int(quota.get("free", 0))
+                    if total > 0:
+                        result["total_gb"] = round(total / (1024 ** 3), 1)
+                        result["used_gb"] = round(used / (1024 ** 3), 1)
+                        result["free_gb"] = round(free / (1024 ** 3), 1)
+                        result["free_percent"] = round((free / total) * 100, 1)
+                    else:
+                        result["total_gb"] = 9999.0
+                        result["used_gb"] = round(used / (1024 ** 3), 1)
+                        result["free_gb"] = 9999.0
+                        result["free_percent"] = 100.0
+
+                    result["target_folder_id"] = self.folder_name_or_id
+                    result["ok"] = True
+                    result["reachable"] = True
+
+                    # 사용자 이메일 조회 시도 (실패 시 기본값)
+                    user_email = "Google Account"
+                    try:
+                        with open(rclone_conf, "r", encoding="utf-8") as f_rc:
+                            rc_text = f_rc.read()
+                        m_tok = re.search(r'token\s*=\s*(\{.*?\})', rc_text)
+                        if m_tok:
+                            tok_data = json.loads(m_tok.group(1))
+                            actok = tok_data.get("access_token")
+                            if actok:
+                                req_u = urllib.request.Request(
+                                    "https://www.googleapis.com/drive/v3/about?fields=user",
+                                    headers={"Authorization": f"Bearer {actok}"}
+                                )
+                                res_u = json.loads(urllib.request.urlopen(req_u, timeout=3).read())
+                                user_email = res_u.get("user", {}).get("emailAddress") or user_email
+                    except Exception:
+                        pass
+                    result["user_email"] = user_email
+                    return result
+            except Exception as e_rcl:
+                logger.debug(f"[구글 드라이브 Rclone 사전 점검] 폴백 시도: {e_rcl}")
+
+        # 2. Python Google SDK 레거시 폴백 (SDK 설치 또는 테스트 목 환경)
+        if GDRIVE_SDK_AVAILABLE:
+            try:
+                service = self._get_service()
+                about = service.about().get(fields="storageQuota,user").execute()
+                quota = about.get("storageQuota", {})
+                user = about.get("user", {})
+
+                result["user_email"] = user.get("emailAddress", "ServiceAccount")
+                limit = int(quota.get("limit", 0))
+                usage = int(quota.get("usage", 0))
+
+                if limit > 0:
+                    free = max(0, limit - usage)
+                    result["total_gb"] = round(limit / (1024 ** 3), 1)
+                    result["used_gb"] = round(usage / (1024 ** 3), 1)
+                    result["free_gb"] = round(free / (1024 ** 3), 1)
+                    result["free_percent"] = round((free / limit) * 100, 1)
+                else:
+                    result["total_gb"] = 9999.0
+                    result["used_gb"] = round(usage / (1024 ** 3), 1)
+                    result["free_gb"] = 9999.0
+                    result["free_percent"] = 100.0
+
+                result["target_folder_id"] = self._get_or_create_folder(service, self.folder_name_or_id)
+                result["ok"] = True
+                result["reachable"] = True
+                return result
+            except Exception as e:
+                result["reason"] = str(e)
+                logger.warning(f"[구글 드라이브 사전 점검 실패] {e}")
+                return result
+
+        result["reason"] = "Rclone 및 구글 드라이브 인증 설정을 찾을 수 없습니다."
+        return result
 
     def _get_rclone_exe(self) -> Optional[str]:
         """rclone 실행 파일 탐색 (프로젝트 내장 tools/bin, PATH, Winget 순)."""
@@ -700,6 +759,7 @@ hash_type = md5
             "--exclude", "*.tmp_*",
             "--exclude", "*.tmp.*",
             "--exclude", ".cache/**",
+            "--exclude", "archives/**",
         ]
         if packs_has_pack:
             cmd.extend(["--exclude", "blobs/**"])
