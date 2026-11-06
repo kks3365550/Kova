@@ -313,10 +313,16 @@ def _build_ssr_dashboard_data():
                 </div>
             </div>''')
 
-        # Resolve target profile name
+        # Resolve target profile name & dynamic status
         target_p_name = "내 맞춤형 핵심 백업"
+        last_backup_time_str = "방금"
+        copies_desc_str = "안전 보관 정상 (로컬 저장소)"
         try:
             from core.config import ConfigManager
+            cfg = ConfigManager.get_config()
+            if cfg.get("offsite", {}).get("enabled"):
+                copies_desc_str = "안전 보관 정상 (로컬 1 + 클라우드 1)"
+
             all_profs = ConfigManager.get_profiles()
             user_profs = [p for p in all_profs if p.get("id") != "prof_default"]
             if user_profs:
@@ -325,6 +331,17 @@ def _build_ssr_dashboard_data():
                     snaps_by_time = sorted(snaps, key=lambda s: float(s.get("created_at") or 0), reverse=True)
                     last_pid = snaps_by_time[0].get("profile_id")
                     matched = next((p for p in user_profs if p.get("id") == last_pid), None)
+                    latest_ts = float(snaps_by_time[0].get("created_at") or 0)
+                    if latest_ts > 0:
+                        diff_sec = max(0, int(time.time() - latest_ts))
+                        if diff_sec < 60:
+                            last_backup_time_str = "방금 전"
+                        elif diff_sec < 3600:
+                            last_backup_time_str = f"{diff_sec // 60}분 전"
+                        elif diff_sec < 86400:
+                            last_backup_time_str = f"{diff_sec // 3600}시간 전"
+                        else:
+                            last_backup_time_str = f"{diff_sec // 86400}일 전"
                 if not matched:
                     matched = next((p for p in user_profs if p.get("id") == "prof_custom_selected"), None)
                 if not matched:
@@ -344,7 +361,9 @@ def _build_ssr_dashboard_data():
             "recents_html": "".join(recents_html_items),
             "snapshots_json": json.dumps(snaps),
             "total_snaps": str(len(snaps)),
-            "target_profile_name": target_p_name
+            "target_profile_name": target_p_name,
+            "last_backup_time": last_backup_time_str,
+            "copies_desc": copies_desc_str
         }
     except Exception as e:
         logger.warning(f"[SSR] Dashboard pre-render error: {e}")
@@ -372,7 +391,9 @@ async def index_page(request: Request):
         "initial_recents_html": ssr["recents_html"],
         "initial_snapshots_json": ssr["snapshots_json"],
         "initial_total_snaps": ssr["total_snaps"],
-        "initial_target_profile_name": ssr.get("target_profile_name", "내 맞춤형 핵심 백업")
+        "initial_target_profile_name": ssr.get("target_profile_name", "내 맞춤형 핵심 백업"),
+        "initial_last_backup_time": ssr.get("last_backup_time", "방금 전"),
+        "initial_copies_desc": ssr.get("copies_desc", "안전 보관 정상 (로컬 저장소)")
     }
     return templates.TemplateResponse(request=request, name="index.html", context=ctx)
 
