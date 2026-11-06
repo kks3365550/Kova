@@ -184,7 +184,7 @@
                         <div class="space-y-0.5 min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-500/30 text-purple-300 border border-purple-500/40 font-mono">신규 업데이트 출시</span>
-                                <span id="dash-update-target-ver" class="text-xs font-mono font-bold text-white">v2.17.62</span>
+                                <span id="dash-update-target-ver" class="text-xs font-mono font-bold text-white">v2.17.63</span>
                                 <span class="text-[11px] text-zinc-400 font-mono">(현재: <span id="dash-update-current-ver">v{{ version if version else '2.17.60' }}</span>)</span>
                             </div>
                             <p id="dash-update-desc" class="text-xs text-zinc-300 truncate max-w-xl font-medium">새로운 기능과 성능 개선 및 버그 패치가 포함되어 있습니다. 원클릭으로 안전하게 업데이트하세요.</p>
@@ -296,7 +296,7 @@
                                 <div class="flex items-center gap-2">
                                     <div class="w-2 h-2 rounded-full bg-blue-400"></div>
                                     <span class="text-xs font-bold text-zinc-100 font-mono uppercase tracking-wide">백업 개수와 용량 변화</span>
-                                    <span id="chart-meta-summary" class="text-[10px] text-zinc-500 font-mono">| 실측 DB 연동 백업 시점 추이</span>
+                                    <span id="chart-meta-summary" class="text-[10px] text-zinc-500 font-mono">{{ initial_chart_meta or '| 실측 DB 연동 백업 시점 추이' }}</span>
                                 </div>
                                 <div class="flex items-center gap-3 text-[11px] font-mono text-zinc-400">
                                     <span class="flex items-center gap-1"><span class="w-2 h-2 bg-blue-500 rounded-sm"></span> Total Size (GB)</span>
@@ -304,17 +304,24 @@
                                 </div>
                             </div>
 
-                            <!-- Dynamic DB-Backed Snapshot Chart Container -->
+                            <!-- Dynamic DB-Backed Snapshot Chart Container (SSR Pre-rendered) -->
                             <div id="dashboard-snapshot-chart" class="h-36 w-full flex items-end justify-start gap-2 sm:gap-2.5 pt-7 pb-2 px-3 bg-zinc-950/70 rounded-xl border border-zinc-800/60 relative overflow-hidden">
-                                <!-- Dynamically Injected by renderDashboardSnapshotChart() with Real SQLite/Metadata Data -->
+                                {% if initial_chart_html %}
+                                {{ initial_chart_html | safe }}
+                                {% else %}
                                 <div class="w-full h-full flex items-center justify-center text-zinc-500 text-xs font-mono">
                                     백업 기록을 불러오는 중...
                                 </div>
+                                {% endif %}
                             </div>
                             
                             <div id="chart-date-labels" class="flex justify-between items-center text-[10px] font-mono text-zinc-500 mt-1.5 px-0.5">
+                                {% if initial_chart_dates %}
+                                {{ initial_chart_dates | safe }}
+                                {% else %}
                                 <span>과거 백업 시점</span>
                                 <span class="text-blue-400">최신 백업 시점 (Live)</span>
+                                {% endif %}
                             </div>
                             <script>
                                 (function() {
@@ -392,9 +399,11 @@
                                     </button>
                                 </div>
 
-                                <!-- Snapshots List Container (Injected by JS) -->
+                                <!-- Snapshots List Container (SSR Pre-rendered) -->
                                 <div id="recent-snapshots-list" class="space-y-2">
-                                    <!-- Injected by JS -->
+                                    {% if initial_recents_html %}
+                                    {{ initial_recents_html | safe }}
+                                    {% endif %}
                                 </div>
                                 <script>
                                     (function() {
@@ -2892,6 +2901,7 @@
     <script src="/static/js/backup_sysimage.js?v={{ v_ts }}"></script>
     <script src="/static/js/backup_migration.js?v={{ v_ts }}"></script>
     <script src="/static/js/rescue_usb.js?v={{ v_ts }}"></script>
+    <script>window.__INITIAL_SNAPSHOTS__ = {{ initial_snapshots_json | safe }};</script>
     <script src="/static/app.js?v={{ v_ts }}"></script>
 </body>
 </html>

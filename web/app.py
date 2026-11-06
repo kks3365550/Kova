@@ -187,10 +187,169 @@ app.include_router(diagnostic_router)
 from web.api_bitlocker import router as bitlocker_router
 app.include_router(bitlocker_router)
 
+def _format_bytes_ssr(num: int) -> str:
+    if num is None:
+        return "0 B"
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if abs(num) < 1024.0:
+            return f"{num:3.2f} {unit}" if unit in ("GB", "TB") else f"{int(num)} {unit}"
+        num /= 1024.0
+    return f"{num:.2f} PB"
+
+def _build_ssr_dashboard_data():
+    try:
+        from core.snapshot import SnapshotEngine
+        repos = _get_all_candidate_repos()
+        snaps = SnapshotEngine.list_snapshots(repos[0]) if repos else []
+        if not snaps:
+            return {
+                "chart_html": '<div class="w-full h-full flex flex-col items-center justify-center text-zinc-500 text-xs font-mono space-y-1"><span>아직 백업한 기록이 없어요.</span><span class="text-[10px] text-zinc-600">\'지금 백업하기\' 버튼을 눌러 첫 백업을 시작해 보세요.</span></div>',
+                "chart_meta": "| 기록된 백업 시점 없음",
+                "chart_dates": "<span>과거 백업 시점</span><span class=\"text-blue-400\">최신 백업 시점 (Live)</span>",
+                "recents_html": '<div class="text-center py-6 text-slate-500 text-xs bg-slate-900/40 rounded-xl border border-slate-800">아직 백업한 기록이 없어요. 홈 화면의 파란 \'지금 백업하기\' 버튼을 눌러 첫 백업을 시작해 보세요.</div>',
+                "snapshots_json": "[]",
+                "total_snaps": "0"
+            }
+
+        sorted_snaps = sorted(snaps, key=lambda s: float(s.get("created_at") or s.get("timestamp") or 0))
+        chart_snaps = sorted_snaps[-10:]
+        max_bytes = max([int((s.get("summary") or {}).get("total_bytes") or 1) for s in chart_snaps] + [1024 * 1024])
+        latest = chart_snaps[-1]
+
+        latest_bytes = (latest.get("summary") or {}).get("total_bytes") or 0
+        latest_files = (latest.get("summary") or {}).get("total_files") or 0
+        chart_meta = f"| 실측 DB 백업 시점 {len(snaps)}개 보관 (최신: {_format_bytes_ssr(latest_bytes)}, {latest_files:,}개 파일)"
+
+        import datetime
+        bars = []
+        for idx, s in enumerate(chart_snaps):
+            is_latest = (idx == len(chart_snaps) - 1)
+            sum_data = s.get("summary") or {}
+            b = sum_data.get("total_bytes") or 0
+            f = sum_data.get("total_files") or 0
+            height_pct = max(28, min(68, round((b / max_bytes) * 65)))
+
+            ts = float(s.get("created_at") or s.get("timestamp") or 0)
+            dt = datetime.datetime.fromtimestamp(ts)
+            time_only = dt.strftime("%H:%M")
+            sid = s.get("id", "")
+            prof = s.get("profile_name") or "기본 백업"
+            tip = f"[백업 시점 #{idx+1}]\\nID: {sid}\\n일시: {dt.strftime('%m/%d %H:%M')}\\n용량: {_format_bytes_ssr(b)}\\n파일 수: {f:,}개\\n프로필: {prof}"
+
+            bar_bg = 'bg-gradient-to-t from-blue-600 via-cyan-500 to-emerald-400 shadow-md shadow-emerald-500/25 border-t border-emerald-300' if is_latest else 'bg-gradient-to-t from-blue-700 to-blue-500 group-hover:from-blue-600 group-hover:to-cyan-400'
+            ping_span = '<span class="absolute -top-1 left-1/2 -translate-x-1/2 w-1.5 h-1.5 bg-emerald-300 rounded-full animate-ping"></span>' if is_latest else ''
+
+            bar = f'''<div class="flex-1 min-w-[2.2rem] max-w-[4.2rem] flex flex-col justify-end items-center h-full group relative cursor-pointer" title="{tip}" onclick="inspectSnapshot(\'{sid}\')">
+                <div class="text-[9px] font-mono font-bold text-zinc-200 whitespace-nowrap absolute -top-6 left-1/2 -translate-x-1/2 bg-zinc-900/90 px-1 py-0.5 rounded border border-zinc-700/80 shadow-md pointer-events-none group-hover:border-blue-400 group-hover:text-white transition">
+                    {_format_bytes_ssr(b)}
+                </div>
+                <div class="w-full {bar_bg} rounded-t-lg transition-all duration-300 relative" style="height: {height_pct}%">
+                    {ping_span}
+                </div>
+                <div class="text-[10px] font-mono text-zinc-400 group-hover:text-zinc-200 transition mt-2 text-center font-medium">
+                    {time_only}
+                </div>
+            </div>'''
+            bars.append(bar)
+
+        next_slot = '''<div class="flex-1 min-w-[2.2rem] max-w-[4.2rem] flex flex-col justify-end items-center h-full opacity-35 hover:opacity-80 transition cursor-pointer group" onclick="triggerQuickBackup()" title="클릭하여 지금 즉시 새 백업 생성">
+            <div class="text-[9px] font-mono text-zinc-400 -top-6 absolute whitespace-nowrap opacity-0 group-hover:opacity-100 transition">
+                + 백업 시작
+            </div>
+            <div class="w-full border-2 border-dashed border-zinc-700 group-hover:border-blue-500 rounded-t-lg flex flex-col items-center justify-center text-zinc-500 group-hover:text-blue-400 transition" style="height: 30%">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            </div>
+            <div class="text-[10px] font-mono text-zinc-500 group-hover:text-zinc-300 mt-2 transition">
+                Next
+            </div>
+        </div>'''
+
+        bars_joined = "\n".join(bars)
+        chart_html = f'''<div class="absolute inset-0 grid grid-rows-3 pointer-events-none opacity-20">
+            <div class="border-b border-zinc-700"></div>
+            <div class="border-b border-zinc-700"></div>
+            <div></div>
+        </div>
+        {bars_joined}
+        {next_slot}'''
+
+        first_ts = float(chart_snaps[0].get("created_at") or chart_snaps[0].get("timestamp") or 0)
+        last_ts = float(latest.get("created_at") or latest.get("timestamp") or 0)
+        first_dt = datetime.datetime.fromtimestamp(first_ts).strftime("%Y. %m. %d. %p %I:%M:%S").replace("AM", "오전").replace("PM", "오후")
+        last_dt = datetime.datetime.fromtimestamp(last_ts).strftime("%Y. %m. %d. %p %I:%M:%S").replace("AM", "오전").replace("PM", "오후")
+        chart_dates = f'''<span>첫 백업 시점: <b class="text-zinc-300">{first_dt}</b></span>
+            <span class="text-emerald-400">최신 백업 시점: <b>{last_dt} (Live)</b></span>'''
+
+        recents_list = sorted(snaps, key=lambda s: float(s.get("created_at") or s.get("timestamp") or 0), reverse=True)[:4]
+        recents_html_items = []
+        for s in recents_list:
+            is_full = (s.get("backup_type") == "full")
+            sum_data = s.get("summary") or {}
+            b = sum_data.get("total_bytes") or 0
+            ts = float(s.get("created_at") or s.get("timestamp") or 0)
+            date_str = datetime.datetime.fromtimestamp(ts).strftime("%Y. %m. %d. %p %I:%M:%S").replace("AM", "오전").replace("PM", "오후")
+            type_label = "전체 백업" if is_full else "바뀐 것만 백업"
+            sid = s.get("id", "")
+            prof = s.get("profile_name") or "기본 백업"
+            dot_color = "bg-blue-400 shadow-sm shadow-blue-500/50" if is_full else "bg-emerald-400 shadow-sm shadow-emerald-500/50"
+
+            recents_html_items.append(f'''<div class="px-4 py-3 bg-zinc-950/70 hover:bg-zinc-900/70 rounded-xl border border-zinc-800/80 hover:border-zinc-700/80 flex items-center justify-between transition text-xs group">
+                <div class="flex items-center gap-3">
+                    <span class="w-2 h-2 rounded-full {dot_color}"></span>
+                    <span class="font-mono text-zinc-300 font-medium">{date_str}</span>
+                    <span class="text-zinc-600">•</span>
+                    <span class="text-zinc-300 font-medium">{prof}</span>
+                    <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60">{type_label}</span>
+                    <span class="text-zinc-600">•</span>
+                    <span class="font-mono text-zinc-100 font-semibold">{_format_bytes_ssr(b)}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="openRestoreModal(\'{sid}\')" class="px-3 py-1 bg-zinc-800 hover:bg-blue-600 text-zinc-200 hover:text-white rounded-lg text-xs font-semibold transition border border-zinc-700/80 hover:border-blue-500 flex items-center gap-1 shadow-sm">
+                        되돌리기
+                    </button>
+                    <button onclick="inspectSnapshot(\'{sid}\')" class="px-2.5 py-1 bg-zinc-800/60 hover:bg-zinc-700 text-zinc-400 hover:text-white rounded-lg text-xs font-medium transition border border-zinc-800">
+                        탐색
+                    </button>
+                </div>
+            </div>''')
+
+        import json
+        return {
+            "chart_html": chart_html,
+            "chart_meta": chart_meta,
+            "chart_dates": chart_dates,
+            "recents_html": "".join(recents_html_items),
+            "snapshots_json": json.dumps(snaps),
+            "total_snaps": str(len(snaps))
+        }
+    except Exception as e:
+        logger.warning(f"[SSR] Dashboard pre-render error: {e}")
+        return {
+            "chart_html": "",
+            "chart_meta": "",
+            "chart_dates": "",
+            "recents_html": "",
+            "snapshots_json": "[]",
+            "total_snaps": "0"
+        }
+
+
 # --- Web UI Route ---
 @app.get("/", response_class=HTMLResponse)
 async def index_page(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context={"request": request, "v_ts": int(time.time()), "version": get_current_version()})
+    ssr = _build_ssr_dashboard_data()
+    ctx = {
+        "request": request,
+        "v_ts": int(time.time()),
+        "version": get_current_version(),
+        "initial_chart_html": ssr["chart_html"],
+        "initial_chart_meta": ssr["chart_meta"],
+        "initial_chart_dates": ssr["chart_dates"],
+        "initial_recents_html": ssr["recents_html"],
+        "initial_snapshots_json": ssr["snapshots_json"],
+        "initial_total_snaps": ssr["total_snaps"]
+    }
+    return templates.TemplateResponse(request=request, name="index.html", context=ctx)
 
 # --- System & Storage API ---
 @app.get("/api/system-info")

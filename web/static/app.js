@@ -113,17 +113,9 @@ function switchSettingsSection(sectionId) {
 async function loadDashboard() {
     const __t0 = performance.now();
 
-    // [0단계: 0ms 즉시 하이드레이션 (Zero-Delay Instant UI)]
-    // 이전에 캐시된 스냅샷 데이터가 있으면 API 응답 대기 없이 0ms 즉시 차트와 목록을 먼저 그린다!
-    if (!state.snapshots || state.snapshots.length === 0) {
-        try {
-            const cachedSnapsRaw = localStorage.getItem('kova_cached_snapshots');
-            if (cachedSnapsRaw) {
-                state.snapshots = JSON.parse(cachedSnapsRaw);
-                renderRecentSnapshots();
-                renderDashboardSnapshotChart();
-            }
-        } catch (e) {}
+    // [0단계: SSR 초기 데이터 즉시 바인딩]
+    if ((!state.snapshots || state.snapshots.length === 0) && window.__INITIAL_SNAPSHOTS__ && window.__INITIAL_SNAPSHOTS__.length > 0) {
+        state.snapshots = window.__INITIAL_SNAPSHOTS__;
     }
 
     try {
@@ -147,11 +139,22 @@ async function loadDashboard() {
             }
         } catch(e) {}
 
-        // 1단계 즉시 렌더링 (0.05초 만에 홈 화면 스냅샷 목록 표출)
+        // 1단계 렌더링
         renderDashboardStats();
-        renderRecentSnapshots();
         renderSystemDrives();
         checkOnboardingWizard();
+
+        // SSR 또는 캐시와 데이터가 동일하면 불필요한 차트 깜빡임/재애니메이션 억제
+        const currentCount = (state.snapshots && state.snapshots.length) || 0;
+        const newCount = (snaps && snaps.length) || 0;
+        const currentLatestId = state.snapshots && state.snapshots[0] ? state.snapshots[0].id : null;
+        const newLatestId = snaps && snaps[0] ? snaps[0].id : null;
+        const needsReRender = (currentCount !== newCount || currentLatestId !== newLatestId);
+
+        state.snapshots = snaps;
+        if (needsReRender) {
+            renderRecentSnapshots();
+        }
         const __t_dom = performance.now();
 
         window.__kova_load_perf = {
