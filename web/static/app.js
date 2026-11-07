@@ -640,9 +640,9 @@ function renderStorageHealth() {
         return `
             <div class="p-2.5 bg-zinc-950/80 rounded-xl border border-zinc-800/90 flex flex-col gap-1.5">
                 <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-1.5 overflow-hidden">
-                        <span class="text-zinc-400 font-mono text-[11px] font-bold">#${disk.device_id}</span>
-                        <span class="font-bold text-zinc-200 text-xs truncate max-w-[160px]" title="${disk.name}">${disk.name}</span>
+                    <div class="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
+                        <span class="text-zinc-400 font-mono text-[11px] font-bold shrink-0">#${disk.device_id}</span>
+                        <span class="font-bold text-zinc-200 text-xs truncate max-w-[140px] sm:max-w-[220px]" title="${disk.name}">${disk.name}</span>
                         ${busBadge}
                     </div>
                     <span class="px-1.5 py-0.5 text-[10px] rounded border font-mono ${statusColor}">${disk.health_status}</span>

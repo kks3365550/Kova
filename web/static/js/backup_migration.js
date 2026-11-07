@@ -374,30 +374,30 @@ async function loadArchiveList() {
 
             return `
                 <div class="p-3.5 bg-zinc-950/80 rounded-xl border border-zinc-800/80 flex flex-col xl:flex-row xl:items-center justify-between gap-3 hover:border-indigo-500/40 transition">
-                    <div class="space-y-1">
+                    <div class="space-y-1 min-w-0">
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="font-bold text-white text-xs">${escapeHtml(a.name)}</span>
-                            <span class="text-[10px] px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 font-mono border border-indigo-800">${a.size_gb} GB</span>
+                            <span class="font-bold text-white text-xs break-all">${escapeHtml(a.name)}</span>
+                            <span class="text-[10px] px-1.5 py-0.2 rounded bg-indigo-950 text-indigo-300 font-mono border border-indigo-800 shrink-0">${a.size_gb} GB</span>
                             ${verifyBadge}
                         </div>
-                        <div class="flex items-center gap-3 text-[11px] text-zinc-400">
-                            <span>생성: ${escapeHtml(a.created_at)}</span>
+                        <div class="flex items-center gap-3 text-[11px] text-zinc-400 flex-wrap">
+                            <span class="whitespace-nowrap">생성: ${escapeHtml(a.created_at)}</span>
                             <span>•</span>
-                            <span>원본 VSN: <strong class="text-purple-300 font-mono">${escapeHtml(a.vsn)}</strong></span>
+                            <span class="whitespace-nowrap">원본 VSN: <strong class="text-purple-300 font-mono">${escapeHtml(a.vsn)}</strong></span>
                         </div>
                     </div>
-                    <div class="flex items-center gap-2 flex-wrap sm:flex-nowrap shrink-0">
-                        <button onclick="uploadArchiveToGdrive('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-purple-900/60 hover:bg-purple-800 text-purple-200 rounded-lg text-xs font-medium border border-purple-700/80 transition flex items-center gap-1" title="구글 드라이브로 6저장 조각 초고속 병렬 업로드">
-                            <i data-lucide="cloud-upload" class="w-3.5 h-3.5 text-purple-300"></i> 구글 6저장 조각 업로드
+                    <div class="flex items-center gap-2 flex-wrap shrink-0">
+                        <button onclick="uploadArchiveToGdrive('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-purple-900/60 hover:bg-purple-800 text-purple-200 rounded-lg text-xs font-medium border border-purple-700/80 transition flex items-center gap-1 whitespace-nowrap" title="구글 드라이브로 6저장 조각 초고속 병렬 업로드">
+                            <i data-lucide="cloud-upload" class="w-3.5 h-3.5 text-purple-300 shrink-0"></i> <span>구글 6저장 조각 업로드</span>
                         </button>
-                        <button onclick="verifySingleArchive('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-medium border border-zinc-700 transition flex items-center gap-1">
-                            <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i> 실측 검증
+                        <button onclick="verifySingleArchive('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-medium border border-zinc-700 transition flex items-center gap-1 whitespace-nowrap">
+                            <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i> <span>실측 검증</span>
                         </button>
-                        <button onclick="openArchiveRestoreModal('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1">
-                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> 이 백업으로 되돌리기
+                        <button onclick="openArchiveRestoreModal('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1 whitespace-nowrap">
+                            <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 shrink-0"></i> <span>이 백업으로 되돌리기</span>
                         </button>
-                        <button onclick="deleteArchiveItem('${encodeURIComponent(a.path)}', '${escapeHtml(a.name)}', ${a.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-lg text-xs font-medium border border-rose-800/80 transition flex items-center gap-1" title="이 통백업 아카이브 삭제">
-                            <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400"></i> 삭제
+                        <button onclick="deleteArchiveItem('${encodeURIComponent(a.path)}', '${escapeHtml(a.name)}', ${a.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-lg text-xs font-medium border border-rose-800/80 transition flex items-center gap-1 whitespace-nowrap" title="이 통백업 아카이브 삭제">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400 shrink-0"></i> <span>삭제</span>
                         </button>
                     </div>
                 </div>
