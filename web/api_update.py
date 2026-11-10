@@ -6,6 +6,7 @@ web/api_update.py
 """
 import json
 import os
+import shutil
 import io
 import sys
 import time
@@ -140,15 +141,22 @@ async def self_update(request: Request = None, custom_body: bytes = None, custom
     pyw_candidate = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     launch_py = pyw_candidate if os.path.exists(pyw_candidate) else sys.executable
 
+    # 압축 해제·재기동·헬스체크·실패 시 롤백은 별도 헬퍼(core/legacy_update_apply.py)가 맡는다.
+    # 교체 중인 프로젝트 파일에 의존하지 않도록 임시 폴더로 복사해 실행한다.
+    helper_src = os.path.join(BASE_DIR, "core", "legacy_update_apply.py")
+    helper_tmp = os.path.join(tempfile.gettempdir(), f"kova_update_apply_{time.time_ns()}.py")
+    shutil.copy2(helper_src, helper_tmp)
+    try:
+        _port = int(request.url.port) if (request is not None and request.url.port) else 8765
+    except Exception:
+        _port = 8765
+
     # Windows CRLF & Ghost/Silent compliant batch script
     bat_content = (
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
-        "ping 127.0.0.1 -n 2 >nul\r\n"
-        f"\"{launch_py}\" -m zipfile -e \"{temp_zip}\" \"{BASE_DIR}\"\r\n"
-        f"cd /d \"{BASE_DIR}\"\r\n"
-        f"start \"\" \"{launch_py}\" run.py\r\n"
-        f"del \"{temp_zip}\" >nul 2>&1\r\n"
+        f"\"{launch_py}\" \"{helper_tmp}\" \"{temp_zip}\" \"{BASE_DIR}\" {_port} \"{launch_py}\"\r\n"
+        f"del \"{helper_tmp}\" >nul 2>&1\r\n"
         "del \"%~f0\" >nul 2>&1\r\n"
         "exit /b 0\r\n"
     )
