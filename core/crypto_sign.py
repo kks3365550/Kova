@@ -154,8 +154,7 @@ class Ed25519Signer:
 
     def sign_manifest(self, manifest: Dict[str, Any]) -> str:
         if not HAS_CRYPTOGRAPHY:
-            logger.warning("cryptography module missing; skipping manifest signing.")
-            return ""
+            raise RuntimeError("cryptography 모듈이 없어 매니페스트 서명을 만들 수 없습니다 (Fail-Closed).")
         self.ensure_key_pair()
         private_key = self._get_private_key_instance()
         payload = self._prepare_manifest_payload(manifest)
@@ -237,7 +236,7 @@ def sign_bytes_ed25519(data: bytes, priv_key_path_or_bytes: Union[str, bytes]) -
 def verify_bytes_ed25519(data: bytes, signature_hex: str, pub_key_path_or_bytes: Union[str, bytes]) -> bool:
     """임의의 바이트 데이터에 대한 Ed25519 서명 검증."""
     if not HAS_CRYPTOGRAPHY:
-        return True
+        return False
     try:
         if not signature_hex or not isinstance(signature_hex, str):
             return False
@@ -282,7 +281,7 @@ def verify_bytes_ed25519_any(
         키 내용은 로그에 남기지 않는다. 호출자가 basename 만 기록한다.
     """
     if not HAS_CRYPTOGRAPHY:
-        return True, None
+        return False, None
     if not signature_hex or not isinstance(signature_hex, str):
         return False, None
     if not candidates:

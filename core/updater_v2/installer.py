@@ -334,11 +334,15 @@ class AtomicInstaller:
 
         except Exception as e:
             logger.critical("INSTALL_FAILED error=%s -> starting rollback", str(e))
+            rolled_back = False
             if os.path.exists(backup_ver_dir):
-                self.rollback(backup_ver_dir, skip_process_control=skip_process_control)
-                if marker:
+                rolled_back = self.rollback(backup_ver_dir, skip_process_control=skip_process_control)
+                # 롤백이 실패했다면 복구 단서가 되는 트랜잭션 마커를 남겨 둔다
+                if marker and rolled_back:
                     txn_mgr.cleanup_marker(marker)
-            raise InstallerError(f"Installation failed: {e}") from e
+            if not rolled_back:
+                logger.critical("INSTALL_ROLLBACK_INCOMPLETE marker_kept=%s", bool(marker))
+            raise InstallerError(f"Installation failed: {e}" + ("" if rolled_back else " (롤백도 실패/불가: 수동 복구 필요)")) from e
 
         finally:
             shutil.rmtree(staging_dir, ignore_errors=True)

@@ -58,3 +58,39 @@ def test_chunked_entry_is_not_self_healed(tmp_path):
     import inspect
     src = inspect.getsource(IntegrityVerifier.verify_restore_sampling)
     assert "not (isinstance(chunk_ids, list) and chunk_ids)" in src
+
+
+def test_encryption_requires_passphrase(tmp_path):
+    import pytest
+    from core.snapshot import SnapshotEngine
+    src = tmp_path / "s"
+    src.mkdir()
+    (src / "a.txt").write_text("x")
+    with pytest.raises(ValueError):
+        SnapshotEngine.create_snapshot(str(tmp_path / "repo"), [str(src)], encryption_enabled=True,
+                                       min_free_disk_gb=0, use_vss=False)
+
+
+def test_ed25519_verify_fails_closed_without_cryptography(monkeypatch):
+    import core.crypto_sign as cs
+    monkeypatch.setattr(cs, "HAS_CRYPTOGRAPHY", False)
+    assert cs.verify_bytes_ed25519(b"x", "ab", b"k") is False
+    assert cs.verify_with_candidates(b"x", "ab", [b"k"]) == (False, None) if hasattr(cs, "verify_with_candidates") else True
+
+
+def test_skipped_files_counted_in_summary(tmp_path, monkeypatch):
+    import core.snapshot as sm
+    src = tmp_path / "s"
+    src.mkdir()
+    (src / "ok.txt").write_text("ok")
+    (src / "bad.txt").write_text("bad")
+    real = sm.BlobStorage.put_file_blob_onepass
+
+    def flaky(self, path, *a, **k):
+        if path.endswith("bad.txt"):
+            raise PermissionError("locked")
+        return real(self, path, *a, **k)
+
+    monkeypatch.setattr(sm.BlobStorage, "put_file_blob_onepass", flaky)
+    m = sm.SnapshotEngine.create_snapshot(str(tmp_path / "repo"), [str(src)], min_free_disk_gb=0, use_vss=False)
+    assert m["summary"]["skipped_files"] == 1

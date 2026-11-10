@@ -186,7 +186,8 @@ class IntegrityVerifier:
         - 각 샘플 파일의 블롭을 실제로 스트리밍 디컴프레스하여 크기와 SHA-256을 바이트 단위로 전수 대조.
         - 단 1개 파일이라도 불일치/누락 시 RestoreVerificationError 발생 (Fail-Closed).
         """
-        entries = snapshot_manifest.get("entries", [])
+        # 읽기 실패로 건너뛴 항목(skipped/error)은 블롭이 없는 것이 정상이므로 표본에서 제외한다
+        entries = [e for e in snapshot_manifest.get("entries", []) if e.get("status") not in ("skipped", "error")]
         if not entries:
             return {
                 "status": "skipped",

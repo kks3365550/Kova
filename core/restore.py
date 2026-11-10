@@ -100,6 +100,8 @@ class RestoreEngine:
                 src_root = entry.get("source_root")
                 if not src_root:
                     return ("fail", 0, rel_path, "스냅샷에 원본 경로(source_root) 정보가 없습니다.")
+                if not os.path.isabs(src_root):
+                    return ("fail", 0, rel_path, "원본 경로(source_root)가 절대 경로가 아닙니다.")
                 file_target_dir = os.path.abspath(src_root)
                 if remap_from:
                     norm_base = os.path.normpath(file_target_dir)

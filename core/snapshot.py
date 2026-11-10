@@ -264,7 +264,10 @@ class SnapshotEngine:
         start_time = time.time()
         crypto_engine = None
         if encryption_enabled or passphrase:
-            crypto_engine = CryptoAtRestEngine.from_passphrase(passphrase or "DefaultMasterBackupKey2026", repo_dir)
+            if not passphrase:
+                # 고정 기본 키로 '암호화'하면 누구나 복호화할 수 있으므로 거부한다 (Fail-Closed)
+                raise ValueError("암호화 백업에는 패스프레이즈가 필요합니다.")
+            crypto_engine = CryptoAtRestEngine.from_passphrase(passphrase, repo_dir)
         storage = BlobStorage(repo_dir, crypto_engine=crypto_engine)
         path_filter = PathFilter(exclude_patterns=exclude_patterns)
 
@@ -533,7 +536,8 @@ class SnapshotEngine:
 
                 # Check if multi-chunk strategy should be applied (size >= 16MB)
                 adapter = chunk_selector.select_adapter(actual_read_path, size, prev_entry=p_entry)
-                if adapter.strategy_id != "whole_file":
+                # 암호화 저장소는 청크가 pack 에 평문으로 기록되므로 암호화되는 단일 블롭 경로를 사용한다
+                if adapter.strategy_id != "whole_file" and storage.crypto_engine is None:
                     # Multi-chunk Ingest
                     chunk_ids = []
                     stored_sz_total = 0
@@ -709,6 +713,14 @@ class SnapshotEngine:
         total_source_bytes = sum(e.get("size", 0) for e in entries)
         dedup_saved_bytes = max(0, total_source_bytes - new_stored_bytes)
 
+        _skipped_n = sum(1 for e in entries if e.get("status") in ("skipped", "error"))
+        if _skipped_n:
+            log.warning(f"스냅샷에서 읽지 못해 제외된 파일 {_skipped_n}개 (summary.skipped_files 에 기록)")
+            if progress_callback:
+                progress_callback({"type": "verify_warning",
+                                   "current_file": f"읽기 실패/잠금으로 백업되지 않은 파일 {_skipped_n}개",
+                                   "processed_files": len(entries), "total_files": len(entries), "percent": 98.0})
+
         snapshot_manifest = {
             "id": snapshot_id,
             "created_at": time.time(),
@@ -735,6 +747,7 @@ class SnapshotEngine:
                 "modified_files": modified_files_count,
                 "unmodified_files": unmodified_files_count,
                 "deleted_files": deleted_files_count,
+                "skipped_files": sum(1 for e in entries if e.get("status") in ("skipped", "error")),
                 "new_stored_bytes": new_stored_bytes,
                 "dedup_saved_bytes": dedup_saved_bytes,
                 "duration_seconds": round(duration, 2)
