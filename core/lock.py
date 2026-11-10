@@ -186,6 +186,20 @@ class BackupLock:
                         existing_info
                     )
                 time.sleep(0.5)
+            except Exception:
+                # os.open 이후(쓰기 등)에서 실패하면 fd 와 락 파일을 정리해야 한다.
+                # 그대로 두면 같은 프로세스의 이후 백업이 전부 '이미 실행 중'으로 거부된다.
+                if self.fd is not None:
+                    try:
+                        os.close(self.fd)
+                    except OSError:
+                        pass
+                    self.fd = None
+                    try:
+                        os.remove(self.lock_path)
+                    except OSError:
+                        pass
+                raise
 
     def release(self):
         """락 해제 및 락 파일 정리"""

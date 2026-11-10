@@ -58,10 +58,9 @@ class MetadataDB:
                 is_corrupted = True
         except sqlite3.OperationalError as e:
             # 다른 프로세스가 쓰는 중(잠금/바쁨)이면 손상이 아니다 -> 정상 DB를 격리하지 않는다
-            if "locked" in str(e).lower() or "busy" in str(e).lower():
-                is_corrupted = False
-            else:
-                is_corrupted = True
+            # 실제 손상을 뜻하는 오류만 손상으로 판정한다(그 외 OperationalError 로 살아 있는 -wal 을 지우지 않는다)
+            _msg = str(e).lower()
+            is_corrupted = any(k in _msg for k in ("malformed", "not a database", "corrupt", "disk image"))
         except Exception:
             is_corrupted = True
         finally:

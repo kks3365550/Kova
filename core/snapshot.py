@@ -223,7 +223,7 @@ class SnapshotEngine:
         passphrase: Optional[str] = None
     ) -> Dict[str, Any]:
         # 0. Acquire repository lock to prevent concurrent backup runs
-        with BackupLock(repo_dir, timeout_sec=1.0, process_desc=f"{profile_name} ({profile_id})"):
+        with BackupLock(repo_dir, timeout_sec=20.0, process_desc=f"{profile_name} ({profile_id})"):
             return cls._create_snapshot_internal(
                 repo_dir=repo_dir,
                 sources=sources,
@@ -877,7 +877,7 @@ class SnapshotEngine:
         if offsite_repo_dir:
             try:
                 from core.replication_queue import ReplicationQueueManager
-                rq = ReplicationQueueManager(repo_dir)
+                rq = ReplicationQueueManager.get_shared(repo_dir)  # 저장소당 1개 인스턴스/워커 재사용
                 rq.enqueue(snapshot_id, repo_dir, offsite_repo_dir)
                 rq.start_background_worker()
             except Exception as e_rq:

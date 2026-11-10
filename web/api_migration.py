@@ -42,6 +42,9 @@ def _ensure_no_other_task() -> None:
     with task_lock:
         if current_task.get("running"):
             raise HTTPException(status_code=409, detail="다른 백업 또는 복원 작업이 실행 중입니다.")
+    # 디스크 클론/통백업 작업끼리도 동시에 돌지 않게 한다
+    if getattr(DiskCloneManager.get_instance(), "is_running", False) or getattr(DriveArchiveManager.get_instance(), "is_running", False):
+        raise HTTPException(status_code=409, detail="다른 마이그레이션 또는 통백업 작업이 실행 중입니다.")
 
 
 def _is_archive_target(path: str) -> bool:

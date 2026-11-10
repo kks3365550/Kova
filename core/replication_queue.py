@@ -40,6 +40,20 @@ class ReplicationQueueManager:
 
         self._init_db()
 
+    _shared: Dict[str, "ReplicationQueueManager"] = {}
+    _shared_lock = threading.Lock()
+
+    @classmethod
+    def get_shared(cls, repo_dir: str) -> "ReplicationQueueManager":
+        """저장소별 단일 인스턴스를 반환한다(백업마다 새 워커 스레드/DB 연결이 쌓이는 것을 방지)."""
+        key = os.path.abspath(repo_dir)
+        with cls._shared_lock:
+            inst = cls._shared.get(key)
+            if inst is None:
+                inst = cls(repo_dir)
+                cls._shared[key] = inst
+            return inst
+
     def _get_connection(self) -> sqlite3.Connection:
         if self._conn is None:
             conn = sqlite3.connect(self.db_path, check_same_thread=False, timeout=30.0)
@@ -91,7 +105,7 @@ class ReplicationQueueManager:
                 existing_id, state = row
                 if state == 'FAILED':
                     cursor.execute(
-                        "UPDATE replication_queue SET state='PENDING', error_msg=NULL, updated_at=? WHERE id=?",
+                        "UPDATE replication_queue SET state='PENDING', attempts=0, error_msg=NULL, updated_at=? WHERE id=?",
                         (now, existing_id)
                     )
                     conn.commit()

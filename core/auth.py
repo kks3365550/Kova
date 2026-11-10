@@ -83,13 +83,17 @@ def _save_auth_config(config: dict) -> None:
     os.replace(temp_path, path)
 
 
-def _hash_password(password: str, salt_hex: str) -> str:
+_PBKDF2_ITER_LEGACY = 100000    # 기존 설치본(필드 없음)이 사용하던 반복 횟수
+_PBKDF2_ITER_CURRENT = 600000   # 현재 권고 수준
+
+
+def _hash_password(password: str, salt_hex: str, iterations: int = _PBKDF2_ITER_LEGACY) -> str:
     salt_bytes = bytes.fromhex(salt_hex)
     key = hashlib.pbkdf2_hmac(
         'sha256',
         password.encode('utf-8'),
         salt_bytes,
-        100000
+        iterations
     )
     return key.hex()
 
@@ -199,7 +203,7 @@ def setup_master_password(password: str, allow_localhost_bypass: bool = True) ->
             raise ValueError("이미 마스터 비밀번호가 설정되어 있습니다. 암호 변경을 사용하세요.")
         
         salt = secrets.token_hex(16)
-        p_hash = _hash_password(password, salt)
+        p_hash = _hash_password(password, salt, _PBKDF2_ITER_CURRENT)
         now_str = datetime.now().isoformat()
         
         config.update({
@@ -207,6 +211,7 @@ def setup_master_password(password: str, allow_localhost_bypass: bool = True) ->
             "corrupted": False,
             "password_hash": p_hash,
             "salt": salt,
+            "pbkdf2_iterations": _PBKDF2_ITER_CURRENT,
             "allow_localhost_bypass": allow_localhost_bypass,
             "session_ttl_hours": config.get("session_ttl_hours", 24) or 24,
             "created_at": now_str,
@@ -226,8 +231,22 @@ def verify_master_password(password: str) -> bool:
             return False
         salt = config.get("salt", "")
         expected_hash = config.get("password_hash", "")
-        test_hash = _hash_password(password, salt)
-        return secrets.compare_digest(test_hash, expected_hash)
+        iters = int(config.get("pbkdf2_iterations") or _PBKDF2_ITER_LEGACY)
+        test_hash = _hash_password(password, salt, iters)
+        ok = secrets.compare_digest(test_hash, expected_hash)
+        if ok and iters < _PBKDF2_ITER_CURRENT:
+            # 로그인 성공 시 기존 해시를 현재 권고 반복 횟수로 투명하게 업그레이드한다
+            try:
+                new_salt = secrets.token_hex(16)
+                config.update({
+                    "password_hash": _hash_password(password, new_salt, _PBKDF2_ITER_CURRENT),
+                    "salt": new_salt,
+                    "pbkdf2_iterations": _PBKDF2_ITER_CURRENT,
+                })
+                _save_auth_config(config)
+            except Exception:
+                pass
+        return ok
 
 
 def change_master_password(old_password: str, new_password: str) -> bool:
@@ -242,17 +261,19 @@ def change_master_password(old_password: str, new_password: str) -> bool:
         
         salt = config.get("salt", "")
         expected_hash = config.get("password_hash", "")
-        test_hash = _hash_password(old_password, salt)
+        old_iters = int(config.get("pbkdf2_iterations") or _PBKDF2_ITER_LEGACY)
+        test_hash = _hash_password(old_password, salt, old_iters)
         if not secrets.compare_digest(test_hash, expected_hash):
             raise ValueError("현재 비밀번호가 일치하지 않습니다.")
         
         new_salt = secrets.token_hex(16)
-        new_p_hash = _hash_password(new_password, new_salt)
+        new_p_hash = _hash_password(new_password, new_salt, _PBKDF2_ITER_CURRENT)
         now_str = datetime.now().isoformat()
         
         config.update({
             "password_hash": new_p_hash,
             "salt": new_salt,
+            "pbkdf2_iterations": _PBKDF2_ITER_CURRENT,
             "updated_at": now_str
         })
         _save_auth_config(config)

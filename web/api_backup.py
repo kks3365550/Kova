@@ -297,6 +297,8 @@ def _background_custom_backup_task(params: Dict[str, Any]):
                             "duration_seconds": round(res.elapsed_seconds, 2)
                         }
                     }
+            except InterruptedError:
+                raise  # 사용자 취소는 엔진 실패가 아니므로 폴백하지 않고 바깥 취소 처리로 넘긴다
             except Exception as e_rust:
                 append_task_log(f"[경고] Rust 엔진 실행 실패 ({e_rust}), Python 레거시 엔진으로 자동 폴백합니다.", level="WARNING")
 
@@ -645,6 +647,8 @@ def _background_backup_task(params: Dict[str, Any]):
                             "duration_seconds": round(res.elapsed_seconds, 2)
                         }
                     }
+            except InterruptedError:
+                raise  # 사용자 취소는 엔진 실패가 아니므로 폴백하지 않고 바깥 취소 처리로 넘긴다
             except Exception as e_rust:
                 append_task_log(f"[경고] Rust 엔진 실행 실패 ({e_rust}), Python 레거시 엔진으로 자동 폴백합니다.", level="WARNING")
 

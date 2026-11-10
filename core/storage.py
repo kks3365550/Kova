@@ -5,6 +5,7 @@ import json
 import hashlib
 import shutil
 import threading
+import time
 from typing import Optional, Tuple, Dict, Any, Set, List
 from core.hasher import calculate_sha256, calculate_bytes_sha256
 
@@ -858,7 +859,7 @@ class BlobStorage:
         except OSError:
             return False
 
-    def prune_unreferenced_blobs(self, active_hashes: Set[str]) -> Tuple[int, int]:
+    def prune_unreferenced_blobs(self, active_hashes: Set[str], min_age_seconds: float = 3600.0) -> Tuple[int, int]:
 
         """Deletes blobs that are not present in active_hashes set. Returns (deleted_count, freed_bytes)."""
         deleted_count = 0
@@ -871,6 +872,9 @@ class BlobStorage:
                     if blob_hash not in active_hashes:
                         blob_path = os.path.join(root, file)
                         try:
+                            # 유예 기간: 방금 쓰인 블롭은 아직 manifest 에 기록되기 전일 수 있다(진행 중인 백업)
+                            if min_age_seconds > 0 and (time.time() - os.path.getmtime(blob_path)) < min_age_seconds:
+                                continue
                             fsize = os.path.getsize(blob_path)
                             unlock_file_writable(blob_path)
                             os.remove(blob_path)

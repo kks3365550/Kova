@@ -98,11 +98,17 @@ def test_prune_storage_success_when_all_manifests_valid(temp_repo):
     with open(os.path.join(storage.snapshots_dir, "snap_normal.json"), "w", encoding="utf-8") as f:
         json.dump(valid_manifest, f)
 
-    # 3. prune_storage 정상 수행
+    # 3. 방금 쓰인 고아 블롭은 유예 기간 동안 보존된다(진행 중인 백업 보호)
+    fresh_id, _, _, _ = storage.put_bytes_blob(b"fresh orphan from running backup")
+    old_ts = __import__("time").time() - 2 * 3600
+    os.utime(storage.get_blob_abs_path(orphan_id), (old_ts, old_ts))
+
+    # 4. prune_storage 정상 수행: 오래된 고아만 삭제
     res = SnapshotEngine.prune_storage(temp_repo)
     assert res["deleted_blobs"] == 1
     assert storage.has_blob(active_id)
     assert not storage.has_blob(orphan_id)
+    assert storage.has_blob(fresh_id)
 
 
 def test_auth_fail_closed_on_corrupt_config(monkeypatch):

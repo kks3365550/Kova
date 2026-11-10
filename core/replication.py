@@ -392,10 +392,15 @@ class ReplicationManager:
                         except Exception:
                             pass
 
-        try:
-            self._copy_snapshot_manifest(snapshot_id)
-        except Exception as e:
-            errors.append(f"매니페스트 복사 실패: {str(e)}")
+        # 블롭 복제에 실패한 스냅샷의 매니페스트는 원격에 올리지 않는다.
+        # (원격에 매니페스트만 있고 데이터가 없으면 '오프사이트 보호 완료'로 오인되어 복원이 불가능해진다)
+        if errors:
+            errors.append("블롭 복제 오류로 매니페스트 복사를 보류했습니다.")
+        else:
+            try:
+                self._copy_snapshot_manifest(snapshot_id)
+            except Exception as e:
+                errors.append(f"매니페스트 복사 실패: {str(e)}")
 
         duration = time.time() - start_time
         status = "success" if not errors else "error"

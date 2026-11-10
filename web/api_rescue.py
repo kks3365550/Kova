@@ -290,7 +290,9 @@ def start_make_usb(req: MakeUsbRequest):
 def get_usb_status():
     """현재 USB 제작 진행 상태 및 로그 반환"""
     with _usb_lock:
-        return dict(_usb_task_state)
+        snap = dict(_usb_task_state)
+        snap["log"] = list(_usb_task_state.get("log") or [])  # 락 밖에서 직렬화되므로 리스트도 복사
+        return snap
 
 
 @router.get("/guide")
