@@ -146,6 +146,7 @@ class PackConsolidator:
                     unlock_file_writable(str(fpath))
                     q_dest = self.quarantine_dir / f"{sha256}.blob"
                     shutil.move(str(fpath), str(q_dest))
+                    os.utime(str(q_dest), None)  # 격리 시각 기준으로 지연 GC(24h)가 동작하도록 mtime 갱신
                     quarantined_count += 1
                 except OSError:
                     pass

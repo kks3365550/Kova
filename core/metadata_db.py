@@ -56,6 +56,12 @@ class MetadataDB:
             rows = cursor.fetchall()
             if not rows or rows[0][0].lower() != "ok":
                 is_corrupted = True
+        except sqlite3.OperationalError as e:
+            # 다른 프로세스가 쓰는 중(잠금/바쁨)이면 손상이 아니다 -> 정상 DB를 격리하지 않는다
+            if "locked" in str(e).lower() or "busy" in str(e).lower():
+                is_corrupted = False
+            else:
+                is_corrupted = True
         except Exception:
             is_corrupted = True
         finally:

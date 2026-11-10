@@ -5,6 +5,7 @@ web/api_backup.py
 백업, 복원, 무결성 검증, 작업 상태, 로그 및 스토리지 정리 APIRouter 모듈
 """
 import os
+import re
 import sys
 import json
 import subprocess
@@ -12,7 +13,7 @@ import time
 import threading
 import tempfile
 from typing import Dict, List, Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 
 from web.paths import BASE_DIR
@@ -891,7 +892,7 @@ def get_backup_logs(limit: int = 200):
 
 # --- Restore Execution API ---
 class RunRestoreRequest(BaseModel):
-    snapshot_id: str
+    snapshot_id: str = Field(pattern=r'^[A-Za-z0-9_\-]+$')
     target_dir: Optional[str] = None
     repo_dir: Optional[str] = None
     selected_rel_paths: Optional[List[str]] = None
@@ -900,6 +901,20 @@ class RunRestoreRequest(BaseModel):
 
 
 def _background_restore_task(params: Dict[str, Any]):
+    """예외가 어디서 나더라도 running 플래그를 반드시 해제한다(이후 작업이 409로 영구 차단되는 것 방지)."""
+    try:
+        _background_restore_task_impl(params)
+    except Exception as e:
+        append_task_log(f"복원 준비 중 오류 발생: {str(e)}", level="ERROR")
+        with task_lock:
+            current_task["error"] = str(e)
+            current_task["result"] = None
+    finally:
+        with task_lock:
+            current_task["running"] = False
+
+
+def _background_restore_task_impl(params: Dict[str, Any]):
     snap_id = params["snapshot_id"]
     target_dir = params.get("target_dir")
     selected = params.get("selected_rel_paths")
@@ -1014,7 +1029,7 @@ def run_restore(req: RunRestoreRequest, background_tasks: BackgroundTasks):
 
 # --- Verify API ---
 class RunVerifyRequest(BaseModel):
-    snapshot_id: str
+    snapshot_id: str = Field(pattern=r'^[A-Za-z0-9_\-]+$')
     repo_dir: Optional[str] = None
 
 
@@ -1149,6 +1164,8 @@ def run_dr_drill(snapshot_id: Optional[str] = None, req: Optional[DrillRequest] 
     """
     import hashlib
     target_id = snapshot_id or (req.snapshot_id if req else None)
+    if target_id and not re.match(r'^[A-Za-z0-9_\-]+$', target_id):
+        raise HTTPException(status_code=400, detail="유효하지 않은 스냅샷 식별자 형식입니다.")
     repo_dir = req.repo_dir if req else None
 
     if not repo_dir and target_id:

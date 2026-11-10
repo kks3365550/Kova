@@ -103,7 +103,7 @@ class RestoreEngine:
                 file_target_dir = os.path.abspath(src_root)
                 if remap_from:
                     norm_base = os.path.normpath(file_target_dir)
-                    if norm_base.lower().startswith(remap_from.lower()):
+                    if norm_base.lower() == remap_from.lower() or norm_base.lower().startswith(remap_from.lower().rstrip("\\") + "\\"):
                         file_target_dir = os.path.normpath(current_user_profile + norm_base[len(remap_from):])
                 dest_path = os.path.abspath(os.path.join(file_target_dir, rel_path))
                 # P0: ZipSlip / Path Traversal 방어 (commonpath 검증)

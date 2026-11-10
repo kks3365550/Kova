@@ -1,3 +1,8 @@
+/** onclick 속성 안에서 안전한 JS 문자열 인자: JSON 직렬화 후 HTML 속성 이스케이프 */
+function _jsArg(v) {
+    return escapeHtml(JSON.stringify(String(v === undefined || v === null ? '' : v)));
+}
+
 // =========================================================================
 // [백업시스템] 백업 시점 관리, 파일 탐색기(Explorer), 되돌리기(Restore) & 실시간 로그
 // =========================================================================
@@ -169,8 +174,8 @@ function renderExplorerBreadcrumb(subpath) {
         const pathTarget = accumulated;
         html += `
             <span class="text-slate-600">/</span>
-            <button onclick="loadExplorerPath('${pathTarget.replace(/'/g, "\\'")}')" class="hover:text-blue-400 transition truncate max-w-[140px] ${isLast ? 'text-slate-100 font-bold' : 'text-slate-400'}">
-                ${p}
+            <button onclick="loadExplorerPath(${_jsArg(pathTarget)})" class="hover:text-blue-400 transition truncate max-w-[140px] ${isLast ? 'text-slate-100 font-bold' : 'text-slate-400'}">
+                ${escapeHtml(p)}
             </button>
         `;
     });
@@ -210,7 +215,7 @@ function renderExplorerItems() {
             ? state.explorer.currentPath.substring(0, state.explorer.currentPath.lastIndexOf('/'))
             : '';
         html += `
-            <div onclick="loadExplorerPath('${parentPath.replace(/'/g, "\\'")}')" class="flex items-center gap-2 py-1.5 px-3 rounded-lg text-xs cursor-pointer hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition">
+            <div onclick="loadExplorerPath(${_jsArg(parentPath)})" class="flex items-center gap-2 py-1.5 px-3 rounded-lg text-xs cursor-pointer hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition">
                 <i data-lucide="corner-left-up" class="w-4 h-4 text-slate-400"></i>
                 <span class="font-medium">.. (상위 디렉토리로 이동)</span>
             </div>
@@ -221,25 +226,25 @@ function renderExplorerItems() {
         const isDir = item.type === 'directory';
         const icon = isDir ? 'folder' : 'file';
         const iconColor = isDir ? 'text-amber-400' : 'text-blue-400';
-        const itemRelPath = (item.rel_path || '').replace(/'/g, "\\'");
-        const itemName = (item.name || '').replace(/'/g, "\\'");
+        const itemRelPath = _jsArg(item.rel_path || '');
+        const itemName = _jsArg(item.name || '');
 
         const clickAction = isDir 
-            ? `onclick="loadExplorerPath('${itemRelPath}')"`
+            ? `onclick="loadExplorerPath(${itemRelPath})"`
             : '';
 
         return `
             <div ${clickAction} class="flex items-center justify-between py-1.5 px-3 rounded-lg text-xs cursor-pointer hover:bg-slate-800/80 transition group select-none">
                 <div class="flex items-center gap-2.5 overflow-hidden flex-1 mr-2">
                     <i data-lucide="${icon}" class="w-4 h-4 ${iconColor} shrink-0"></i>
-                    <span class="truncate font-medium ${isDir ? 'text-slate-200 hover:text-amber-300' : 'text-slate-300'}">${item.name}</span>
+                    <span class="truncate font-medium ${isDir ? 'text-slate-200 hover:text-amber-300' : 'text-slate-300'}">${escapeHtml(item.name)}</span>
                     ${isDir && item.file_count ? `<span class="text-[10px] text-slate-500">(${item.file_count}개 파일)</span>` : ''}
                 </div>
                 <div class="flex items-center gap-3 shrink-0 text-slate-500 text-[11px]">
                     ${!isDir ? `<span>${formatBytes(item.size)}</span>` : (item.size ? `<span>${formatBytes(item.size)}</span>` : '')}
                     ${!isDir && item.chunk_strategy && item.chunk_strategy !== 'whole_file' ? `<span class="px-1.5 py-0.5 rounded text-[10px] bg-cyan-950 text-cyan-300 border border-cyan-800 font-mono" title="${item.chunk_strategy} 청킹 (${item.chunk_count}개 분할)">🧩 ${item.chunk_strategy.toUpperCase()} (${item.chunk_count}청킹)</span>` : ''}
                     ${!isDir && item.status ? `<span class="px-1.5 py-0.5 rounded text-[10px] ${item.status === 'new' ? 'bg-emerald-950 text-emerald-400' : item.status === 'modified' ? 'bg-amber-950 text-amber-400' : 'bg-slate-800 text-slate-400'}">${item.status}</span>` : ''}
-                    <button type="button" onclick="event.stopPropagation(); openRestoreModal('${state.explorer.snapshotId}', '${itemRelPath}', '${itemName}', '${item.type}')" class="opacity-0 group-hover:opacity-100 px-2.5 py-1 bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white rounded-lg text-[11px] font-medium transition flex items-center gap-1 shadow border border-slate-700 hover:border-blue-500" title="${isDir ? '이 폴더만 되돌리기' : '이 파일만 되돌리기'}">
+                    <button type="button" onclick="event.stopPropagation(); openRestoreModal(${_jsArg(state.explorer.snapshotId)}, ${itemRelPath}, ${itemName}, ${_jsArg(item.type)})" class="opacity-0 group-hover:opacity-100 px-2.5 py-1 bg-slate-800 hover:bg-blue-600 text-slate-300 hover:text-white rounded-lg text-[11px] font-medium transition flex items-center gap-1 shadow border border-slate-700 hover:border-blue-500" title="${isDir ? '이 폴더만 되돌리기' : '이 파일만 되돌리기'}">
                         <i data-lucide="rotate-ccw" class="w-3 h-3"></i>
                         <span>되돌리기</span>
                     </button>
@@ -601,7 +606,7 @@ async function pollTaskStatus() {
         // Terminal Logs
         const terminal = document.getElementById('terminal-log-box');
         if (terminal && task.logs) {
-            terminal.innerHTML = task.logs.map(l => `<div>${l}</div>`).join('');
+            terminal.innerHTML = task.logs.map(l => `<div>${escapeHtml(l)}</div>`).join('');
             terminal.scrollTop = terminal.scrollHeight;
         }
 

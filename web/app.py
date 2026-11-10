@@ -110,6 +110,20 @@ app = FastAPI(title="Server & System Backup Manager", version=VERSION, lifespan=
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
+
+    # CSRF 방어: 상태 변경 요청의 Origin 이 루프백/동일 호스트가 아니면 차단
+    # (localhost 인증 우회가 켜져 있어도 외부 웹페이지의 교차 출처 호출은 막는다)
+    # 프록시/터널(X-Forwarded-For, CF-Connecting-IP) 경유 요청은 Host 가 재작성될 수 있어 제외
+    if request.method in ("POST", "PUT", "PATCH", "DELETE") and not (request.headers.get("x-forwarded-for") or request.headers.get("cf-connecting-ip")):
+        _origin = request.headers.get("origin")
+        if _origin and _origin != "null":
+            from urllib.parse import urlparse as _urlparse
+            _o_host = (_urlparse(_origin).hostname or "").lower()
+            _req_host = (request.headers.get("host") or "").split(":")[0].lower()
+            if _o_host not in ("127.0.0.1", "localhost", "::1", "[::1]") and _o_host != _req_host:
+                return JSONResponse(status_code=403, content={"success": False, "error": "허용되지 않은 출처(Origin)의 요청입니다."})
+        elif _origin == "null":
+            return JSONResponse(status_code=403, content={"success": False, "error": "허용되지 않은 출처(Origin)의 요청입니다."})
     
     # 0. 인증 설정 파일 손상 상태 검사 (Fail-Closed: 모든 API 요청 차단)
     if is_auth_corrupted():
@@ -887,7 +901,11 @@ async def upload_gdrive_credentials(file: UploadFile = File(...)):
     try:
         base_data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
         os.makedirs(base_data_dir, exist_ok=True)
-        file_path = os.path.join(base_data_dir, file.filename)
+        # 경로 탐색 차단: 디렉터리 성분 제거 후 .json 파일명만 허용
+        safe_name = os.path.basename((file.filename or "").replace("\\", "/")).strip()
+        if not safe_name or safe_name in (".", "..") or not safe_name.lower().endswith(".json"):
+            return JSONResponse(status_code=400, content={"success": False, "error": "인증 파일은 .json 파일명만 허용됩니다."})
+        file_path = os.path.join(base_data_dir, safe_name)
         content = await file.read()
         with open(file_path, "wb") as f:
             f.write(content)
@@ -895,11 +913,11 @@ async def upload_gdrive_credentials(file: UploadFile = File(...)):
         for target_dir in [r"D:\백업시스템_설치용\data", r"C:\Users\kksjmj\AppData\Local\Programs\백업시스템\data"]:
             try:
                 os.makedirs(target_dir, exist_ok=True)
-                with open(os.path.join(target_dir, file.filename), "wb") as f:
+                with open(os.path.join(target_dir, safe_name), "wb") as f:
                     f.write(content)
             except Exception:
                 pass
-        return {"success": True, "file_path": file_path, "filename": file.filename}
+        return {"success": True, "file_path": file_path, "filename": safe_name}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -1329,8 +1347,16 @@ async def api_clean_incomplete():
     lock_path = r"D:\MyBackup_Repository\backup.lock"
     if os.path.exists(lock_path):
         try:
-            os.remove(lock_path)
-            results.append("backup.lock 삭제 성공")
+            # 백업이 실행 중이면 락을 획득할 수 없으므로 삭제하지 않는다
+            from core.lock import BackupLock, BackupAlreadyRunningError
+            try:
+                with BackupLock(os.path.dirname(lock_path), timeout_sec=0.0, process_desc="미완료 정리"):
+                    pass
+                if os.path.exists(lock_path):
+                    os.remove(lock_path)
+                results.append("backup.lock 삭제 성공")
+            except BackupAlreadyRunningError:
+                results.append("backup.lock 유지: 백업이 실행 중입니다")
         except Exception as e:
             results.append(f"backup.lock 오류: {e}")
 

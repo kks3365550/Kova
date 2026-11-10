@@ -2262,6 +2262,13 @@ class DriveArchiveManager:
         if len(norm_lower) < 10 or norm_lower.startswith("c:\\windows") or (not is_archive_file and (norm_lower.startswith("c:\\users") or "temp" in norm_lower)):
             return {"success": False, "error": "시스템 보호 정책에 의해 지정된 경로는 삭제할 수 없습니다."}
 
+        # 허용 대상 제한: 아카이브 확장자 파일, 또는 archives / WindowsImageBackup 폴더 하위 항목만
+        # (저장소 루트·스냅샷 JSON 등 임의 경로 삭제 차단)
+        path_parts = norm_lower.split("\\")
+        in_archive_tree = "archives" in path_parts[:-1] or "windowsimagebackup" in path_parts
+        if not (is_archive_file or in_archive_tree):
+            return {"success": False, "error": "아카이브 보관 경로(archives, WindowsImageBackup)나 아카이브 파일이 아니어서 삭제할 수 없습니다."}
+
         try:
             deleted_files = []
             freed_bytes = 0

@@ -70,6 +70,8 @@ class Ed25519Signer:
         else:
             private_key = Ed25519PrivateKey.generate()
             self._save_private_key(private_key)
+            # 개인키를 새로 만들었다면 옛 공개키가 남아 있어도 반드시 새 쌍으로 덮어쓴다(서명 검증 불일치 방지)
+            self._save_public_key(private_key.public_key())
 
         if os.path.exists(self.public_key_path):
             self._load_public_key()

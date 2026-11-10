@@ -116,7 +116,7 @@ async def self_update(request: Request = None, custom_body: bytes = None, custom
     try:
         with zipfile.ZipFile(io.BytesIO(body), "r") as zf:
             file_names = zf.namelist()
-            if not any("core" in fn or "web" in fn or "run.py" in fn for fn in file_names):
+            if not any(fn.replace("\\", "/").startswith(("core/", "web/")) or fn == "run.py" for fn in file_names):
                 raise HTTPException(status_code=400, detail="유효하지 않은 업데이트 패키지: 핵심 구성요소가 누락되었습니다.")
 
             for member in zf.infolist():
@@ -131,11 +131,11 @@ async def self_update(request: Request = None, custom_body: bytes = None, custom
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"압축 패키지 검증 오류: {str(e)}")
 
-    temp_zip = os.path.join(tempfile.gettempdir(), f"backup_update_{int(time.time())}.zip")
+    temp_zip = os.path.join(tempfile.gettempdir(), f"backup_update_{time.time_ns()}.zip")
     with open(temp_zip, "wb") as f:
         f.write(body)
 
-    updater_bat = os.path.join(tempfile.gettempdir(), f"run_updater_{int(time.time())}.bat")
+    updater_bat = os.path.join(tempfile.gettempdir(), f"run_updater_{time.time_ns()}.bat")
     pyw_candidate = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
     launch_py = pyw_candidate if os.path.exists(pyw_candidate) else sys.executable
 
@@ -300,6 +300,8 @@ async def sync_remote_release(request: Request):
         body_json = await request.json()
     except Exception:
         body_json = {}
+    if not isinstance(body_json, dict):
+        body_json = {}
 
     master_url = body_json.get("master_url", "").rstrip("/")
     if not master_url:
@@ -448,7 +450,7 @@ async def apply_offline_bundle(file: UploadFile = File(...)):
     오프라인 .bundle 패키지를 업로드받아 UnifiedUpdatePipeline을 통해
     암호학적 서명, 정책 의미론, 무해성 검증 후 안전하게 적용합니다.
     """
-    if not file.filename.endswith(".bundle"):
+    if not (file.filename or "").endswith(".bundle"):
         raise HTTPException(status_code=400, detail="오프라인 배포 파일은 .bundle 확장자여야 합니다.")
 
     try:

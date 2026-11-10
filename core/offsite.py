@@ -486,7 +486,8 @@ class GoogleDriveOffsiteReplicator:
 
         # 2. 이름으로 검색
         folder_name = folder_name_or_id or "BackupSystem_Offsite"
-        query = f"name = '{folder_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+        _q_name = folder_name.replace("\\", "\\\\").replace("'", "\\'")
+        query = f"name = '{_q_name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         res = service.files().list(q=query, fields="files(id, name)", spaces="drive").execute()
         files = res.get("files", [])
         if files:

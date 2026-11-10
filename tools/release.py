@@ -244,18 +244,23 @@ def run_git_release(version: str, message: str):
     print(f"[2/5] Running Git commit and tagging v{version}...")
     try:
         subprocess.run(['git', 'add', '-A'], cwd=BASE_DIR, check=True)
+        _staged_chk = subprocess.run(['git', 'diff', '--cached', '--quiet'], cwd=BASE_DIR)
+        _nothing_staged = getattr(_staged_chk, 'returncode', 1) == 0
         # -m 이 이미 "release: vX.Y.Z -" 로 시작하면 접두어를 다시 붙이지 않는다.
         _msg = (message or "").strip()
         _prefix = f"release: v{version}"
         if _msg.lower().startswith(_prefix.lower()):
             _msg = _msg[len(_prefix):].lstrip(" -:")
         commit_msg = f"{_prefix} - {_msg}" if _msg else _prefix
-        subprocess.run(['git', 'commit', '-m', commit_msg], cwd=BASE_DIR, check=True)
+        if not _nothing_staged:
+            subprocess.run(['git', 'commit', '-m', commit_msg], cwd=BASE_DIR, check=True)
         tag_name = f"v{version}"
         subprocess.run(['git', 'tag', '-a', tag_name, '-m', f"Release {tag_name}"], cwd=BASE_DIR, check=True)
         print(f"      Git commit and tag '{tag_name}' created successfully.")
     except subprocess.CalledProcessError as e:
-        print(f"      Git warning/skip: {e}")
+        # 커밋/태그가 실패했는데 빌드·푸시·릴리즈를 계속하면 태그 없는 버전이 배포되므로 즉시 중단한다
+        print(f"      [ERROR] Git commit/tag 실패, 릴리즈를 중단합니다: {e}")
+        sys.exit(1)
 
 def compile_inno_setup_installer(version: str):
     print(f"[3/5] Compiling Inno Setup installer for v{version}...")
@@ -313,24 +318,32 @@ def sync_install_directories(installer_exe: str = None):
         os.makedirs(target, exist_ok=True)
         
         robo_kwargs = {'capture_output': True}
+
+        def _robocopy(cmd):
+            # robocopy 종료 코드 0~7 은 성공(복사 있음/없음), 8 이상은 실패
+            res = subprocess.run(cmd, **robo_kwargs)
+            if res.returncode >= 8:
+                print(f"      [ERROR] robocopy 실패(code {res.returncode}): {' '.join(cmd[1:3])}")
+                raise RuntimeError(f"robocopy failed with code {res.returncode}")
+            return res
         if sys.platform.startswith('win') and hasattr(subprocess, 'CREATE_NO_WINDOW'):
             robo_kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
 
         # Sync core and web
-        subprocess.run(['robocopy', os.path.join(BASE_DIR, 'core'), os.path.join(target, 'core'), '/E', '/MIR'], **robo_kwargs)
-        subprocess.run(['robocopy', os.path.join(BASE_DIR, 'web'), os.path.join(target, 'web'), '/E', '/MIR'], **robo_kwargs)
+        _robocopy(['robocopy', os.path.join(BASE_DIR, 'core'), os.path.join(target, 'core'), '/E', '/MIR'])
+        _robocopy(['robocopy', os.path.join(BASE_DIR, 'web'), os.path.join(target, 'web'), '/E', '/MIR'])
         
         # Sync emergency_restore (with embedded python)
         if os.path.exists(os.path.join(BASE_DIR, 'emergency_restore')):
-            subprocess.run(['robocopy', os.path.join(BASE_DIR, 'emergency_restore'), os.path.join(target, 'emergency_restore'), '/E', '/MIR'], **robo_kwargs)
+            _robocopy(['robocopy', os.path.join(BASE_DIR, 'emergency_restore'), os.path.join(target, 'emergency_restore'), '/E', '/MIR'])
         
         # Sync keys (including release_ed25519.pub)
         if os.path.exists(os.path.join(BASE_DIR, 'keys')):
-            subprocess.run(['robocopy', os.path.join(BASE_DIR, 'keys'), os.path.join(target, 'keys'), '/E', '/MIR'], **robo_kwargs)
+            _robocopy(['robocopy', os.path.join(BASE_DIR, 'keys'), os.path.join(target, 'keys'), '/E', '/MIR'])
 
         # Sync native Rust engine
         if os.path.exists(os.path.join(BASE_DIR, 'engine_rust')):
-            subprocess.run(['robocopy', os.path.join(BASE_DIR, 'engine_rust'), os.path.join(target, 'engine_rust'), 'kova_fast_engine.exe'], **robo_kwargs)
+            _robocopy(['robocopy', os.path.join(BASE_DIR, 'engine_rust'), os.path.join(target, 'engine_rust'), 'kova_fast_engine.exe'])
 
         # Sync root py and bat files
         for item in os.listdir(BASE_DIR):
@@ -357,7 +370,7 @@ def sync_install_directories(installer_exe: str = None):
     if os.path.exists(repo_backup):
         emerg_src = os.path.join(BASE_DIR, 'emergency_restore')
         if os.path.exists(emerg_src):
-            subprocess.run(['robocopy', emerg_src, os.path.join(repo_backup, 'emergency_restore'), '/E', '/MIR'], **robo_kwargs)
+            _robocopy(['robocopy', emerg_src, os.path.join(repo_backup, 'emergency_restore'), '/E', '/MIR'])
         recovery_files = [
             "원클릭_C드라이브_전체복구.bat",
             "선택복구_대화형.bat",

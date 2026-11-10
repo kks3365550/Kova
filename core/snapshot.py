@@ -1069,8 +1069,8 @@ class SnapshotEngine:
         with BackupLock(repo_dir, timeout_sec=15.0, process_desc="스냅샷 보존 정리(Prune)"):
             mgr = RetentionManager(repo_dir)
             res = mgr.apply_policy(
-                retention_count=retention_count or 30,
-                retention_days=max_age_days or 60,
+                retention_count=retention_count if retention_count is not None else 30,
+                retention_days=max_age_days if max_age_days is not None else 60,
                 min_free_gb=min_free_gb,
                 authorized=authorized
             )
