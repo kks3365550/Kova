@@ -151,7 +151,7 @@ class UnifiedUpdatePipeline:
             if not os.path.exists(backup_ver_dir):
                 raise PipelineExecutionError(f"Rollback target directory does not exist: {backup_ver_dir}")
 
-            rb_success = self.installer.rollback(backup_ver_dir)
+            rb_success = self.installer.rollback(backup_ver_dir, skip_process_control=skip_process_control)
             if not rb_success:
                 raise PipelineExecutionError("Forced rollback execution failed")
 

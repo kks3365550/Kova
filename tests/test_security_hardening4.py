@@ -101,3 +101,23 @@ def test_prerelease_is_older_than_release():
     assert _ver_key("2.17.74-rc1") < _ver_key("2.17.74")
     assert _ver_key("2.17.74") < _ver_key("2.17.75-rc1")
     assert _ver_key("v2.17.74") == _ver_key("2.17.74")
+
+
+def test_rollback_fails_when_server_unhealthy_after_restore(tmp_path):
+    from unittest.mock import patch
+    from core.updater_v2.installer import AtomicInstaller
+    target = tmp_path / "app"
+    backup = tmp_path / "backup"
+    (backup / "core").mkdir(parents=True)
+    (backup / "core" / "a.py").write_text("old")
+    target.mkdir()
+    inst = AtomicInstaller(target_dir=str(target))
+    with patch.object(inst, "stop_server", return_value=True), \
+         patch.object(inst, "restart_server", return_value=True), \
+         patch.object(inst, "health_check", return_value=False):
+        assert inst.rollback(str(backup)) is False
+    assert (target / "core" / "a.py").read_text() == "old"   # 파일은 복원됨
+    with patch.object(inst, "stop_server", return_value=True), \
+         patch.object(inst, "restart_server", return_value=True), \
+         patch.object(inst, "health_check", return_value=True):
+        assert inst.rollback(str(backup)) is True
