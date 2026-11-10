@@ -165,7 +165,7 @@ def _background_usb_worker(target_drive: str, iso_path: str, auto_format: bool =
 
             inject_script = os.path.join(PROJECT_ROOT, "tools", "inject_autostart_to_wim.py")
             if os.path.exists(inject_script):
-                res = subprocess.run([sys.executable, inject_script, os.path.join(target_root, "sources", "boot.wim")], capture_output=True, text=True, encoding="utf-8", errors="replace")
+                res = subprocess.run([sys.executable, inject_script, os.path.join(target_root, "sources", "boot.wim")], capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
                 if res.returncode == 0:
                     append_usb_log("WinPE boot.wim 자동 실행 주입 성공! (부팅 시 0초 만에 콘솔 직행)")
                 else:
@@ -257,6 +257,9 @@ def start_make_usb(req: MakeUsbRequest):
             raise HTTPException(status_code=400, detail="이미 USB 제작 작업이 진행 중입니다.")
 
         drive = req.drive_letter.upper().strip()
+        if len(drive.rstrip(":")) != 1 or not drive.rstrip(":").isalpha() or drive not in (drive[:1], drive[:1] + ":"):
+            raise HTTPException(status_code=400, detail="드라이브 문자 형식이 올바르지 않습니다(예: E:).")
+        drive = drive[:1] + ":"
         if drive in ("C:", "D:"):
             raise HTTPException(status_code=400, detail="시스템 드라이브(C/D)는 선택할 수 없습니다.")
 

@@ -565,6 +565,11 @@ class DiskCloneManager:
                 if t_disk is not None and c_disk is not None and t_disk == c_disk:
                     self.append_log("  - [안내] 타겟이 원본 C:와 동일한 물리 디스크의 다른 파티션입니다. 안전을 위해 디스크 초기화를 건너뛰고 기존 파티션 모드로 진행합니다.")
                     auto_prepare_esp = False
+                elif t_disk is None or c_disk is None:
+                    # Fail-Closed: 물리 디스크 번호를 확인하지 못하면 원본과 같은 디스크인지 알 수 없으므로
+                    # 디스크 초기화(clean)를 절대 수행하지 않는다.
+                    self.append_log("  - [경고] 물리 디스크 번호 조회에 실패하여 안전을 위해 디스크 초기화(clean)를 건너뛰고 기존 파티션 모드로 진행합니다.")
+                    auto_prepare_esp = False
                 elif t_disk is not None:
                     esp_letter = find_free_drive_letter("S:")
                     self.append_log(f"[2/5] 새 SSD(Disk {t_disk})를 100% UEFI 표준 규격으로 자동 파티셔닝 중 (GPT + 260MB FAT32 ESP({esp_letter}) + MSR + NTFS)...")

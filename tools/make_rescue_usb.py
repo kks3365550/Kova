@@ -47,12 +47,28 @@ def run_ps(cmd: str) -> str:
     return res.stdout.strip()
 
 
+def _norm_letter(drive_letter: str) -> str:
+    """드라이브 문자를 검증한다(PowerShell 명령에 삽입되므로 영문자 한 글자만 허용)."""
+    letter = (drive_letter or "").replace(":", "").strip().upper()
+    if len(letter) != 1 or not letter.isalpha():
+        raise ValueError(f"드라이브 문자 형식이 올바르지 않습니다: {drive_letter!r}")
+    return letter
+
+
+def _ps_quote(value: str) -> str:
+    """PowerShell 작은따옴표 문자열 안에 안전하게 넣기 위해 작은따옴표를 두 번 쓴다."""
+    return str(value).replace("'", "''")
+
+
 def is_safe_removable_drive(drive_letter: str) -> tuple[bool, str]:
     """
     드라이브 문자가 아닌 실제 하드웨어 버스/미디어 타입을 검사하여
     순수 이동식 USB 장치인지 확인 (고정 NVMe/SATA 디스크, 부팅/시스템 디스크 절대 차단)
     """
-    letter = drive_letter.replace(":", "").strip().upper()
+    try:
+        letter = _norm_letter(drive_letter)
+    except ValueError as e:
+        return False, str(e)
     if letter in ("C", "D"):
         return False, f"시스템 핵심 드라이브({letter}:) 보호"
 
@@ -98,7 +114,7 @@ def is_safe_removable_drive(drive_letter: str) -> tuple[bool, str]:
 
 def format_target_drive(drive_letter: str, label: str = "RESCUE_DR") -> bool:
     """대상 이동식 드라이브를 FAT32로 포맷 (하드웨어 BusType/DriveType 기반 절대 안전 검증)"""
-    letter = drive_letter.replace(":", "").strip().upper()
+    letter = _norm_letter(drive_letter)
     is_safe, reason = is_safe_removable_drive(letter)
     if not is_safe:
         error(f"드라이브 {letter}: 포맷 거부 - {reason}")
@@ -143,7 +159,7 @@ def format_target_drive(drive_letter: str, label: str = "RESCUE_DR") -> bool:
 
 def check_target_drive(drive_letter: str, auto_format: bool = False) -> bool:
     """대상 드라이브가 이동식 USB이고 사용 가능한지 안전 검증 (필요시 FAT32 자동 포맷 지원)"""
-    letter = drive_letter.replace(":", "").strip().upper()
+    letter = _norm_letter(drive_letter)
     is_safe, reason = is_safe_removable_drive(letter)
     if not is_safe:
         error(f"드라이브 {letter}: 대상 지정 불가 - {reason}")
@@ -203,7 +219,7 @@ def mount_iso(iso_path: str) -> str:
     """ISO 마운트 후 드라이브 문자 반환"""
     log(f"공식 Windows ISO 임시 마운트 중: {iso_path}")
     cmd = (
-        f"$img = Mount-DiskImage -ImagePath '{iso_path}' -PassThru; "
+        f"$img = Mount-DiskImage -ImagePath '{_ps_quote(iso_path)}' -PassThru; "
         "$vol = $img | Get-Volume; "
         "$vol.DriveLetter"
     )
@@ -218,7 +234,7 @@ def mount_iso(iso_path: str) -> str:
 def dismount_iso(iso_path: str):
     """ISO 마운트 해제"""
     log(f"ISO 마운트 해제 중: {iso_path}")
-    cmd = f"Dismount-DiskImage -ImagePath '{iso_path}' | Out-Null"
+    cmd = f"Dismount-DiskImage -ImagePath '{_ps_quote(iso_path)}' | Out-Null"
     try:
         run_ps(cmd)
         log("ISO 마운트 해제 완료")

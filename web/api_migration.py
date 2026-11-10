@@ -4,14 +4,50 @@ web/api_migration.py: 실시간 SSD 마이그레이션(클론 & 부트로더 주
 - C: 드라이브를 다른 물리 SSD로 라이브 캡처 및 클로닝 관리
 - 후보 드라이브 조회, 마이그레이션 시작/중단, 상태/로그 조회 API 제공
 """
+import os
+import re
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
 from core.disk_clone import DiskCloneManager, get_candidate_target_drives
 from core.drive_archive import DriveArchiveManager
+from web.state import current_task, task_lock
 
 router = APIRouter(prefix="/api/migration", tags=["migration"])
+
+_DRIVE_RE = re.compile(r"^[A-Za-z]:[\\/]?$")
+_CMD_META = set('&|^<>%"' + chr(13) + chr(10))
+_ARCHIVE_EXTS = (".qblk", ".wim", ".vhdx", ".raw.zst")
+
+
+def _check_drive(value: str, field: str = "드라이브") -> str:
+    v = (value or "").strip()
+    if not _DRIVE_RE.fullmatch(v):
+        raise HTTPException(status_code=400, detail=f"{field} 형식이 올바르지 않습니다(예: D:).")
+    return v
+
+
+def _is_system_drive(value: str) -> bool:
+    return (value or "").strip()[:1].upper() == os.environ.get("SystemDrive", "C:")[:1].upper()
+
+
+def _check_path_safe(value: Optional[str], field: str = "경로") -> None:
+    if value and any(c in _CMD_META for c in value):
+        raise HTTPException(status_code=400, detail=f"{field}에 사용할 수 없는 문자(& | ^ < > % \" 줄바꿈)가 있습니다.")
+
+
+def _ensure_no_other_task() -> None:
+    """일반 백업/복원 작업이 실행 중이면 디스크 단위 작업을 시작하지 않는다."""
+    with task_lock:
+        if current_task.get("running"):
+            raise HTTPException(status_code=409, detail="다른 백업 또는 복원 작업이 실행 중입니다.")
+
+
+def _is_archive_target(path: str) -> bool:
+    p = os.path.abspath(path).lower()
+    parts = p.split("\\")
+    return p.endswith(_ARCHIVE_EXTS) or "archives" in parts[:-1] or "windowsimagebackup" in parts
 
 
 class StartMigrationRequest(BaseModel):
@@ -55,6 +91,10 @@ async def api_migration_start(req: StartMigrationRequest):
     """실시간 SSD 마이그레이션 작업 시작"""
     if not req.target_drive:
         raise HTTPException(status_code=400, detail="target_drive 필드는 필수입니다.")
+    _check_drive(req.target_drive, "target_drive")
+    if _is_system_drive(req.target_drive):
+        raise HTTPException(status_code=400, detail="시스템 드라이브는 마이그레이션 대상이 될 수 없습니다.")
+    _ensure_no_other_task()
 
     manager = DiskCloneManager.get_instance()
     res = manager.start_clone(req.target_drive, auto_prepare_esp=req.auto_prepare_esp)
@@ -106,6 +146,11 @@ async def api_migration_stop():
 @router.post("/archive/start")
 async def api_archive_start(req: StartArchiveRequest):
     """보험용 드라이브 통백업(WIM/qblk) 캡처 및 자동 실측 검증 시작"""
+    _check_drive(req.source_drive, "source_drive")
+    if req.target_drive:
+        _check_drive(req.target_drive, "target_drive")
+    _check_path_safe(req.target_wim_path, "target_wim_path")
+    _ensure_no_other_task()
     manager = DriveArchiveManager.get_instance()
     target_path = req.target_wim_path
     if not target_path and req.target_drive:
@@ -140,6 +185,8 @@ async def api_archive_upload_gdrive(req: UploadArchiveRequest):
     from core.offsite import upload_baremetal_to_gdrive
     if not req.archive_path or not os.path.isfile(req.archive_path):
         raise HTTPException(status_code=400, detail="유효한 아카이브 파일 경로가 아닙니다.")
+    if not _is_archive_target(req.archive_path):
+        raise HTTPException(status_code=400, detail="아카이브 파일(.qblk/.wim/.vhdx/.raw.zst) 또는 archives 폴더의 파일만 업로드할 수 있습니다.")
     res = upload_baremetal_to_gdrive(archive_path=req.archive_path, transfers=req.transfers)
     return res
 
@@ -189,6 +236,11 @@ async def api_archive_restore(req: RestoreArchiveRequest):
     """WIM 아카이브를 대상 드라이브로 복원 + BCD 부트로더 주입 + VSN 복원"""
     if not req.wim_path or not req.target_drive:
         raise HTTPException(status_code=400, detail="wim_path와 target_drive는 필수입니다.")
+    _check_drive(req.target_drive, "target_drive")
+    _check_path_safe(req.wim_path, "wim_path")
+    if _is_system_drive(req.target_drive):
+        raise HTTPException(status_code=400, detail="실행 중인 시스템 드라이브로는 복원할 수 없습니다. WinPE/복구 USB에서 진행해 주세요.")
+    _ensure_no_other_task()
     manager = DriveArchiveManager.get_instance()
     res = manager.start_restore(
         wim_path=req.wim_path,

@@ -17,7 +17,7 @@ from core.auth import (
     get_auth_status, setup_master_password,
     verify_master_password, change_master_password, create_session,
     validate_session, revoke_session, set_localhost_bypass,
-    check_login_rate_limit, record_login_failure, record_login_success
+    check_login_rate_limit, record_login_failure, record_login_success, resolve_client_ip
 )
 
 router = APIRouter()
@@ -52,14 +52,20 @@ def _extract_token(request: Request) -> Optional[str]:
 # ==================== Auth Endpoints ====================
 @router.get("/api/auth/status")
 async def auth_status(request: Request):
-    client_ip = request.client.host if request.client else ""
+    client_ip = resolve_client_ip(request.headers, request.client.host if request.client else "")
     status = get_auth_status(client_ip)
     token = _extract_token(request)
     status["authenticated"] = bool(token and validate_session(token))
     return JSONResponse(content={"success": True, "data": status})
 
 @router.post("/api/auth/setup")
-async def auth_setup(req: AuthSetupRequest):
+async def auth_setup(req: AuthSetupRequest, request: Request):
+    # 최초 비밀번호 설정은 서버 PC(로컬)에서만 허용한다. 같은 LAN의 다른 PC가 먼저 설정하는 것을 막는다.
+    _ip = resolve_client_ip(request.headers, request.client.host if request.client else "")
+    if not get_auth_status(_ip).get("is_localhost", False):
+        _tok = _extract_token(request)
+        if not (_tok and validate_session(_tok)):
+            return JSONResponse(status_code=403, content={"success": False, "error": "최초 비밀번호 설정은 서버 PC에서만 할 수 있습니다."})
     try:
         setup_master_password(req.password, req.allow_localhost_bypass)
         return JSONResponse(content={"success": True, "message": "마스터 비밀번호가 성공적으로 설정되었습니다."})
@@ -70,7 +76,7 @@ async def auth_setup(req: AuthSetupRequest):
 
 @router.post("/api/auth/login")
 async def auth_login(req: AuthLoginRequest, request: Request):
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = resolve_client_ip(request.headers, request.client.host if request.client else "unknown")
     locked, remaining_sec = check_login_rate_limit(client_ip)
     if locked:
         return JSONResponse(
@@ -125,7 +131,7 @@ async def auth_change_password(req: AuthChangePasswordRequest):
 
 @router.post("/api/auth/toggle-bypass")
 async def auth_toggle_bypass(req: AuthBypassRequest, request: Request):
-    client_ip = request.client.host if request.client else ""
+    client_ip = resolve_client_ip(request.headers, request.client.host if request.client else "")
     token = _extract_token(request)
     is_authed = bool(token and validate_session(token))
     is_localhost = get_auth_status(client_ip).get("is_localhost", False)

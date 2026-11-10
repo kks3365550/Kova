@@ -21,7 +21,7 @@ from core.storage_health import get_system_storage_health
 from core.app_scanner import get_installed_applications
 # 인증 미들웨어에서 필요한 심볼만 남긴다.
 # 나머지(설정/로그인/변경/우회 토글)는 web/api_auth.py 로 분리되었다.
-from core.auth import is_auth_configured, is_auth_corrupted, get_auth_status, validate_session
+from core.auth import is_auth_configured, is_auth_corrupted, get_auth_status, validate_session, resolve_client_ip
 
 # 전역 실행 상태는 web/state.py 가 유일한 소유자다.
 # 라우터들이 상태를 공유해야 하므로 app.py 가 직접 들지 않는다.
@@ -148,10 +148,13 @@ async def auth_middleware(request: Request, call_next):
     
     # 마스터 비밀번호 미설정 상태: 진입 허용 (UI에서 셋업 모달 표시)
     if not is_auth_configured():
+        # 미설정 상태라도 서버 PC(로컬)가 아닌 접속은 차단한다(0.0.0.0 바인드 시 LAN 무인증 노출 방지)
+        if not get_auth_status(resolve_client_ip(request.headers, request.client.host if request.client else "")).get("is_localhost", False):
+            return JSONResponse(status_code=403, content={"success": False, "error": "마스터 비밀번호가 설정되지 않았습니다. 서버 PC에서 먼저 설정해 주세요."})
         return await call_next(request)
     
     # 클라이언트 IP 기반 로컬 루프백 바이패스 검사
-    client_ip = request.client.host if request.client else ""
+    client_ip = resolve_client_ip(request.headers, request.client.host if request.client else "")
     auth_st = get_auth_status(client_ip)
     if auth_st.get("bypassed"):
         return await call_next(request)

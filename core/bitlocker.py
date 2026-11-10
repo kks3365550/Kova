@@ -222,6 +222,12 @@ def export_bitlocker_guide_file(target_path: Optional[str] = None) -> str:
             desktop_dir = os.path.abspath(".")
         target_path = os.path.join(desktop_dir, "BitLocker_C_복구키_보관용.txt")
 
+    # 기존 복구키 파일을 덮어쓰지 않는다(이전에 보관한 파일이 사라지는 것 방지)
+    if os.path.exists(target_path):
+        import time as _time
+        _base, _ext = os.path.splitext(target_path)
+        target_path = f"{_base}_{_time.strftime('%Y%m%d_%H%M%S')}{_ext}"
+
     with open(target_path, "wb") as f:
         f.write(guide_text.encode("utf-8"))
 

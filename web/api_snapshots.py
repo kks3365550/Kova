@@ -460,6 +460,11 @@ def get_snapshot_tree(snapshot_id: str, repo_dir: Optional[str] = None):
 @router.delete("/api/snapshots/{snapshot_id}")
 def delete_snapshot(snapshot_id: str, repo_dir: Optional[str] = None):
     snapshot_id = _validate_snapshot_id(snapshot_id)
+    if repo_dir:
+        # 삭제는 파괴적이므로 임의 폴더를 repo_dir 로 지정할 수 없다(알려진 저장소만 허용)
+        _known = {os.path.normcase(os.path.abspath(x)) for x in _get_all_candidate_repos(None)}
+        if os.path.normcase(os.path.abspath(repo_dir)) not in _known:
+            raise HTTPException(status_code=403, detail="등록되지 않은 저장소 경로입니다.")
     r = _find_snapshot_repo(snapshot_id, repo_dir)
     if not r:
         raise HTTPException(status_code=404, detail="Snapshot not found")

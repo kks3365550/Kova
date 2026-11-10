@@ -9,6 +9,7 @@ core/diagnostic.py
 """
 
 import os
+import re
 import sys
 import io
 import json
@@ -32,7 +33,7 @@ LOGS_DIR = os.path.join(BASE_DIR, "logs")
 def is_sensitive_key(key: str) -> bool:
     """민감한 설정 키인지 정밀 판정합니다."""
     k_lower = str(key).lower()
-    for pat in ["password", "secret", "token", "credential", "private", "cookie", "auth", "session", "hash", "salt"]:
+    for pat in ["password", "secret", "token", "credential", "private", "cookie", "auth", "session", "hash", "salt", "recovery"]:
         if pat in k_lower:
             return True
     tokens = set(k_lower.replace("-", "_").split("_"))
@@ -193,6 +194,14 @@ def collect_snapshots_summary(target_repo: Optional[str] = None) -> Dict[str, An
     }
 
 
+_RECOVERY_KEY_RE = re.compile(r"[0-9]{6}(?:-[0-9]{6}){7}")
+
+
+def _mask_log_secrets(text: str) -> str:
+    """로그 원문에 섞여 들어간 BitLocker 48자리 복구 키를 마스킹합니다."""
+    return _RECOVERY_KEY_RE.sub("[REDACTED-RECOVERY-KEY]", text)
+
+
 def collect_recent_logs(max_tail_bytes: int = 3 * 1024 * 1024) -> Dict[str, str]:
     """logs 폴더 내의 로그 파일과 인메모리 최근 작업 로그를 수집합니다."""
     collected: Dict[str, str] = {}
@@ -211,7 +220,7 @@ def collect_recent_logs(max_tail_bytes: int = 3 * 1024 * 1024) -> Dict[str, str]
                             text = "[... 이전 로그 생략 (최근 3MB 수록) ...]\n" + raw.decode("utf-8", errors="replace")
                         else:
                             text = fp.read().decode("utf-8", errors="replace")
-                    collected[f"logs/{fname}"] = text
+                    collected[f"logs/{fname}"] = _mask_log_secrets(text)
                 except Exception as e:
                     collected[f"logs/{fname}"] = f"[로그 읽기 실패: {e}]"
 

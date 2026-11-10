@@ -110,6 +110,18 @@ def is_auth_configured() -> bool:
         return bool(config.get("configured") and config.get("password_hash"))
 
 
+def resolve_client_ip(headers, host: Optional[str]) -> str:
+    """프록시/터널(CF-Connecting-IP, X-Forwarded-For) 뒤의 실제 클라이언트 IP를 반환한다.
+    로컬 터널이 외부 요청을 127.0.0.1 로 전달하더라도 루프백 우회가 적용되지 않게 한다."""
+    try:
+        fwd = headers.get("cf-connecting-ip") or headers.get("x-forwarded-for")
+    except Exception:
+        fwd = None
+    if fwd:
+        return fwd.split(",")[0].strip() or (host or "")
+    return host or ""
+
+
 def get_auth_status(client_ip: Optional[str] = None) -> dict:
     """인증 상태 요약 정보 반환"""
     with _lock:
