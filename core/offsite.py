@@ -763,8 +763,10 @@ hash_type = md5
             "--exclude", "archives/**",
         ]
         if packs_has_pack:
-            cmd.extend(["--exclude", "blobs/**"])
-            self._log("[구글 드라이브 Rclone] Pack 아카이브 모드: 낱개 blobs 13만 개 생략, 핵심 파일 및 대형 청크 전송.")
+            # 주의: blobs/ 를 통째로 제외하면 pack 에 들어가지 않은 낱개 블롭(일반 파일)이
+            # 오프사이트에 올라가지 않아 복원이 불가능해진다. pack 으로 통합된 블롭은 이미
+            # .quarantine_blobs/ 로 이동되어 blobs/ 에 남아 있지 않으므로 제외할 필요가 없다.
+            self._log("[구글 드라이브 Rclone] Pack 아카이브 모드: packs/ 와 남은 낱개 blobs/ 를 모두 전송합니다.")
 
         creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         try:

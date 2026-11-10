@@ -11,7 +11,7 @@ import os
 import time
 import logging
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 from core.storage import get_disk_free_gb
 
 log = logging.getLogger(__name__)
@@ -82,26 +82,34 @@ class RetentionManager:
         snapshots.sort(key=lambda s: _parse_timestamp(s.get("created_at")), reverse=True)
 
         deleted_ids = set()
-        # 안전 보장: 가장 최신 스냅샷(index 0)은 어떤 경우에도 삭제 대상에서 제외
-        protected_id = snapshots[0].get("id")
 
-        # 1. 세대 수(retention_count) 초과분 제거
-        if retention_count and len(snapshots) > retention_count:
-            excess = snapshots[retention_count:]
-            for s in excess:
-                sid = s.get("id")
-                if sid and sid != protected_id:
-                    deleted_ids.add(sid)
+        # 프로필(profile_id)별로 그룹을 나눠 보존 정책을 적용한다.
+        # 같은 저장소를 여러 프로필이 쓸 때 한 프로필의 잦은 백업이 다른 프로필의
+        # 스냅샷을 세대 수 초과로 밀어내 삭제하는 것을 막는다. (프로필이 하나면 기존과 동일)
+        groups: Dict[str, List[Dict[str, Any]]] = {}
+        for s in snapshots:
+            groups.setdefault(str(s.get("profile_id") or ""), []).append(s)
 
-        # 2. 보관 기간(retention_days) 만료분 제거
-        if retention_days and retention_days > 0:
-            cutoff_ts = time.time() - (retention_days * 86400)
-            for s in snapshots[1:]: # 최신 스냅샷 제외
-                ts = _parse_timestamp(s.get("created_at"))
-                if ts > 0.0 and ts < cutoff_ts:
+        cutoff_ts = time.time() - (retention_days * 86400) if retention_days and retention_days > 0 else None
+        for group in groups.values():
+            # snapshots 는 이미 최신순 정렬. 안전 보장: 그룹별 가장 최신 스냅샷은 삭제 대상에서 제외
+            protected_id = group[0].get("id")
+
+            # 1. 세대 수(retention_count) 초과분 제거
+            if retention_count and len(group) > retention_count:
+                for s in group[retention_count:]:
                     sid = s.get("id")
-                    if sid:
+                    if sid and sid != protected_id:
                         deleted_ids.add(sid)
+
+            # 2. 보관 기간(retention_days) 만료분 제거
+            if cutoff_ts is not None:
+                for s in group[1:]:  # 그룹의 최신 스냅샷 제외
+                    ts = _parse_timestamp(s.get("created_at"))
+                    if ts > 0.0 and ts < cutoff_ts:
+                        sid = s.get("id")
+                        if sid:
+                            deleted_ids.add(sid)
 
         # Note: Fail-Closed Policy:
         # Disk space shortage MUST NEVER cause arbitrary deletion of valid historical snapshots.

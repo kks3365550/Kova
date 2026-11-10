@@ -174,6 +174,45 @@ class ReplicationManager:
 
         return bytes_copied
 
+    def _replicate_packs(self):
+        """로컬 packs/ 의 .pack/.idx 파일 중 원격에 없는 것을 원자적으로 복사한다.
+        반환: (복사한 파일 수, 복사 바이트). 로컬에 pack 파일이 하나도 없으면 (-1, 0)."""
+        local_packs = os.path.join(self.local_repo_dir, "packs")
+        remote_packs = os.path.join(self.remote_repo_dir, "packs")
+        if not os.path.isdir(local_packs):
+            return -1, 0
+        names = [n for n in os.listdir(local_packs) if n.lower().endswith((".pack", ".idx"))]
+        if not any(n.lower().endswith(".pack") for n in names):
+            return -1, 0
+        os.makedirs(remote_packs, exist_ok=True)
+        copied, total = 0, 0
+        # .pack 을 먼저, .idx 를 나중에 복사해 idx 만 있고 데이터가 없는 상태를 피한다
+        for name in sorted(names, key=lambda n: (n.lower().endswith(".idx"), n)):
+            src = os.path.join(local_packs, name)
+            dst = os.path.join(remote_packs, name)
+            if os.path.exists(dst) and os.path.getsize(dst) == os.path.getsize(src):
+                continue
+            tmp = f"{dst}.tmp_{os.getpid()}_{threading.get_ident()}"
+            try:
+                with open(src, 'rb') as fin, open(tmp, 'wb') as fout:
+                    while True:
+                        chunk = fin.read(262144)
+                        if not chunk:
+                            break
+                        if self.limiter:
+                            self.limiter.consume(len(chunk))
+                        fout.write(chunk)
+                        total += len(chunk)
+                os.replace(tmp, dst)
+                copied += 1
+            finally:
+                if os.path.exists(tmp):
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+        return copied, total
+
     def _load_snapshot_manifest(self, snapshot_id: str) -> Dict[str, Any]:
         manifest_path = os.path.join(self.local_snapshots_dir, f"{snapshot_id}.json")
         if not os.path.exists(manifest_path):
@@ -188,6 +227,14 @@ class ReplicationManager:
         if "entries" in manifest and isinstance(manifest["entries"], list):
             for entry in manifest["entries"]:
                 if isinstance(entry, dict):
+                    chunk_ids = entry.get("chunk_ids")
+                    if isinstance(chunk_ids, list) and chunk_ids:
+                        # 청크 전략 파일은 전체 파일 해시(blob_id)에 해당하는 블롭이 저장되지 않고
+                        # 실제 데이터는 chunk_ids 가 가리키는 블롭(주로 packs/)에 있다.
+                        for cid in chunk_ids:
+                            if isinstance(cid, str) and cid:
+                                blob_ids.add(cid)
+                        continue
                     blob_id = entry.get("blob_id") or entry.get("sha256")
                     if blob_id:
                         blob_ids.add(blob_id)
@@ -292,6 +339,21 @@ class ReplicationManager:
             lp = self._get_local_blob_path(b_id)
             if os.path.exists(lp):
                 total_missing_bytes += os.path.getsize(lp)
+
+        # 낱개 블롭 파일이 없는 항목은 packs/ 안에 들어 있는 것이므로 pack 파일 단위로 복제한다.
+        pack_resident = [b_id for b_id in missing_blobs if not os.path.exists(self._get_local_blob_path(b_id))]
+        if pack_resident:
+            try:
+                copied_packs, pack_bytes = self._replicate_packs()
+                if copied_packs < 0:
+                    raise FileNotFoundError("Local blob not found: 낱개 블롭도 pack 파일도 없습니다")
+                total_bytes += pack_bytes
+                replicated_count += len(pack_resident)
+            except Exception as e:
+                log.error(f"오프사이트 pack 복제 실패: {e}", exc_info=True)
+                errors.append(f"pack 복제 실패({len(pack_resident)}개 블롭): {str(e)}")
+            _packed = set(pack_resident)
+            missing_blobs = [b_id for b_id in missing_blobs if b_id not in _packed]
 
         if missing_blobs:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
