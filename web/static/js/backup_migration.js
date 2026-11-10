@@ -387,16 +387,16 @@ async function loadArchiveList() {
                         </div>
                     </div>
                     <div class="flex items-center gap-2 flex-wrap shrink-0">
-                        <button onclick="uploadArchiveToGdrive('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-purple-900/60 hover:bg-purple-800 text-purple-200 rounded-lg text-xs font-medium border border-purple-700/80 transition flex items-center gap-1 whitespace-nowrap" title="구글 드라이브로 6저장 조각 초고속 병렬 업로드">
+                        <button onclick="uploadArchiveToGdrive(${_jsArg(encodeURIComponent(a.path))})" class="px-2.5 py-1.5 bg-purple-900/60 hover:bg-purple-800 text-purple-200 rounded-lg text-xs font-medium border border-purple-700/80 transition flex items-center gap-1 whitespace-nowrap" title="구글 드라이브로 6저장 조각 초고속 병렬 업로드">
                             <i data-lucide="cloud-upload" class="w-3.5 h-3.5 text-purple-300 shrink-0"></i> <span>구글 6저장 조각 업로드</span>
                         </button>
-                        <button onclick="verifySingleArchive('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-medium border border-zinc-700 transition flex items-center gap-1 whitespace-nowrap">
+                        <button onclick="verifySingleArchive(${_jsArg(encodeURIComponent(a.path))})" class="px-2.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-medium border border-zinc-700 transition flex items-center gap-1 whitespace-nowrap">
                             <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400 shrink-0"></i> <span>실측 검증</span>
                         </button>
-                        <button onclick="openArchiveRestoreModal('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1 whitespace-nowrap">
+                        <button onclick="openArchiveRestoreModal(${_jsArg(encodeURIComponent(a.path))})" class="px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1 whitespace-nowrap">
                             <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 shrink-0"></i> <span>이 백업으로 되돌리기</span>
                         </button>
-                        <button onclick="deleteArchiveItem('${encodeURIComponent(a.path)}', '${encodeURIComponent(a.name)}', ${a.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-lg text-xs font-medium border border-rose-800/80 transition flex items-center gap-1 whitespace-nowrap" title="이 통백업 아카이브 삭제">
+                        <button onclick="deleteArchiveItem(${_jsArg(encodeURIComponent(a.path))}, ${_jsArg(encodeURIComponent(a.name))}, ${a.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-lg text-xs font-medium border border-rose-800/80 transition flex items-center gap-1 whitespace-nowrap" title="이 통백업 아카이브 삭제">
                             <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400 shrink-0"></i> <span>삭제</span>
                         </button>
                     </div>

@@ -84,7 +84,7 @@ def _run_offsite_replication(repo_dir: str, profile: dict):
         profile["last_offsite_status"] = "error"
         profile["last_offsite_message"] = str(e_rep)[:300]
         try:
-            ConfigManager.save_profile(profile)
+            _save_profile_status(profile)
         except Exception as e_save:
             # 상태 기록 실패는 조용히 삼키면 "복제도 실패했고 기록도 없다"가 된다
             log.error("[오프사이트] 프로필 상태 저장 실패: %s", e_save, exc_info=True)
@@ -112,9 +112,16 @@ def _run_offsite_replication(repo_dir: str, profile: dict):
         profile["last_offsite_message"] = res.get("reason", "")[:300]
 
     try:
-        ConfigManager.save_profile(profile)
+        _save_profile_status(profile)
     except Exception as e_save:
         log.error("[오프사이트] 프로필 상태 저장 실패: %s", e_save, exc_info=True)
+
+
+def _save_profile_status(profile):
+    """실행 결과(last_*) 필드만 최신 프로필에 병합 저장한다(오래된 사본으로 전체를 덮어쓰지 않음)."""
+    fields = {k: v for k, v in profile.items() if str(k).startswith("last_")}
+    if not (profile.get("id") and ConfigManager.update_profile_fields(profile["id"], fields)):
+        ConfigManager.save_profile(profile)
 
 
 def run_cli_backup(profile_id: str = None):
@@ -173,7 +180,7 @@ def run_cli_backup(profile_id: str = None):
             profile["last_run"] = time.time()
             profile["last_status"] = "success"
             profile["last_snapshot_id"] = manifest["id"]
-            ConfigManager.save_profile(profile)
+            _save_profile_status(profile)
 
             # 5. Offsite Replication (2차 이중화 - 백업 성공 후에만 수행)
             _run_offsite_replication(repo_dir, profile)
@@ -192,7 +199,7 @@ def run_cli_backup(profile_id: str = None):
         try:
             profile["last_status"] = "failed"
             profile["last_error"] = str(e)[:300]
-            ConfigManager.save_profile(profile)
+            _save_profile_status(profile)
         except Exception as e_save:
             # 실패 상태 기록까지 실패하면 다음 확인이 불가능해진다
             log.error("실패 상태 저장 실패: %s", e_save, exc_info=True)

@@ -311,7 +311,8 @@ class IntegrityVerifier:
             if corrupted:
                 healed = False
                 # 🔴 자가 치유(Self-Healing): self_heal=True이고 원본 소스 파일이 존재하는 경우 정상 블롭 재생성
-                if self_heal:
+                if self_heal and not (isinstance(chunk_ids, list) and chunk_ids):
+                    # 청크 파일은 blob_id(전체 해시) 블롭이 없으므로 낱개 블롭 재생성으로는 치유되지 않는다
                     source_root = entry.get("source_root")
                     if source_root and os.path.isdir(source_root) and expected_sha256:
                         candidate_src = os.path.join(source_root, rel_path)

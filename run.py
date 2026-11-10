@@ -111,10 +111,11 @@ def ensure_dependencies():
             try:
                 cmd = [sys.executable, "-m", "pip", "install", "-r", req_file, "--quiet"]
                 # Add --break-system-packages if running under uv / PEP 668 managed python
+                _nw = getattr(subprocess, "CREATE_NO_WINDOW", 0)
                 try:
-                    subprocess.check_call(cmd + ["--break-system-packages"])
+                    subprocess.check_call(cmd + ["--break-system-packages"], creationflags=_nw)
                 except Exception:
-                    subprocess.check_call(cmd)
+                    subprocess.check_call(cmd, creationflags=_nw)
             except Exception as e:
                 print(f"[!] 필수 패키지 자동 설치 경고 (계속 진행 시도): {e}")
 

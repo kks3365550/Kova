@@ -250,7 +250,8 @@ def _build_ssr_dashboard_data():
             dt = datetime.datetime.fromtimestamp(ts)
             time_only = dt.strftime("%H:%M")
             sid = s.get("id", "")
-            prof = s.get("profile_name") or "기본 백업"
+            prof = _html_escape_ssr(s.get("profile_name") or "기본 백업")
+            sid = _html_escape_ssr(sid)
             tip = f"[백업 시점 #{idx+1}]\\nID: {sid}\\n일시: {dt.strftime('%m/%d %H:%M')}\\n용량: {_format_bytes_ssr(b)}\\n파일 수: {f:,}개\\n프로필: {prof}"
 
             bar_bg = 'bg-gradient-to-t from-blue-600 via-cyan-500 to-emerald-400 shadow-md shadow-emerald-500/25 border-t border-emerald-300' if is_latest else 'bg-gradient-to-t from-blue-700 to-blue-500 group-hover:from-blue-600 group-hover:to-cyan-400'
@@ -307,7 +308,8 @@ def _build_ssr_dashboard_data():
             date_str = datetime.datetime.fromtimestamp(ts).strftime("%Y. %m. %d. %p %I:%M:%S").replace("AM", "오전").replace("PM", "오후")
             type_label = "전체 백업" if is_full else "바뀐 것만 백업"
             sid = s.get("id", "")
-            prof = s.get("profile_name") or "기본 백업"
+            prof = _html_escape_ssr(s.get("profile_name") or "기본 백업")
+            sid = _html_escape_ssr(sid)
             dot_color = "bg-blue-400 shadow-sm shadow-blue-500/50" if is_full else "bg-emerald-400 shadow-sm shadow-emerald-500/50"
 
             recents_html_items.append(f'''<div class="px-4 py-3 bg-zinc-950/70 hover:bg-zinc-900/70 rounded-xl border border-zinc-800/80 hover:border-zinc-700/80 flex items-center justify-between transition text-xs group">
@@ -376,7 +378,7 @@ def _build_ssr_dashboard_data():
             "chart_meta": chart_meta,
             "chart_dates": chart_dates,
             "recents_html": "".join(recents_html_items),
-            "snapshots_json": json.dumps(snaps),
+            "snapshots_json": json.dumps(snaps).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"),
             "total_snaps": str(len(snaps)),
             "target_profile_name": target_p_name,
             "last_backup_time": last_backup_time_str,
@@ -392,6 +394,11 @@ def _build_ssr_dashboard_data():
             "snapshots_json": "[]",
             "total_snaps": "0"
         }
+
+
+def _html_escape_ssr(value) -> str:
+    import html as _html
+    return _html.escape(str(value), quote=True)
 
 
 # --- Web UI Route ---

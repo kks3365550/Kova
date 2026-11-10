@@ -264,14 +264,14 @@ async function loadVhdxList(drive = null) {
                 : (isMounted ? `<span class="px-2 py-0.5 bg-cyan-950 text-cyan-300 border border-cyan-800 text-xs rounded">마운트됨</span>` : '');
 
             const actionBtn = isMounted
-                ? `<button onclick="dismountVhdx('${encodeURIComponent(item.path)}')" class="px-3 py-1.5 bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-700/60 rounded-xl text-xs font-semibold transition flex items-center gap-1">
+                ? `<button onclick="dismountVhdx(${_jsArg(encodeURIComponent(item.path))})" class="px-3 py-1.5 bg-rose-900/60 hover:bg-rose-800 text-rose-200 border border-rose-700/60 rounded-xl text-xs font-semibold transition flex items-center gap-1">
                     <i data-lucide="disc-3" class="w-3.5 h-3.5"></i> 언마운트 (해제)
                    </button>`
-                : `<button onclick="mountVhdx('${encodeURIComponent(item.path)}')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition shadow-md shadow-blue-600/30 flex items-center gap-1">
+                : `<button onclick="mountVhdx(${_jsArg(encodeURIComponent(item.path))})" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold transition shadow-md shadow-blue-600/30 flex items-center gap-1">
                     <i data-lucide="folder-check" class="w-3.5 h-3.5"></i> 읽기전용 마운트
                    </button>`;
 
-            const deleteBtn = `<button onclick="deleteVhdx('${encodeURIComponent(item.path)}', '${encodeURIComponent(item.filename)}', ${item.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-xl text-xs font-medium border border-rose-800/80 transition flex items-center gap-1" title="이 VHDX 이미지 완전 삭제">
+            const deleteBtn = `<button onclick="deleteVhdx(${_jsArg(encodeURIComponent(item.path))}, ${_jsArg(encodeURIComponent(item.filename))}, ${item.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-xl text-xs font-medium border border-rose-800/80 transition flex items-center gap-1" title="이 VHDX 이미지 완전 삭제">
                 <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400"></i> 삭제
                </button>`;
 

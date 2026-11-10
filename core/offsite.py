@@ -752,6 +752,7 @@ hash_type = md5
             "--stats-one-line",
             "-v",
             "--exclude", ".quarantine_blobs/**",
+            "--exclude", "keys/backup_ed25519.key",
             "--exclude", "*.db-wal",
             "--exclude", "*.db-shm",
             "--exclude", "backup.lock",

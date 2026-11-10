@@ -496,7 +496,7 @@ class SnapshotEngine:
                 seen_norm_paths.add(norm_full_path)
 
             # Check unmodified fast path (size identical and mtime within 2.0s tolerance for FAT32/NTFS precision)
-            if prev_entry and prev_entry.get("sha256") and prev_entry.get("size") == f_size and abs(prev_entry.get("mtime", 0) - f_mtime) <= 2.0:
+            if prev_entry and prev_entry.get("sha256") and prev_entry.get("size") == f_size and abs(prev_entry.get("mtime", 0) - f_mtime) <= 0.001:
                 blob_id = prev_entry.get("blob_id", prev_entry.get("sha256"))
                 if blob_id and storage.has_blob(blob_id):
                     unmodified_files_count += 1
@@ -578,6 +578,8 @@ class SnapshotEngine:
                         "status": st
                     }
                     return res_entry, is_new, stored_sz, st, None
+            except InterruptedError:
+                raise  # 사용자 취소는 '건너뜀'이 아니라 작업 중단으로 전파
             except (PermissionError, OSError) as ex:
                 log.warning(f"스냅샷 파일 접근 스킵 (권한/잠금/가상경로) [{s_root}/{r_path}]: {ex}")
                 return {
@@ -786,7 +788,7 @@ class SnapshotEngine:
             # Update DB with verified status
             storage.db.update_snapshot_verification(
                 snapshot_id=snapshot_id,
-                is_verified=True,
+                is_verified=bool(snapshot_manifest.get("is_verified")),
                 error_count=0
             )
         except RestoreVerificationError as e_rv:

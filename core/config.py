@@ -1,8 +1,10 @@
 ﻿import os
 import json
 import uuid
+import threading
 from typing import Dict, List, Any, Optional
 
+_CONFIG_LOCK = threading.RLock()  # 프로필/설정 read-modify-write 직렬화
 DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data"))
 PROFILES_FILE = os.path.join(DATA_DIR, "profiles.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "app_settings.json")
@@ -82,7 +84,7 @@ class ConfigManager:
     def save_settings(cls, settings: Dict[str, Any]):
         cls._ensure_dir()
         # 원자적 쓰기: temp 파일 → os.replace()로 교체 (중간 실패 시 기존 파일 보존)
-        tmp_path = SETTINGS_FILE + ".tmp"
+        tmp_path = f"{SETTINGS_FILE}.tmp_{os.getpid()}_{threading.get_ident()}"
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(settings, f, indent=2, ensure_ascii=False)
@@ -147,7 +149,8 @@ class ConfigManager:
             # 파싱 실패 시: 손상된 파일을 .bak으로 보존하고 빈 리스트 반환
             # (기본값으로 덮어쓰지 않음 → 데이터 손실 방지)
             try:
-                bak_path = PROFILES_FILE + ".bak"
+                import time as _time
+                bak_path = f"{PROFILES_FILE}.corrupt_{int(_time.time())}.bak"
                 import shutil
                 shutil.copy2(PROFILES_FILE, bak_path)
             except Exception:
@@ -158,7 +161,7 @@ class ConfigManager:
     def save_profiles(cls, profiles: List[Dict[str, Any]]):
         cls._ensure_dir()
         # 원자적 쓰기: temp 파일 → os.replace()로 교체 (중간 실패 시 기존 파일 보존)
-        tmp_path = PROFILES_FILE + ".tmp"
+        tmp_path = f"{PROFILES_FILE}.tmp_{os.getpid()}_{threading.get_ident()}"
         try:
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(profiles, f, indent=2, ensure_ascii=False)
@@ -184,30 +187,61 @@ class ConfigManager:
         return None
 
     @classmethod
+    def _profiles_file_unreadable(cls) -> bool:
+        """profiles.json 이 있는데 읽을 수 없으면 True (이때 덮어쓰면 기존 프로필이 모두 사라진다)."""
+        if not os.path.exists(PROFILES_FILE):
+            return False
+        try:
+            with open(PROFILES_FILE, "r", encoding="utf-8") as f:
+                return not isinstance(json.load(f), list)
+        except Exception:
+            return True
+
+    @classmethod
     def save_profile(cls, profile: Dict[str, Any]) -> Dict[str, Any]:
-        profiles = cls.get_profiles()
-        if not profile.get("id"):
-            profile["id"] = f"prof_{uuid.uuid4().hex[:8]}"
+        with _CONFIG_LOCK:
+            profiles = cls.get_profiles()
+            if cls._profiles_file_unreadable():
+                raise RuntimeError("profiles.json 을 읽을 수 없어 저장을 중단합니다(손상 파일은 .corrupt_*.bak 으로 보존됨).")
+            if not profile.get("id"):
+                profile["id"] = f"prof_{uuid.uuid4().hex[:8]}"
 
-        updated = False
-        for i, p in enumerate(profiles):
-            if p.get("id") == profile["id"]:
-                profiles[i] = profile
-                updated = True
-                break
+            updated = False
+            for i, p in enumerate(profiles):
+                if p.get("id") == profile["id"]:
+                    profiles[i] = profile
+                    updated = True
+                    break
 
-        if not updated:
-            profiles.append(profile)
+            if not updated:
+                profiles.append(profile)
 
-        cls.save_profiles(profiles)
-        return profile
+            cls.save_profiles(profiles)
+            return profile
+
+    @classmethod
+    def update_profile_fields(cls, profile_id: str, fields: Dict[str, Any]) -> bool:
+        """최신 프로필을 다시 읽어 지정한 필드만 갱신한다(실행 중 사용자가 바꾼 다른 설정을 덮어쓰지 않음)."""
+        with _CONFIG_LOCK:
+            profiles = cls.get_profiles()
+            if cls._profiles_file_unreadable():
+                raise RuntimeError("profiles.json 을 읽을 수 없어 저장을 중단합니다.")
+            for p in profiles:
+                if p.get("id") == profile_id:
+                    p.update(fields)
+                    cls.save_profiles(profiles)
+                    return True
+            return False
 
     @classmethod
     def delete_profile(cls, profile_id: str) -> bool:
-        profiles = cls.get_profiles()
-        initial_len = len(profiles)
-        profiles = [p for p in profiles if p.get("id") != profile_id]
-        if len(profiles) < initial_len:
-            cls.save_profiles(profiles)
-            return True
-        return False
+        with _CONFIG_LOCK:
+            profiles = cls.get_profiles()
+            if cls._profiles_file_unreadable():
+                raise RuntimeError("profiles.json 을 읽을 수 없어 삭제를 중단합니다.")
+            initial_len = len(profiles)
+            profiles = [p for p in profiles if p.get("id") != profile_id]
+            if len(profiles) < initial_len:
+                cls.save_profiles(profiles)
+                return True
+            return False

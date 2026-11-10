@@ -423,7 +423,7 @@ function initOnboardingDrives() {
             const targetPath = `${letter}\\BackupRepository`;
             const isRec = (d.device === recommended.device);
             return `
-                <button type="button" onclick="document.getElementById('onboard-repo-dir').value='${targetPath}'" 
+                <button type="button" onclick="document.getElementById('onboard-repo-dir').value=${_jsArg(targetPath)}" 
                     class="px-2.5 py-1 rounded-lg border text-[11px] font-mono flex items-center gap-1 transition ${
                         isRec 
                         ? 'bg-blue-950/80 border-blue-600 text-blue-300 font-bold hover:bg-blue-900/80' 
@@ -707,7 +707,7 @@ function renderRecentSnapshots() {
                     <span class="w-2 h-2 rounded-full ${isFull ? 'bg-blue-400 shadow-sm shadow-blue-500/50' : 'bg-emerald-400 shadow-sm shadow-emerald-500/50'}"></span>
                     <span class="font-mono text-zinc-300 font-medium">${formattedDate}</span>
                     <span class="text-zinc-600">•</span>
-                    <span class="text-zinc-300 font-medium">${s.profile_name || '기본 백업'}</span>
+                    <span class="text-zinc-300 font-medium">${escapeHtml(s.profile_name || '기본 백업')}</span>
                     <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700/60">${typeLabel}</span>
                     <span class="text-zinc-600">•</span>
                     <span class="font-mono text-zinc-100 font-semibold">${sizeText}</span>
@@ -792,10 +792,10 @@ function renderDashboardSnapshotChart() {
             dateLabel = `#${idx+1}`;
         }
 
-        const tooltip = `[백업 시점 #${idx+1}]\nID: ${s.id}\n일시: ${dateLabel}\n용량: ${formatBytes(b)}\n파일 수: ${f.toLocaleString()}개\n프로필: ${s.profile_name || '기본 백업'}`;
+        const tooltip = `[백업 시점 #${idx+1}]\nID: ${s.id}\n일시: ${dateLabel}\n용량: ${formatBytes(b)}\n파일 수: ${f.toLocaleString()}개\n프로필: ${escapeHtml(s.profile_name || '기본 백업')}`;
 
         return `
-            <div class="flex-1 min-w-[2.2rem] max-w-[4.2rem] flex flex-col justify-end items-center h-full group relative cursor-pointer" title="${tooltip}" onclick="inspectSnapshot('${s.id}')">
+            <div class="flex-1 min-w-[2.2rem] max-w-[4.2rem] flex flex-col justify-end items-center h-full group relative cursor-pointer" title="${tooltip}" onclick="inspectSnapshot(${_jsArg(s.id)})">
                 <!-- 상단 용량 배지 (항시 선명 표시 & 잘림 방지) -->
                 <div class="text-[9px] font-mono font-bold text-zinc-200 whitespace-nowrap absolute -top-6 left-1/2 -translate-x-1/2 bg-zinc-900/90 px-1 py-0.5 rounded border border-zinc-700/80 shadow-md pointer-events-none group-hover:border-blue-400 group-hover:text-white transition">
                     ${formatBytes(b)}
@@ -904,13 +904,13 @@ function renderProfilesList() {
         <div class="p-5 bg-slate-800/70 rounded-2xl border border-slate-700/80 flex flex-col gap-4">
             <div class="flex justify-between items-start">
                 <div>
-                    <h3 class="text-base font-bold text-slate-100">${p.name}</h3>
-                    <p class="text-xs text-slate-400 mt-1">백업 보관함: <code class="text-blue-400 font-mono">${p.repo_dir}</code></p>
+                    <h3 class="text-base font-bold text-slate-100">${escapeHtml(p.name)}</h3>
+                    <p class="text-xs text-slate-400 mt-1">백업 보관함: <code class="text-blue-400 font-mono">${escapeHtml(p.repo_dir)}</code></p>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button onclick="editProfile('${p.id}')" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-xs font-medium">수정</button>
-                    <button onclick="triggerProfileBackup('${p.id}')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium">백업 실행</button>
-                    <button onclick="deleteProfile('${p.id}', '${p.name.replace(/'/g, "\\'")}')" class="px-3 py-1.5 bg-red-900/60 hover:bg-red-600 text-red-300 hover:text-white rounded-lg text-xs font-medium transition">삭제</button>
+                    <button onclick="editProfile(${_jsArg(p.id)})" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-xs font-medium">수정</button>
+                    <button onclick="triggerProfileBackup(${_jsArg(p.id)})" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-medium">백업 실행</button>
+                    <button onclick="deleteProfile(${_jsArg(p.id)}, ${_jsArg(p.name)})" class="px-3 py-1.5 bg-red-900/60 hover:bg-red-600 text-red-300 hover:text-white rounded-lg text-xs font-medium transition">삭제</button>
                 </div>
             </div>
 
@@ -1540,7 +1540,7 @@ async function browseToDirectory(path) {
 
         if (res.parent_path !== null && res.parent_path !== undefined) {
             html += `
-                <div onclick="browseToDirectory('${res.parent_path.replace(/\\/g, '\\\\')}')" class="flex items-center gap-2 p-2 hover:bg-slate-800 rounded-lg cursor-pointer text-xs text-amber-400 font-semibold">
+                <div onclick="browseToDirectory(${_jsArg(res.parent_path)})" class="flex items-center gap-2 p-2 hover:bg-slate-800 rounded-lg cursor-pointer text-xs text-amber-400 font-semibold">
                     <i data-lucide="corner-left-up" class="w-4 h-4"></i> [상위 폴더로 이동]
                 </div>
             `;
@@ -1548,11 +1548,11 @@ async function browseToDirectory(path) {
 
         html += res.items.map(item => `
             <div class="flex items-center justify-between p-2 hover:bg-slate-800 rounded-lg text-xs transition">
-                <div onclick="browseToDirectory('${item.path.replace(/\\/g, '\\\\')}')" class="flex items-center gap-2 cursor-pointer flex-1 overflow-hidden">
+                <div onclick="browseToDirectory(${_jsArg(item.path)})" class="flex items-center gap-2 cursor-pointer flex-1 overflow-hidden">
                     <i data-lucide="${item.name.includes(':') ? 'hard-drive' : 'folder'}" class="w-4 h-4 text-amber-400 shrink-0"></i>
-                    <span class="truncate text-slate-200">${item.name}</span>
+                    <span class="truncate text-slate-200">${escapeHtml(item.name)}</span>
                 </div>
-                <button onclick="selectBrowsePath('${item.path.replace(/\\/g, '\\\\')}')" class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11px] font-medium shrink-0 ml-2">
+                <button onclick="selectBrowsePath(${_jsArg(item.path)})" class="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-[11px] font-medium shrink-0 ml-2">
                     선택
                 </button>
             </div>
@@ -2015,13 +2015,13 @@ function updateDynamicDashboardState() {
             const cleanTime = timeStr.substring(0, 8);
             const sizeStr = formatBytes(sum.total_bytes || 0);
             const filesStr = (sum.total_files || 0).toLocaleString();
-            const profName = latest.profile_name || '내 맞춤형 핵심 백업';
+            const profName = escapeHtml(latest.profile_name || '내 맞춤형 핵심 백업');
 
             termEl.innerHTML = `
                 <div class="flex items-start gap-2">
                     <span class="text-zinc-600">[${cleanTime}]</span>
                     <span class="text-blue-400 font-bold">[엔진]</span>
-                    <span class="text-zinc-300">최신 스냅샷 (${latest.id}) 무결성 지문 확인 완료</span>
+                    <span class="text-zinc-300">최신 스냅샷 (${escapeHtml(latest.id)}) 무결성 지문 확인 완료</span>
                 </div>
                 <div class="flex items-start gap-2">
                     <span class="text-zinc-600">[${cleanTime}]</span>

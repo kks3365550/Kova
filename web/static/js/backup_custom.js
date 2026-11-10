@@ -64,9 +64,9 @@ function renderInstalledApps(filterText = '') {
                     <input type="checkbox" ${isChecked ? 'checked' : ''} onclick="event.stopPropagation(); toggleAppSelectionByIndex(${app.idx})" class="rounded border-slate-700 bg-slate-800 text-blue-600 focus:ring-0 w-4 h-4 shrink-0 cursor-pointer">
                     <div class="overflow-hidden flex-1">
                         <div class="flex items-center gap-2 flex-wrap">
-                            <span class="font-bold text-slate-100 text-xs">${app.name}</span>
-                            ${app.publisher ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-medium">${app.publisher}</span>` : ''}
-                            ${app.version ? `<span class="text-[10px] text-slate-500 font-mono">v${app.version}</span>` : ''}
+                            <span class="font-bold text-slate-100 text-xs">${escapeHtml(app.name)}</span>
+                            ${app.publisher ? `<span class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-medium">${escapeHtml(app.publisher)}</span>` : ''}
+                            ${app.version ? `<span class="text-[10px] text-slate-500 font-mono">v${escapeHtml(app.version)}</span>` : ''}
                         </div>
                         <div class="text-[11px] text-slate-400 truncate mt-1 font-mono">
                             ${hasLoc 
