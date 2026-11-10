@@ -13,8 +13,10 @@ def _use_tmp_profiles(monkeypatch, tmp_path):
     return tmp_path / "profiles.json"
 
 
-def test_ssr_json_escapes_script_breakout():
+def test_ssr_json_escapes_script_breakout(monkeypatch, tmp_path):
     import web.app as webapp
+    # 저장소 후보가 없는 환경(CI)에서도 스냅샷 목록 경로를 타도록 고정한다
+    monkeypatch.setattr(webapp, "_get_all_candidate_repos", lambda *a, **k: [str(tmp_path)])
     evil = "</script><script>alert(1)</script>"
     snaps = [{"id": "s1", "profile_name": evil, "created_at": 1.0, "summary": {}}]
     import core.snapshot as snap_mod
