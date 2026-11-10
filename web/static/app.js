@@ -1797,6 +1797,13 @@ async function applySoftwareUpdate() {
     }
     if (window.lucide) lucide.createIcons();
 
+    // 적용 전 설치 버전을 기록해 두고, 재시작 후 실제로 바뀌었는지 확인한다
+    let versionBefore = null;
+    try {
+        const stBefore = await (await fetch('/api/update/status', { cache: 'no-store' })).json();
+        versionBefore = stBefore.current_version || null;
+    } catch (e) { /* 확인 불가 시 기존 동작 유지 */ }
+
     try {
         const resp = await fetch('/api/update/apply', { method: 'POST' });
         const res = await resp.json();
@@ -1818,6 +1825,17 @@ async function applySoftwareUpdate() {
                 const health = await fetch('/api/system/storage-health', { cache: 'no-store' });
                 if (health.ok && pollCount > 3) {
                     clearInterval(pollInterval);
+                    let versionAfter = null;
+                    try {
+                        const stAfter = await (await fetch('/api/update/status', { cache: 'no-store' })).json();
+                        versionAfter = stAfter.current_version || null;
+                    } catch (e2) { /* 조회 실패 시 아래에서 미확인으로 처리 */ }
+                    if (versionBefore && versionAfter && versionBefore === versionAfter) {
+                        if (progressText) progressText.textContent = `업데이트가 적용되지 않았습니다 (현재 v${versionAfter}). 잠시 후 다시 시도해 주세요.`;
+                        showToast('업데이트가 적용되지 않았습니다. 버전이 그대로입니다.', 'error');
+                        if (btnModalApply) { btnModalApply.disabled = false; btnModalApply.textContent = '다시 시도'; }
+                        return;
+                    }
                     if (progressText) progressText.textContent = '업데이트 완료! 페이지를 새로고침합니다...';
                     setTimeout(() => {
                         window.location.reload(true);

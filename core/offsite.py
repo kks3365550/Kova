@@ -669,6 +669,12 @@ class GoogleDriveOffsiteReplicator:
         }
         tok_str = json.dumps(tok_obj)
 
+        # rclone.conf 는 줄 단위 형식이므로 값에 개행이 있으면 다른 설정 항목이 주입될 수 있다
+        for _name, _val in (("client_id", client_id), ("client_secret", client_secret),
+                            ("root_folder_id", target_folder_id)):
+            if any(ch in str(_val) for ch in ("\r", "\n")):
+                raise ValueError(f"rclone 설정 값({_name})에 허용되지 않는 줄바꿈이 있습니다.")
+
         conf_content = f"""[gdrive]
 type = drive
 client_id = {client_id}
@@ -683,8 +689,17 @@ remote = gdrive:archives
 chunk_size = 4G
 hash_type = md5
 """
-        with open(conf_path, "w", encoding="utf-8") as f:
-            f.write(conf_content)
+        tmp_conf = f"{conf_path}.tmp_{os.getpid()}_{os.urandom(3).hex()}"
+        try:
+            with open(tmp_conf, "w", encoding="utf-8") as f:
+                f.write(conf_content)
+            os.replace(tmp_conf, conf_path)  # 원자적 교체(쓰다 중단돼도 기존 설정 보존)
+        finally:
+            if os.path.exists(tmp_conf):
+                try:
+                    os.remove(tmp_conf)
+                except OSError:
+                    pass
         return conf_path
 
     def replicate(self) -> Dict[str, Any]:
@@ -873,7 +888,10 @@ hash_type = md5
             archive_dir = os.path.dirname(os.path.abspath(archive_path))
             archive_name = os.path.basename(archive_path)
             meta_name = f"{archive_name}.meta.json"
-            include_args = ["--include", archive_name, "--include", meta_name]
+            # 파일명의 glob 문자(* ? [ ] { })를 이스케이프하고 루트에 고정해 정확히 그 파일만 선택한다
+            def _glob_escape(name: str) -> str:
+                return "/" + "".join("\\" + c if c in "*?[]{}\\" else c for c in name)
+            include_args = ["--include", _glob_escape(archive_name), "--include", _glob_escape(meta_name)]
         elif os.path.isdir(archive_path):
             archive_dir = os.path.abspath(archive_path)
             archive_name = os.path.basename(archive_dir)
