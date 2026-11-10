@@ -164,7 +164,7 @@
                         <div class="space-y-0.5 min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
                                 <span class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-purple-500/30 text-purple-300 border border-purple-500/40 font-mono">신규 업데이트 출시</span>
-                                <span id="dash-update-target-ver" class="text-xs font-mono font-bold text-white">v2.17.69</span>
+                                <span id="dash-update-target-ver" class="text-xs font-mono font-bold text-white">v{{ version }}</span>
                                 <span class="text-[11px] text-zinc-400 font-mono">(현재: <span id="dash-update-current-ver">v{{ version if version else '2.17.60' }}</span>)</span>
                             </div>
                             <p id="dash-update-desc" class="text-xs text-zinc-300 truncate max-w-xl font-medium">새로운 기능과 성능 개선 및 버그 패치가 포함되어 있습니다. 원클릭으로 안전하게 업데이트하세요.</p>
@@ -241,9 +241,9 @@
                                 <span id="dashboard-offsite-badge" class="hidden text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0"></span>
                             </div>
                             <div class="flex flex-col gap-0.5 font-mono min-w-0">
-                                <span id="dashboard-offsite-sync-state" class="text-xs font-bold text-cyan-400 truncate">상태 확인 중...</span>
+                                <span id="dashboard-offsite-sync-state" class="text-xs font-bold text-cyan-400 break-words">상태 확인 중...</span>
                                 <div class="flex items-center justify-between gap-1 flex-wrap">
-                                    <span id="dashboard-offsite-mode" class="text-[10px] text-zinc-400 font-mono truncate">클라우드 연결 점검</span>
+                                    <span id="dashboard-offsite-mode" class="text-[10px] text-zinc-400 font-mono break-words">클라우드 연결 점검</span>
                                     <span class="text-[9px] text-cyan-400/80 font-sans group-hover:underline flex items-center gap-0.5 whitespace-nowrap shrink-0">모니터 ➔</span>
                                 </div>
                             </div>

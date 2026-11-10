@@ -396,7 +396,7 @@ async function loadArchiveList() {
                         <button onclick="openArchiveRestoreModal('${encodeURIComponent(a.path)}')" class="px-2.5 py-1.5 bg-indigo-600/80 hover:bg-indigo-600 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1 whitespace-nowrap">
                             <i data-lucide="rotate-ccw" class="w-3.5 h-3.5 shrink-0"></i> <span>이 백업으로 되돌리기</span>
                         </button>
-                        <button onclick="deleteArchiveItem('${encodeURIComponent(a.path)}', '${escapeHtml(a.name)}', ${a.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-lg text-xs font-medium border border-rose-800/80 transition flex items-center gap-1 whitespace-nowrap" title="이 통백업 아카이브 삭제">
+                        <button onclick="deleteArchiveItem('${encodeURIComponent(a.path)}', '${encodeURIComponent(a.name)}', ${a.size_gb})" class="px-2.5 py-1.5 bg-rose-950/70 hover:bg-rose-900 text-rose-300 hover:text-white rounded-lg text-xs font-medium border border-rose-800/80 transition flex items-center gap-1 whitespace-nowrap" title="이 통백업 아카이브 삭제">
                             <i data-lucide="trash-2" class="w-3.5 h-3.5 text-rose-400 shrink-0"></i> <span>삭제</span>
                         </button>
                     </div>
@@ -410,8 +410,9 @@ async function loadArchiveList() {
     }
 }
 
-async function deleteArchiveItem(archivePathEncoded, archiveName, sizeGb) {
+async function deleteArchiveItem(archivePathEncoded, archiveNameEncoded, sizeGb) {
     const archivePath = decodeURIComponent(archivePathEncoded);
+    const archiveName = decodeURIComponent(archiveNameEncoded);
     if (!confirm(`이 통백업 아카이브를 완전히 삭제하시겠습니까?\n\n- 파일명: ${archiveName}\n- 확보 용량: 약 ${sizeGb} GB\n- 저장 경로: ${archivePath}\n\n삭제된 아카이브 파일은 복구할 수 없습니다.`)) {
         return;
     }

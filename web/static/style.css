@@ -14,7 +14,6 @@ body {
     background-color: var(--bg-dark);
     color: var(--text-main);
     user-select: none;
-    overflow-x: hidden;
 }
 
 /* Custom Scrollbar */
@@ -46,7 +45,7 @@ body {
 }
 .glass-card-hover:hover {
     transform: translateY(-2px);
-    border-color: rgba(59, 130, 254, 0.4);
+    border-color: rgba(59, 130, 246, 0.4);
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
 }
 
@@ -87,31 +86,8 @@ body {
 }
 
 /* Responsive Fluid Layout Enhancements */
-.metric-grid-fluid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    gap: 0.75rem;
-}
-
 .responsive-table-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-gutter: stable;
-}
-
-.responsive-table-wrapper table {
-    min-width: 760px;
-}
-
-/* Text and button overflow protections */
-.safe-nowrap {
-    white-space: nowrap !important;
-    flex-shrink: 0 !important;
-}
-
-.fluid-truncate {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
 }

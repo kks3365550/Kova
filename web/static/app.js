@@ -250,7 +250,7 @@ function renderOffsiteStatusWidget() {
         if (dashTarget) dashTarget.innerText = '설정 안 됨';
         if (dashState) {
             dashState.innerText = '로컬 백업만 수행';
-            dashState.className = 'text-slate-400 font-medium whitespace-nowrap';
+            dashState.className = 'text-slate-400 font-medium break-words';
         }
         if (heroScoreBadge) {
             heroScoreBadge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span><span>' + (noSnaps ? '아직 백업이 없어요 (먼저 백업을 해 주세요)' : '이 PC에 잠금 보호 중 (다른 장소 보관은 미설정)') + '</span>';
@@ -308,7 +308,7 @@ function renderOffsiteStatusWidget() {
     }
     if (dashMode) {
         dashMode.innerText = modeText;
-        dashMode.className = 'text-[10px] text-zinc-400 font-mono whitespace-nowrap';
+        dashMode.className = 'text-[10px] text-zinc-400 font-mono break-words';
     }
     if (dashTarget) {
         dashTarget.innerText = targetText;
@@ -642,7 +642,7 @@ function renderStorageHealth() {
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-1.5 overflow-hidden min-w-0 flex-1">
                         <span class="text-zinc-400 font-mono text-[11px] font-bold shrink-0">#${disk.device_id}</span>
-                        <span class="font-bold text-zinc-200 text-xs truncate max-w-[140px] sm:max-w-[220px]" title="${disk.name}">${disk.name}</span>
+                        <span class="font-bold text-zinc-200 text-xs truncate max-w-[140px] sm:max-w-[220px]" title="${escapeHtml(disk.name)}">${escapeHtml(disk.name)}</span>
                         ${busBadge}
                     </div>
                     <span class="px-1.5 py-0.5 text-[10px] rounded border font-mono ${statusColor}">${disk.health_status}</span>
