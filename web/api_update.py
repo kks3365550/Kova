@@ -4,6 +4,7 @@ web/api_update.py
 
 소프트웨어 자동 업데이트 및 원격 릴리즈 동기화 APIRouter 모듈
 """
+import json
 import os
 import io
 import sys
@@ -466,7 +467,25 @@ async def apply_offline_bundle(file: UploadFile = File(...)):
         pipeline = UnifiedUpdatePipeline(keyring=keyring, target_dir=BASE_DIR)
 
         acquired = BundleReader.read(content)
-        result = pipeline.execute_update(acquired=acquired, skip_process_control=False)
+        # 안티 리플레이: 마지막으로 적용한 정책 시퀀스를 data/update_policy_cache.json 에 보관한다
+        _seq_cache = os.path.join(BASE_DIR, "data", "update_policy_cache.json")
+        _cached_seq = -1
+        try:
+            with open(_seq_cache, "r", encoding="utf-8") as _f_seq:
+                _cached_seq = int(json.load(_f_seq).get("sequence", -1))
+        except Exception:
+            _cached_seq = -1
+        result = pipeline.execute_update(acquired=acquired, cached_sequence=_cached_seq, skip_process_control=False)
+        try:
+            _new_seq = (result.details or {}).get("policy_sequence")
+            if result.success and isinstance(_new_seq, int) and _new_seq > _cached_seq:
+                os.makedirs(os.path.dirname(_seq_cache), exist_ok=True)
+                _tmp_seq = f"{_seq_cache}.tmp_{os.getpid()}"
+                with open(_tmp_seq, "w", encoding="utf-8") as _f_seq:
+                    json.dump({"sequence": _new_seq}, _f_seq)
+                os.replace(_tmp_seq, _seq_cache)
+        except Exception as _e_seq:
+            logger.warning("업데이트 정책 시퀀스 캐시 저장 실패: %s", _e_seq)
 
         if not result.success:
             append_task_log(f"[오프라인 업데이트 실패] {result.message}", level="ERROR")

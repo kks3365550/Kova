@@ -94,3 +94,10 @@ def test_skipped_files_counted_in_summary(tmp_path, monkeypatch):
     monkeypatch.setattr(sm.BlobStorage, "put_file_blob_onepass", flaky)
     m = sm.SnapshotEngine.create_snapshot(str(tmp_path / "repo"), [str(src)], min_free_disk_gb=0, use_vss=False)
     assert m["summary"]["skipped_files"] == 1
+
+
+def test_prerelease_is_older_than_release():
+    from core.updater_v2.policy_semantics import _ver_key
+    assert _ver_key("2.17.74-rc1") < _ver_key("2.17.74")
+    assert _ver_key("2.17.74") < _ver_key("2.17.75-rc1")
+    assert _ver_key("v2.17.74") == _ver_key("2.17.74")

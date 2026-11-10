@@ -44,6 +44,13 @@ def parse_semver(ver_str: str) -> Tuple[int, int, int]:
         return 0, 0, 0
 
 
+def _ver_key(ver_str: str) -> Tuple[int, int, int, int]:
+    """비교용 키: (major, minor, patch, 정식=1/prerelease=0). 2.0.0-rc1 < 2.0.0 이 되도록 한다."""
+    major, minor, patch = parse_semver(ver_str)
+    clean = ver_str.strip().lstrip('v').lstrip('V').split('+')[0]
+    return major, minor, patch, (0 if '-' in clean else 1)
+
+
 class PolicySemanticsEvaluator:
     """검증된 정책 문서를 해석하여 업데이트 전략을 결정하는 평가기"""
 
@@ -79,9 +86,9 @@ class PolicySemanticsEvaluator:
         if policy.channel.lower() != self.expected_channel:
             return PolicyDecision.REJECT_POLICY, f"Channel mismatch: expected '{self.expected_channel}', got '{policy.channel}'"
 
-        cur_semver = parse_semver(self.current_version)
-        min_semver = parse_semver(policy.minimum_version)
-        latest_semver = parse_semver(policy.latest_version)
+        cur_semver = _ver_key(self.current_version)
+        min_semver = _ver_key(policy.minimum_version)
+        latest_semver = _ver_key(policy.latest_version)
 
         # 3. 최소 버전과 최신 버전의 논리적 모순 검증 (minimum <= latest)
         if min_semver > latest_semver:

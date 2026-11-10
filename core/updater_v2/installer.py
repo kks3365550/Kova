@@ -95,7 +95,16 @@ class AtomicInstaller:
         no_win = {"creationflags": subprocess.CREATE_NO_WINDOW} if hasattr(subprocess, "CREATE_NO_WINDOW") else {}
         try:
             subprocess.run(["powershell", "-NoProfile", "-Command", ps_script], timeout=timeout_sec, **no_win)
-            return True
+            # 종료 명령이 성공해도 포트가 아직 열려 있으면(다른 프로세스·종료 지연) 파일 교체가 위험하다
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                try:
+                    with socket.create_connection(("127.0.0.1", self.server_port), timeout=0.5):
+                        time.sleep(0.5)
+                except OSError:
+                    return True
+            logger.warning("Installer stop_server: port %d still in use after stop", self.server_port)
+            return False
         except Exception as e:
             logger.warning("Installer stop_server warning: %s", e)
             return False
@@ -196,7 +205,9 @@ class AtomicInstaller:
             if not skip_process_control:
                 # 서비스 재시작
                 self.restart_server()
-                self.health_check(timeout_sec=10)
+                if not self.health_check(timeout_sec=10):
+                    # 파일은 원복됐으므로 롤백 자체는 성공으로 두되, 서버 미기동은 크게 경고한다
+                    logger.critical("INSTALLER_ROLLBACK_WARNING reason=health_check_failed_after_rollback")
 
             logger.info("INSTALLER_ROLLBACK_SUCCESS restored to previous version")
             return True

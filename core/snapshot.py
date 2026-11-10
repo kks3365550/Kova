@@ -480,6 +480,7 @@ class SnapshotEngine:
             })
 
         # 3. Process files: Fast Path (no extra disk stat queries needed!)
+        current_roots_norm = {os.path.normpath(_it[1]).lower() for _it in all_files_to_process}
         for full_path, src_root, rel_path, f_size, f_mtime in all_files_to_process:
             if cancel_event and cancel_event.is_set():
                 raise InterruptedError("Backup operation was cancelled by user.")
@@ -493,7 +494,13 @@ class SnapshotEngine:
                 norm_full_path = full_path.replace('\\', '/').lower()
                 seen_norm_paths.add(norm_full_path)
                 norm_rel = rel_path.replace('\\', '/').lower()
-                prev_entry = prev_entries_map.get(norm_full_path) or prev_rel_map.get(norm_rel)
+                prev_entry = prev_entries_map.get(norm_full_path)
+                if not prev_entry:
+                    # 상대경로만 같은 항목은 '이전 소스 루트가 이번에 더 이상 없을 때(경로 이동)'에만 재사용한다.
+                    # 다른 소스 루트의 동일 상대경로 파일을 잘못 같은 파일로 취급하지 않기 위함.
+                    cand = prev_rel_map.get(norm_rel)
+                    if cand and os.path.normpath(cand.get("source_root", "")).lower() not in current_roots_norm:
+                        prev_entry = cand
             else:
                 norm_full_path = full_path.replace('\\', '/').lower()
                 seen_norm_paths.add(norm_full_path)
