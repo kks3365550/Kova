@@ -61,6 +61,7 @@ class AtomicInstaller:
         self.target_dir = os.path.abspath(target_dir)
         self.server_port = server_port
         self.safety_checker = ArtifactSafetyChecker()
+        self.last_rollback_unhealthy = False  # 롤백으로 파일은 원복했으나 서버가 기동하지 않은 경우 True
 
     def get_current_installed_version(self) -> str:
         """VERSION 파일에서 현재 버전 문자열을 읽음"""
@@ -208,6 +209,7 @@ class AtomicInstaller:
                 if not self.health_check(timeout_sec=10):
                     # 파일은 원복됐으므로 롤백 자체는 성공으로 두되, 서버 미기동은 크게 경고한다
                     logger.critical("INSTALLER_ROLLBACK_WARNING reason=health_check_failed_after_rollback")
+                    self.last_rollback_unhealthy = True
 
             logger.info("INSTALLER_ROLLBACK_SUCCESS restored to previous version")
             return True
@@ -353,7 +355,7 @@ class AtomicInstaller:
                     txn_mgr.cleanup_marker(marker)
             if not rolled_back:
                 logger.critical("INSTALL_ROLLBACK_INCOMPLETE marker_kept=%s", bool(marker))
-            raise InstallerError(f"Installation failed: {e}" + ("" if rolled_back else " (롤백도 실패/불가: 수동 복구 필요)")) from e
+            raise InstallerError(f"Installation failed: {e}" + ("" if rolled_back else " (롤백도 실패/불가: 수동 복구 필요)") + (" (롤백 후 서버가 기동하지 않았습니다: 수동 확인 필요)" if self.last_rollback_unhealthy else "")) from e
 
         finally:
             shutil.rmtree(staging_dir, ignore_errors=True)
