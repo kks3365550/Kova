@@ -560,43 +560,65 @@ fn run_restore(
     }
 
     // Restore files
+    let total_files = manifest_files.iter().filter(|e| !e.is_dir).count();
+    let done_files = AtomicUsize::new(0);
+    let failed_files = AtomicUsize::new(0);
+    println!("[PROGRESS] 0/{}", total_files);
+
     manifest_files.par_iter().filter(|e| !e.is_dir).for_each(|entry| {
         let file_path = target.join(&entry.path);
         if let Some(parent) = file_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
 
-        let mut file = match File::create(&file_path) {
-            Ok(f) => f,
+        let mut ok = true;
+        match File::create(&file_path) {
             Err(e) => {
                 eprintln!("[ERROR] Cannot create file {}: {}", file_path.display(), e);
-                return;
+                ok = false;
             }
-        };
+            Ok(mut file) => {
+                for chunk_info in &entry.chunks {
+                    let comp_data = match cas.read_blob(&chunk_info.hash) {
+                        Ok(data) => data,
+                        Err(e) => {
+                            eprintln!("[ERROR] Missing blob {}: {}", chunk_info.hash, e);
+                            ok = false;
+                            break;
+                        }
+                    };
 
-        for chunk_info in &entry.chunks {
-            let comp_data = match cas.read_blob(&chunk_info.hash) {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("[ERROR] Missing blob {}: {}", chunk_info.hash, e);
-                    return;
+                    let raw_data = match compressor::decompress(&comp_data) {
+                        Ok(data) => data,
+                        Err(e) => {
+                            eprintln!("[ERROR] Decompress failed for {}: {}", chunk_info.hash, e);
+                            ok = false;
+                            break;
+                        }
+                    };
+
+                    if let Err(e) = file.write_all(&raw_data) {
+                        eprintln!("[ERROR] Write failed for {}: {}", file_path.display(), e);
+                        ok = false;
+                        break;
+                    }
                 }
-            };
-
-            let raw_data = match compressor::decompress(&comp_data) {
-                Ok(data) => data,
-                Err(e) => {
-                    eprintln!("[ERROR] Decompress failed for {}: {}", chunk_info.hash, e);
-                    return;
-                }
-            };
-
-            if let Err(e) = file.write_all(&raw_data) {
-                eprintln!("[ERROR] Write failed for {}: {}", file_path.display(), e);
-                return;
             }
         }
+
+        if !ok {
+            failed_files.fetch_add(1, Ordering::Relaxed);
+        }
+        let done = done_files.fetch_add(1, Ordering::Relaxed) + 1;
+        if done % 200 == 0 || done == total_files {
+            println!("[PROGRESS] {}/{}", done, total_files);
+        }
     });
+
+    let failed = failed_files.load(Ordering::Relaxed);
+    if failed > 0 {
+        return Err(format!("{} of {} files failed to restore", failed, total_files).into());
+    }
 
     println!(
         "[KOVA-FAST] Restore completed in {:.3}s",

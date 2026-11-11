@@ -51,6 +51,7 @@ Source: "runtime\python\*"; DestDir: "{app}\python"; Flags: onlyifdoesntexist re
 Source: "..\core\*"; DestDir: "{app}\core"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace uninsrestartdelete; Excludes: "__pycache__,*.pyc,*.pyo"
 Source: "..\web\*"; DestDir: "{app}\web"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace uninsrestartdelete; Excludes: "__pycache__,*.pyc,*.pyo"
 Source: "..\run.py"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+Source: "..\disaster_recovery.py"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 Source: "..\VERSION"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 Source: "..\keys\*.pub"; DestDir: "{app}\keys"; Flags: ignoreversion restartreplace
 Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion restartreplace

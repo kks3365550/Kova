@@ -401,7 +401,18 @@ class BackupScheduler:
         """Tier 3: 월간(Monthly) 저장소 내 모든 블롭(.blob)의 Bit-Rot 전수 감사"""
         self._log("DeepScan", f"[Tier 3] 월간 심야 전체 블롭 Bit-Rot 감사를 시작합니다 (저장소: {repo_dir})")
         try:
-            from disaster_recovery import audit_repository
+            try:
+                from disaster_recovery import audit_repository
+            except ImportError:
+                # 서비스 cwd/sys.path 에 앱 루트가 없는 경우: core 의 상위 폴더에서 직접 로드
+                import importlib.util
+                dr_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "disaster_recovery.py")
+                if not os.path.isfile(dr_path):
+                    raise FileNotFoundError(f"disaster_recovery.py 를 찾을 수 없습니다: {dr_path} (설치 누락)")
+                spec = importlib.util.spec_from_file_location("disaster_recovery", dr_path)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                audit_repository = mod.audit_repository
             res = audit_repository(repo_dir)
             total = res.get("total", 0)
             corrupted = res.get("corrupted", 0)
@@ -417,6 +428,14 @@ class BackupScheduler:
         """Tier 2/Tier 3 주기 검사 및 심야 스케줄링 트리거"""
         if self._is_backup_running():
             return  # 백업 실행 중일 때는 감사 보류
+
+        # 대시보드에서 실행한 백업/복원/검증이 진행 중이면 디스크 I/O 경합을 피하려 감사 보류
+        try:
+            from web.state import current_task
+            if current_task.get("running"):
+                return
+        except Exception:
+            pass
 
         with self.audit_lock:
             if self.audit_thread and self.audit_thread.is_alive():

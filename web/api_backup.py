@@ -918,6 +918,67 @@ def _background_restore_task(params: Dict[str, Any]):
             current_task["running"] = False
 
 
+def _run_rust_restore(cmd, creationflags, cancel_evt, on_progress):
+    """Rust 복원 엔진을 실행하며 [PROGRESS] 줄을 진행률로 반영하고, 취소 요청 시 종료한다.
+
+    반환: (CompletedProcess 유사 객체, 취소 여부)
+    """
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        encoding="utf-8", errors="replace", creationflags=creationflags,
+    )
+    err_lines: List[str] = []
+
+    def _drain_stderr():
+        for line in proc.stderr:
+            err_lines.append(line.rstrip())
+            if len(err_lines) > 200:
+                del err_lines[:100]
+
+    t = threading.Thread(target=_drain_stderr, daemon=True)
+    t.start()
+
+    cancelled = False
+
+    def _watch_cancel():
+        nonlocal cancelled
+        while proc.poll() is None:
+            if cancel_evt is None:
+                time.sleep(0.5)
+            elif cancel_evt.wait(0.5):
+                cancelled = True
+                proc.terminate()
+                return
+
+    w = threading.Thread(target=_watch_cancel, daemon=True)
+    w.start()
+
+    last_log = 0.0
+    for line in proc.stdout:
+        m = re.match(r"\[PROGRESS\] (\d+)/(\d+)", line)
+        if not m:
+            continue
+        done, total = int(m.group(1)), int(m.group(2))
+        on_progress({
+            "percent": round(done / total * 100, 1) if total else 100,
+            "restored_files": done,
+            "total_files": total,
+            "current_file": f"Rust 엔진 복원 중... {done}/{total}",
+        })
+        now = time.time()
+        if now - last_log >= 10:
+            last_log = now
+            append_task_log(f"복원 진행: {done}/{total} 파일")
+    proc.wait()
+    t.join(timeout=2)
+
+    class _Result:
+        returncode = proc.returncode
+        stderr = "\n".join(err_lines)
+
+    return _Result, cancelled
+
+
 def _background_restore_task_impl(params: Dict[str, Any]):
     snap_id = params["snapshot_id"]
     target_dir = params.get("target_dir")
@@ -955,7 +1016,9 @@ def _background_restore_task_impl(params: Dict[str, Any]):
             start_rest = time.time()
             cmd = [engine_exe, "restore", "--session-id", snap_id, "--repo", repo_dir, "--target", target_dir]
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
-            proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=creationflags)
+            proc, cancelled = _run_rust_restore(cmd, creationflags, cancel_evt, on_progress)
+            if cancelled:
+                raise InterruptedError()
             if proc.returncode == 0:
                 elapsed = time.time() - start_rest
                 try:
@@ -973,7 +1036,8 @@ def _background_restore_task_impl(params: Dict[str, Any]):
                     "duration_seconds": round(elapsed, 3)
                 }
             else:
-                append_task_log(f"[경고] Rust 복원 엔진 경고(Code {proc.returncode}): {proc.stderr.strip()}, 레거시 복원으로 폴백합니다.", level="WARNING")
+                err_tail = "\n".join(proc.stderr.strip().splitlines()[-5:])
+                append_task_log(f"[경고] Rust 복원 엔진 실패(Code {proc.returncode}): {err_tail}, 레거시 복원으로 폴백합니다.", level="WARNING")
 
         if not result:
             result = RestoreEngine.restore_snapshot(
