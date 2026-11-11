@@ -147,6 +147,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -c constraints.txt -r requirements.txt
 
+      # 업데이트 패키지는 엔진 exe 를 반드시 싣는다(없으면 빌드 중단). 저장소에는 exe 가 없으므로 먼저 빌드해 제자리에 둔다.
+      - name: Rust 엔진 빌드
+        env:
+          CARGO_TARGET_DIR: engine_rust/target
+        run: |
+          cargo build --release --locked --manifest-path engine_rust/Cargo.toml
+          Copy-Item engine_rust/target/release/kova_fast_engine.exe engine_rust/kova_fast_engine.exe
+
       - name: 업데이트 패키지 빌드·감사 (dry-run)
         env:
           PYTHONIOENCODING: utf-8
