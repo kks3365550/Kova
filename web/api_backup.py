@@ -918,21 +918,27 @@ def _background_restore_task(params: Dict[str, Any]):
             current_task["running"] = False
 
 
-# "entries" 는 Rust 매니페스트도 `"entries":null` 로 쓰므로 판별 키로 쓰지 않는다.
-_PYTHON_MANIFEST_MARKERS = (b'"created_at_ts"', b'"iso_time"', b'"manifest_signature"')
+# Rust 엔진/어댑터 매니페스트는 최상위 "files": [...] 를 쓰고, Python 엔진은 "entries": [...] 를 쓴다.
+# (어댑터가 변환한 Rust 매니페스트도 created_at_ts/iso_time 키를 포함하므로 그 키는 판별에 쓰지 않는다.
+#  Rust 원본은 `"entries":null` 도 함께 쓰므로 `"entries"` 키 존재만으로도 판별하지 않는다.)
+_RUST_FILES_RE = re.compile(rb'"files"\s*:\s*\[')
+_PY_ENTRIES_RE = re.compile(rb'"entries"\s*:\s*\[')
 
 
 def _is_rust_manifest(snapshot_path: str) -> bool:
     """스냅샷 JSON 앞부분만 읽어 Rust 엔진이 쓴 형식인지 판별한다(수백 MB 매니페스트 전체 파싱 방지).
 
-    Python 엔진 매니페스트는 created_at_ts/iso_time/manifest_signature 키를 쓰고,
-    Rust 엔진 매니페스트는 files 키를 쓴다. 읽을 수 없으면 안전하게 False(레거시 사용)."""
+    "files" 배열이 있으면 Rust, "entries" 배열만 있으면 Python 형식이다.
+    둘 다 앞부분에서 안 보이면 Rust 로 보되(엔진이 형식 불일치를 오류로 알리고 레거시로 폴백),
+    읽을 수 없으면 안전하게 False(레거시 사용)."""
     try:
         with open(snapshot_path, "rb") as f:
-            head = f.read(65536)
+            head = f.read(262144)
     except OSError:
         return False
-    return not any(marker in head for marker in _PYTHON_MANIFEST_MARKERS)
+    if _RUST_FILES_RE.search(head):
+        return True
+    return not _PY_ENTRIES_RE.search(head)
 
 
 def _run_rust_restore(cmd, creationflags, cancel_evt, on_progress):
@@ -1078,7 +1084,7 @@ def _background_restore_task_impl(params: Dict[str, Any]):
 
         # 복원 대상이 있는데 한 개도 복원하지 않았고 실패 보고도 없으면 성공이 아니다
         # (스냅샷 형식 불일치로 항목이 통째로 건너뛰어진 경우 등)
-        if result.get("total_files", 0) > 0 and result["restored_files"] == 0 and not result["failed_files"]:
+        if (result.get("total_files", 0) > 0 or not selected) and result["restored_files"] == 0 and not result["failed_files"]:
             raise RuntimeError(
                 f"복원할 파일 {result['total_files']}개 중 복원된 파일이 없습니다 "
                 f"(건너뜀 {result['skipped_files']}개). 스냅샷 형식 또는 저장소를 확인하세요."

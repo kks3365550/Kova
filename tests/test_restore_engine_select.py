@@ -51,3 +51,15 @@ def test_real_python_snapshot_is_detected(tmp_path):
     m = SnapshotEngine.create_snapshot(repo_dir=str(repo), sources=[str(src)])
     sid = m.get("id") or m.get("session_id")
     assert _is_rust_manifest(os.path.join(str(repo), "snapshots", f"{sid}.json")) is False
+
+
+def test_adapter_converted_rust_manifest_is_rust(tmp_path):
+    # 어댑터가 변환한 Rust 매니페스트는 created_at_ts/iso_time/manifest_signature 키를 갖지만 Rust 형식이다
+    p = _write(tmp_path, "adapter.json", json.dumps({
+        "id": "snap_a", "session_id": "snap_a", "created_at": "2026-11-10T13:30:10+00:00",
+        "created_at_ts": 1794317410.69, "iso_time": "2026-11-10T13:30:10+00:00",
+        "source_root": "C:\a;C:\b", "total_files": 1, "total_bytes": 18,
+        "files": [{"path": "f1.txt", "size": 18, "chunks": [{"hash": "ab" * 32}]}],
+        "manifest_signature": None, "ed25519_signature": None, "engine": "rust_fast_engine_v1",
+    }))
+    assert _is_rust_manifest(p) is True
