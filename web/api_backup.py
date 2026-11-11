@@ -925,12 +925,12 @@ _RUST_FILES_RE = re.compile(rb'"files"\s*:\s*\[')
 _PY_ENTRIES_RE = re.compile(rb'"entries"\s*:\s*\[')
 
 
-def _is_rust_manifest(snapshot_path: str) -> bool:
+def _is_rust_manifest(snapshot_path: str, strict: bool = False) -> bool:
     """스냅샷 JSON 앞부분만 읽어 Rust 엔진이 쓴 형식인지 판별한다(수백 MB 매니페스트 전체 파싱 방지).
 
     "files" 배열이 있으면 Rust, "entries" 배열만 있으면 Python 형식이다.
     둘 다 앞부분에서 안 보이면 Rust 로 보되(엔진이 형식 불일치를 오류로 알리고 레거시로 폴백),
-    읽을 수 없으면 안전하게 False(레거시 사용)."""
+    읽을 수 없으면 안전하게 False(레거시 사용). strict=True 면 "files" 배열이 확인될 때만 True."""
     try:
         with open(snapshot_path, "rb") as f:
             head = f.read(262144)
@@ -938,6 +938,8 @@ def _is_rust_manifest(snapshot_path: str) -> bool:
         return False
     if _RUST_FILES_RE.search(head):
         return True
+    if strict:
+        return False
     return not _PY_ENTRIES_RE.search(head)
 
 
@@ -1034,6 +1036,13 @@ def _background_restore_task_impl(params: Dict[str, Any]):
         engine_exe = os.path.join(BASE_DIR, "engine_rust", "kova_fast_engine.exe")
         rust_snapshot_file = os.path.join(repo_dir, "snapshots", f"{snap_id}.json")
         result = None
+        if in_place and os.path.exists(rust_snapshot_file) and _is_rust_manifest(rust_snapshot_file, strict=True):
+            # Rust 스냅샷은 파일별 원본 경로(source_root)를 기록하지 않아 원위치 복원을 할 수 없다.
+            # (레거시 복원은 대상 0개로 "복원 완료"처럼 끝나므로 시작 전에 명확히 막는다)
+            raise RuntimeError(
+                "이 스냅샷은 Rust 엔진 형식이라 원래 위치(In-place 롤백)로 복원할 수 없습니다. "
+                "복원 대상 폴더를 지정해 별도 폴더로 복원해 주세요."
+            )
         use_rust_restore = (
             os.path.exists(engine_exe) and os.path.exists(rust_snapshot_file) and not selected and not in_place
         )

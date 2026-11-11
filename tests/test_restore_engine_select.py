@@ -63,3 +63,29 @@ def test_adapter_converted_rust_manifest_is_rust(tmp_path):
         "manifest_signature": None, "ed25519_signature": None, "engine": "rust_fast_engine_v1",
     }))
     assert _is_rust_manifest(p) is True
+
+
+def test_strict_mode_only_true_for_files_array(tmp_path):
+    rs = _write(tmp_path, "rs2.json", '{"id": "s", "files": [{"path": "a"}], "entries": null}')
+    py = _write(tmp_path, "py3.json", '{"id": "s", "entries": []}')
+    unknown = _write(tmp_path, "unk.json", '{"id": "s"}')
+    assert _is_rust_manifest(rs, strict=True) is True
+    assert _is_rust_manifest(py, strict=True) is False
+    assert _is_rust_manifest(unknown, strict=True) is False
+
+
+def test_in_place_restore_of_rust_snapshot_is_blocked(tmp_path, monkeypatch):
+    import web.api_backup as ab
+    repo = tmp_path / "repo"
+    (repo / "snapshots").mkdir(parents=True)
+    (repo / "snapshots" / "snap_r.json").write_text(
+        '{"id": "snap_r", "created_at_ts": 1.0, "files": [{"path": "a.txt", "size": 1}]}', encoding="utf-8")
+    logs = []
+    monkeypatch.setattr(ab, "append_task_log", lambda msg, level="INFO": logs.append((level, msg)))
+    ab.current_task.update({"running": True, "cancel_event": __import__("threading").Event()})
+    try:
+        ab._background_restore_task_impl({"snapshot_id": "snap_r", "repo_dir": str(repo), "in_place": True})
+    finally:
+        ab.current_task["running"] = False
+    text = " ".join(m for _, m in logs)
+    assert "복원할 수 없습니다" in text and "복원 완료" not in text
