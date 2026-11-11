@@ -943,6 +943,20 @@ def _is_rust_manifest(snapshot_path: str, strict: bool = False) -> bool:
     return not _PY_ENTRIES_RE.search(head)
 
 
+_FORMAT_VERSION_RE = re.compile(rb'"format_version"\s*:\s*(\d+)')
+
+
+def _rust_format_version(snapshot_path: str) -> int:
+    """Rust 스냅샷의 format_version(앞부분에서 읽음). 없으면 1. 2 이상이어야 원위치 복원이 가능하다."""
+    try:
+        with open(snapshot_path, "rb") as f:
+            head = f.read(262144)
+    except OSError:
+        return 1
+    m = _FORMAT_VERSION_RE.search(head)
+    return int(m.group(1)) if m else 1
+
+
 def _run_rust_restore(cmd, creationflags, cancel_evt, on_progress):
     """Rust 복원 엔진을 실행하며 [PROGRESS] 줄을 진행률로 반영하고, 취소 요청 시 종료한다.
 
@@ -1036,15 +1050,20 @@ def _background_restore_task_impl(params: Dict[str, Any]):
         engine_exe = os.path.join(BASE_DIR, "engine_rust", "kova_fast_engine.exe")
         rust_snapshot_file = os.path.join(repo_dir, "snapshots", f"{snap_id}.json")
         result = None
-        if in_place and os.path.exists(rust_snapshot_file) and _is_rust_manifest(rust_snapshot_file, strict=True):
-            # Rust 스냅샷은 파일별 원본 경로(source_root)를 기록하지 않아 원위치 복원을 할 수 없다.
-            # (레거시 복원은 대상 0개로 "복원 완료"처럼 끝나므로 시작 전에 명확히 막는다)
-            raise RuntimeError(
-                "이 스냅샷은 Rust 엔진 형식이라 원래 위치(In-place 롤백)로 복원할 수 없습니다. "
-                "복원 대상 폴더를 지정해 별도 폴더로 복원해 주세요."
-            )
+        is_rust_snapshot = os.path.exists(rust_snapshot_file) and _is_rust_manifest(rust_snapshot_file, strict=True)
+        if in_place and is_rust_snapshot:
+            # 원위치 복원은 파일별 원본 번호(src)를 기록한 format_version 2 스냅샷만 가능하다.
+            # 구형 Rust 스냅샷은 원본 경로 정보가 없어(레거시 복원은 0개로 "완료"처럼 끝남) 시작 전에 막는다.
+            if _rust_format_version(rust_snapshot_file) < 2:
+                raise RuntimeError(
+                    "이 스냅샷은 이전 형식이라 원래 위치(In-place 롤백)로 복원할 수 없습니다. "
+                    "새로 백업한 스냅샷은 가능합니다. 이 스냅샷은 복원 대상 폴더를 지정해 별도 폴더로 복원해 주세요."
+                )
+            if not os.path.exists(engine_exe):
+                raise RuntimeError("원위치 복원에는 Rust 엔진(kova_fast_engine.exe)이 필요하지만 찾을 수 없습니다.")
         use_rust_restore = (
-            os.path.exists(engine_exe) and os.path.exists(rust_snapshot_file) and not selected and not in_place
+            os.path.exists(engine_exe) and os.path.exists(rust_snapshot_file) and not selected
+            and (not in_place or is_rust_snapshot)
         )
         if use_rust_restore and not _is_rust_manifest(rust_snapshot_file):
             # Python 엔진이 만든 스냅샷은 팩(packs/)·chunk_ids 구조라 Rust 엔진이 읽지 못한다.
@@ -1054,7 +1073,10 @@ def _background_restore_task_impl(params: Dict[str, Any]):
         if use_rust_restore:
             append_task_log(f"[초고속 네이티브 Rust 엔진 가동 - 복원] 스냅샷: {snap_id}")
             start_rest = time.time()
-            cmd = [engine_exe, "restore", "--session-id", snap_id, "--repo", repo_dir, "--target", target_dir]
+            if in_place:
+                cmd = [engine_exe, "restore", "--session-id", snap_id, "--repo", repo_dir, "--in-place"]
+            else:
+                cmd = [engine_exe, "restore", "--session-id", snap_id, "--repo", repo_dir, "--target", target_dir]
             creationflags = subprocess.CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
             proc, cancelled = _run_rust_restore(cmd, creationflags, cancel_evt, on_progress)
             if cancelled:
@@ -1077,6 +1099,9 @@ def _background_restore_task_impl(params: Dict[str, Any]):
                 }
             else:
                 err_tail = "\n".join(proc.stderr.strip().splitlines()[-5:])
+                if is_rust_snapshot:
+                    # Rust 형식 스냅샷은 레거시 엔진이 읽지 못하므로 폴백하지 않고 실제 원인을 그대로 알린다
+                    raise RuntimeError(f"Rust 복원 엔진 실패(Code {proc.returncode}): {err_tail}")
                 append_task_log(f"[경고] Rust 복원 엔진 실패(Code {proc.returncode}): {err_tail}, 레거시 복원으로 폴백합니다.", level="WARNING")
 
         if not result:

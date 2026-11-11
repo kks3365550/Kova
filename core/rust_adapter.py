@@ -129,10 +129,17 @@ def sync_rust_manifest_to_sqlite(
         else:
             sources_list = []
 
+        # 엔진(format_version 2)이 파일별 원본 번호(src)와 함께 기록한 원본 목록은 그대로 보존한다.
+        # (';' 로 이어 붙인 문자열을 다시 쪼개면 경로에 ';' 가 있을 때 원본 번호가 어긋난다)
+        raw_sources = rust_data.get("sources")
+        if isinstance(raw_sources, list) and raw_sources and all(isinstance(x, str) for x in raw_sources):
+            sources_list = list(raw_sources)
+
         iso_str = datetime.now(timezone.utc).isoformat()
         standard_manifest = {
             "id": session_id,
             "session_id": session_id,
+            "format_version": rust_data.get("format_version") or 1,
             "created_at": iso_str,
             "created_at_ts": time.time(),
             "iso_time": iso_str,
@@ -157,6 +164,7 @@ def sync_rust_manifest_to_sqlite(
                 "kdf": {}
             },
             "sources": sources_list,
+            "source_kinds": rust_data.get("source_kinds"),
             "summary": {
                 "total_files": total_count,
                 "total_bytes": tot_bytes,

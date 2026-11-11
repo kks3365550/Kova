@@ -12,6 +12,8 @@ pub struct ScannedItem {
     pub is_dir: bool,
     pub size: u64,
     pub modified: u64,
+    /// 원본 경로 번호(--source 순서). 원위치 복원에서 파일의 원래 위치를 찾는 데 쓴다.
+    pub src: u32,
 }
 
 /// Name-based exclude filter mirroring core/filter.py (PathFilter).
@@ -121,6 +123,7 @@ pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<Scanned
                 is_dir: false,
                 size: m.len(),
                 modified: mtime_ms(&m),
+                src: 0,
             }],
             Err(_) => Vec::new(),
         };
@@ -158,6 +161,7 @@ pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<Scanned
                                 is_dir: false,
                                 size: metadata.len(),
                                 modified: mtime_ms(&metadata),
+                                src: 0,
                             });
                         }
                     }
@@ -183,6 +187,7 @@ pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<Scanned
                             is_dir: true,
                             size: 0,
                             modified: mtime_ms(&m),
+                            src: 0,
                         });
                     }
                 }
@@ -233,6 +238,7 @@ pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<Scanned
                         is_dir,
                         size,
                         modified,
+                        src: 0,
                     })
                 })
                 .collect();

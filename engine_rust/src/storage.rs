@@ -59,6 +59,9 @@ pub struct FileEntry {
     pub blob_id: Option<String>,
     #[serde(default)]
     pub sha256: Option<String>,
+    /// 원본 경로 번호(매니페스트 sources 배열의 인덱스). 원위치 복원용. 구형 스냅샷에는 없다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub src: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
@@ -73,6 +76,12 @@ pub struct SnapshotManifest {
     pub source_root: Option<String>,
     #[serde(default)]
     pub sources: Option<serde_json::Value>,
+    /// 각 원본 경로의 종류("file"/"dir"). sources 배열과 같은 순서.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_kinds: Option<Vec<String>>,
+    /// 2 = 파일별 원본 번호(src)를 기록하는 형식(원위치 복원 지원)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_version: Option<u32>,
     #[serde(default)]
     pub total_files: usize,
     #[serde(default)]

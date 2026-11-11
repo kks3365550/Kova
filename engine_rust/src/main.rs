@@ -55,8 +55,13 @@ enum Commands {
         #[arg(short, long)]
         repo: PathBuf,
 
+        /// 복원 대상 폴더(--in-place 가 아니면 필수)
         #[arg(short, long)]
-        target: PathBuf,
+        target: Option<PathBuf>,
+
+        /// 백업 당시의 원래 위치로 복원(format_version 2 스냅샷만 가능)
+        #[arg(long)]
+        in_place: bool,
     },
     /// Search files across historical snapshots with ultra-fast parallel matching
     Search {
@@ -125,7 +130,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             session_id,
             repo,
             target,
-        } => run_restore(&session_id, &repo, &target)?,
+            in_place,
+        } => run_restore(&session_id, &repo, target.as_deref(), in_place)?,
 
         Commands::Search {
             repo,
@@ -192,7 +198,14 @@ fn run_backup(
     let exclude_filter = scanner::ExcludeFilter::new(exclude);
     let items: Vec<scanner::ScannedItem> = sources
         .par_iter()
-        .map(|src| scanner::scan_directory(src, &exclude_filter))
+        .enumerate()
+        .map(|(idx, src)| {
+            let mut v = scanner::scan_directory(src, &exclude_filter);
+            for it in v.iter_mut() {
+                it.src = idx as u32;
+            }
+            v
+        })
         .collect::<Vec<_>>()
         .into_iter()
         .flatten()
@@ -268,7 +281,12 @@ fn run_backup(
                         });
                     }
                 }
-                let norm_path = entry.path.replace('\\', "/").to_lowercase();
+                // 같은 상대경로가 서로 다른 원본에 있을 수 있으므로 (원본 번호, 경로)를 키로 쓴다
+                let norm_path = format!(
+                    "{}|{}",
+                    entry.src.unwrap_or(0),
+                    entry.path.replace('\\', "/").to_lowercase()
+                );
                 prev_files_map.entry(norm_path).or_insert(entry);
             }
         }
@@ -293,7 +311,7 @@ fn run_backup(
             // Incremental Fast-Path Check:
             // If file path, size, and modified time match previous snapshot,
             // skip reading from disk completely and reuse existing chunk metadata!
-            let norm_rel = item.rel_path.replace('\\', "/").to_lowercase();
+            let norm_rel = format!("{}|{}", item.src, item.rel_path.replace('\\', "/").to_lowercase());
             if let Some(prev) = prev_files_map.get(&norm_rel) {
                 let mtime_diff = if prev.modified > item.modified {
                     prev.modified - item.modified
@@ -354,6 +372,7 @@ fn run_backup(
                         chunks: prev.chunks.clone(),
                         blob_id: prev.blob_id.clone(),
                         sha256: prev.sha256.clone(),
+                        src: Some(item.src),
                     });
                 } else {
                     modified_files.fetch_add(1, Ordering::Relaxed);
@@ -455,6 +474,7 @@ fn run_backup(
                 chunks: file_chunks,
                 blob_id: None,
                 sha256: None,
+                src: Some(item.src),
             })
         })
         .collect();
@@ -470,6 +490,7 @@ fn run_backup(
             chunks: Vec::new(),
             blob_id: None,
             sha256: None,
+            src: Some(dir.src),
         });
     }
 
@@ -490,7 +511,19 @@ fn run_backup(
         session_id: Some(sid.clone()),
         created_at: Some(serde_json::Value::String(chrono::Local::now().to_rfc3339())),
         source_root: Some(src_str),
-        sources: None,
+        sources: Some(serde_json::Value::Array(
+            sources
+                .iter()
+                .map(|s| serde_json::Value::String(s.to_string_lossy().to_string()))
+                .collect(),
+        )),
+        source_kinds: Some(
+            sources
+                .iter()
+                .map(|s| if s.is_file() { "file".to_string() } else { "dir".to_string() })
+                .collect(),
+        ),
+        format_version: Some(2),
         total_files: all_entries.len(),
         total_bytes: tot_b,
         dedup_bytes: ded_b,
@@ -535,26 +568,108 @@ fn run_backup(
     Ok(())
 }
 
+/// 복원 경로 계산에 필요한 정보. target 이 Some 이면 해당 폴더 아래로, None 이면 원위치(in-place)로 복원한다.
+struct RestoreBase {
+    target: Option<PathBuf>,
+    sources: Vec<String>,
+    kinds: Vec<String>,
+}
+
+/// 별도 폴더 복원 시 원본별 하위 폴더 이름: "001_폴더명" (Windows 에서 쓸 수 없는 문자는 _ 로 바꾼다)
+fn source_label(idx: usize, root: &str) -> String {
+    let base = Path::new(root)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| root.chars().filter(|c| c.is_alphanumeric()).collect());
+    let clean: String = base
+        .chars()
+        .map(|c| if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') { '_' } else { c })
+        .collect();
+    format!("{:03}_{}", idx + 1, clean)
+}
+
+fn resolve_restore_path(base: &RestoreBase, entry: &FileEntry) -> Result<PathBuf, String> {
+    use std::path::Component;
+    let rel = Path::new(&entry.path);
+    // 매니페스트 경로가 상위 폴더(..)나 절대경로로 빠져나가는 것을 막는다
+    if rel
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(format!("unsafe path in manifest: {}", entry.path));
+    }
+    if let Some(t) = &base.target {
+        // 원본이 여러 개이면 서로 다른 원본의 같은 상대경로가 덮어쓰지 않도록 원본별 하위 폴더에 복원한다
+        if base.sources.len() > 1 {
+            if let Some(i) = entry.src {
+                let i = i as usize;
+                if let Some(root) = base.sources.get(i) {
+                    let label = source_label(i, root);
+                    if base.kinds.get(i).map(|k| k == "file").unwrap_or(false) {
+                        let name = Path::new(root).file_name().map(|n| n.to_os_string()).unwrap_or_default();
+                        return Ok(t.join(label).join(name));
+                    }
+                    return Ok(t.join(label).join(rel));
+                }
+            }
+        }
+        return Ok(t.join(rel));
+    }
+    let idx = entry
+        .src
+        .ok_or_else(|| format!("no source index for {}", entry.path))? as usize;
+    let root = base
+        .sources
+        .get(idx)
+        .ok_or_else(|| format!("source index {} out of range for {}", idx, entry.path))?;
+    if base.kinds.get(idx).map(|k| k == "file").unwrap_or(false) {
+        // 단독 파일 원본: 항목 하나가 곧 원본 파일 자체다
+        Ok(PathBuf::from(root))
+    } else {
+        Ok(Path::new(root).join(rel))
+    }
+}
+
 fn run_restore(
     session_id: &str,
     repo: &Path,
-    target: &Path,
+    target: Option<&Path>,
+    in_place: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let start_time = Instant::now();
     println!("[KOVA-FAST] Restoring session: {}", session_id);
-    println!("[KOVA-FAST] Target path: {}", target.display());
 
     let cas = CasStorage::new(repo)?;
     let manifest = cas.load_manifest(session_id)?;
 
-    fs::create_dir_all(target)?;
+    let sources: Vec<String> = match &manifest.sources {
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let kinds: Vec<String> = manifest.source_kinds.clone().unwrap_or_default();
+
+    let base = if in_place {
+        if manifest.format_version.unwrap_or(0) < 2 || sources.is_empty() {
+            return Err("in-place restore is not supported for this snapshot (no per-file source info); restore to a target folder instead".into());
+        }
+        println!("[KOVA-FAST] Target path: original locations (in-place, {} sources)", sources.len());
+        RestoreBase { target: None, sources, kinds }
+    } else {
+        let t = target.ok_or("--target is required unless --in-place is set")?;
+        println!("[KOVA-FAST] Target path: {}", t.display());
+        fs::create_dir_all(t)?;
+        RestoreBase { target: Some(t.to_path_buf()), sources, kinds }
+    };
 
     let manifest_files = manifest.files();
 
     // Create directories first
     for entry in &manifest_files {
         if entry.is_dir {
-            let dir_path = target.join(&entry.path);
+            let dir_path = resolve_restore_path(&base, entry)?;
             fs::create_dir_all(&dir_path)?;
         }
     }
@@ -566,7 +681,15 @@ fn run_restore(
     println!("[PROGRESS] 0/{}", total_files);
 
     manifest_files.par_iter().filter(|e| !e.is_dir).for_each(|entry| {
-        let file_path = target.join(&entry.path);
+        let file_path = match resolve_restore_path(&base, entry) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("[ERROR] {}", e);
+                failed_files.fetch_add(1, Ordering::Relaxed);
+                done_files.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+        };
         if let Some(parent) = file_path.parent() {
             let _ = fs::create_dir_all(parent);
         }
