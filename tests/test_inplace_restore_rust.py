@@ -2,6 +2,7 @@
 """Rust 엔진 format_version 2: 여러 원본(상대경로 충돌 포함)의 원위치 복원과 별도 폴더 복원."""
 import json
 import os
+import shutil
 import threading
 
 import pytest
@@ -40,9 +41,17 @@ def _run_restore(ab, repo, sid, **kw):
     orig = ab.append_task_log
     ab.append_task_log = lambda msg, level="INFO": logs.append((level, msg))
     ab.current_task.update({"running": True, "cancel_event": threading.Event()})
+    # 복원 코드는 BASE_DIR/engine_rust/kova_fast_engine.exe 를 찾는다. CI 는 엔진을 다른 경로(target/)에 빌드하므로
+    # 임시 BASE_DIR 에 엔진을 복사해 두고 가리킨다.
+    app_dir = repo.parent / "app"
+    (app_dir / "engine_rust").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(find_rust_engine_binary(), app_dir / "engine_rust" / "kova_fast_engine.exe")
+    orig_base = ab.BASE_DIR
+    ab.BASE_DIR = str(app_dir)
     try:
         ab._background_restore_task_impl({"snapshot_id": sid, "repo_dir": str(repo), **kw})
     finally:
+        ab.BASE_DIR = orig_base
         ab.current_task["running"] = False
         ab.append_task_log = orig
     return logs

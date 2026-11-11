@@ -25,8 +25,18 @@ class TestReleasePackageSecurity(unittest.TestCase):
         self.dist_dir = os.path.join(BASE_DIR, "dist")
         self.zip_path = os.path.join(self.dist_dir, f"release_v{self.test_version}.zip")
         self.sig_path = self.zip_path + ".sig"
+        # 업데이트 패키지는 엔진 exe 를 반드시 싣는다. 엔진이 없는 환경(CI 등)에서는 임시로 둔다.
+        self.engine_path = os.path.join(BASE_DIR, "engine_rust", "kova_fast_engine.exe")
+        self.engine_created = False
+        if not os.path.exists(self.engine_path):
+            os.makedirs(os.path.dirname(self.engine_path), exist_ok=True)
+            with open(self.engine_path, "wb") as f:
+                f.write(b"MZ" + os.urandom(4096))
+            self.engine_created = True
 
     def tearDown(self):
+        if self.engine_created and os.path.exists(self.engine_path):
+            os.remove(self.engine_path)
         if os.path.exists(self.zip_path):
             try:
                 os.remove(self.zip_path)
