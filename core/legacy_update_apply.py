@@ -68,6 +68,19 @@ def _kill_tree(proc):
             pass
 
 
+def _stop_engine(base_dir):
+    """이 설치 폴더의 kova_fast_engine.exe 만 종료한다(서버가 이미 꺼진 뒤라 남은 고아 프로세스)."""
+    exe = os.path.abspath(os.path.join(base_dir, "engine_rust", "kova_fast_engine.exe")).lower()
+    try:
+        ps = ("Get-CimInstance Win32_Process -Filter \"Name='kova_fast_engine.exe'\" | "
+              "Where-Object { $_.ExecutablePath -and $_.ExecutablePath.ToLower() -eq '" + exe.replace("'", "''") + "' } | "
+              "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }")
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps], creationflags=NO_WINDOW, timeout=20,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
 def _safe_members(zf, base_dir):
     base_abs = os.path.abspath(base_dir)
     out = []
@@ -89,6 +102,7 @@ def apply_update(zip_path, base_dir, port, launcher=None, start_timeout=40, stop
         _log(base_dir, f"중단: 포트 {port} 가 닫히지 않아 파일을 교체하지 않았습니다.")
         return "aborted"
 
+    _stop_engine(base_dir)
     backup_dir = tempfile.mkdtemp(prefix="kova_update_backup_")
     created, replaced = [], []
     proc = None

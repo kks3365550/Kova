@@ -55,6 +55,8 @@ ALLOWED_EXTENSIONS: Set[str] = {
     ".json", ".pub", ".txt", ".md", ".ico", ".png", ".svg",
     ".woff", ".woff2", ".ttf", ".eot"
 }
+# 자동업데이트로 함께 교체되는 Rust 엔진. 이 정확한 경로 1개만 .exe 를 허용한다.
+ENGINE_EXE_REL = "engine_rust/kova_fast_engine.exe"
 DISALLOWED_SECRET_PATTERNS = [".key", ".pem", "private", ".p12", ".pfx", ".kdbx"]
 
 # 유니코드 특수/전각 경로 구분자 등 정규화 대상
@@ -181,7 +183,8 @@ class ArtifactSafetyChecker:
 
                 # 5. File & Directory Allowlist 검사
                 is_dir = info.is_dir() or normalized.endswith("/")
-                if not is_dir and parts:
+                is_engine = (normalized == ENGINE_EXE_REL)
+                if not is_dir and parts and not is_engine:
                     top_dir = parts[0]
                     if len(parts) == 1:
                         # 루트 파일인 경우

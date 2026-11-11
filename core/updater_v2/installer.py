@@ -42,6 +42,8 @@ logger = logging.getLogger(__name__)
 # 업데이트 대상 디렉토리 및 파일 (화이트리스트)
 UPDATABLE_DIRS = ["core", "web", "keys"]
 UPDATABLE_FILES = ["run.py", "start_silent.vbs", "VERSION"]
+# 엔진 exe 는 폴더 통째가 아니라 이 한 파일만 백업/복원한다
+ENGINE_EXE_REL = os.path.join("engine_rust", "kova_fast_engine.exe")
 
 
 class InstallerError(Exception):
@@ -175,6 +177,12 @@ class AtomicInstaller:
             if os.path.exists(src_s):
                 shutil.copy2(src_s, dst_s)
 
+        src_e = os.path.join(self.target_dir, ENGINE_EXE_REL)
+        if os.path.exists(src_e):
+            dst_e = os.path.join(backup_dir, ENGINE_EXE_REL)
+            os.makedirs(os.path.dirname(dst_e), exist_ok=True)
+            shutil.copy2(src_e, dst_e)
+
     def rollback(self, backup_dir: str, skip_process_control: bool = False) -> bool:
         """
         백업 보존 디렉토리에서 이전 버전 파일 원복 및 서비스 재기동.
@@ -201,6 +209,10 @@ class AtomicInstaller:
                 dst_s = os.path.join(self.target_dir, script)
                 if os.path.exists(src_s):
                     self._copy_with_retry(src_s, dst_s)
+
+            src_e = os.path.join(backup_dir, ENGINE_EXE_REL)
+            if os.path.exists(src_e):
+                self._copy_with_retry(src_e, os.path.join(self.target_dir, ENGINE_EXE_REL))
 
             if not skip_process_control:
                 # 서비스 재시작

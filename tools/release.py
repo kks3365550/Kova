@@ -422,6 +422,13 @@ def build_self_extracting_updater(version: str):
         if os.path.exists(VERSION_FILE):
             zf.write(VERSION_FILE, 'VERSION')
 
+        # Rust 백업/복원 엔진: 앱과 엔진 버전이 어긋나면 복원이 깨지므로 자동업데이트에 항상 같이 싣는다.
+        # (다른 .exe 는 계속 제외, 이 한 파일만 정확한 경로로 허용)
+        engine_path = os.path.join(BASE_DIR, 'engine_rust', 'kova_fast_engine.exe')
+        if not os.path.isfile(engine_path):
+            raise RuntimeError("FATAL: engine_rust/kova_fast_engine.exe not found. Update package must include the engine. Build aborted.")
+        zf.write(engine_path, 'engine_rust/kova_fast_engine.exe')
+
         # Automated Zero-Leak Verification
         for name in zf.namelist():
             name_lower = name.lower()

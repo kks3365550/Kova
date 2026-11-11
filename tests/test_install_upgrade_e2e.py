@@ -64,6 +64,10 @@ class TestInstallUpgradeE2E(unittest.TestCase):
             if fn.endswith(".py"):
                 shutil.copy2(os.path.join(BASE_DIR, "web", fn), os.path.join(cls.proj, "web", fn))
         shutil.copy2(os.path.join(BASE_DIR, "run.py"), os.path.join(cls.proj, "run.py"))
+        # 업데이트 패키지는 엔진 exe 를 반드시 싣는다(없으면 빌드 중단). 테스트용 가짜 엔진을 둔다.
+        os.makedirs(os.path.join(cls.proj, "engine_rust"))
+        with open(os.path.join(cls.proj, "engine_rust", "kova_fast_engine.exe"), "wb") as f:
+            f.write(b"MZ" + os.urandom(4096))
         with open(os.path.join(cls.proj, "VERSION"), "w") as f:
             f.write(NEW_VER)
         # 테스트용 릴리즈 키쌍 (개인키는 패키지에 들어가면 안 된다)
