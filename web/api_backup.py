@@ -918,6 +918,23 @@ def _background_restore_task(params: Dict[str, Any]):
             current_task["running"] = False
 
 
+# "entries" 는 Rust 매니페스트도 `"entries":null` 로 쓰므로 판별 키로 쓰지 않는다.
+_PYTHON_MANIFEST_MARKERS = (b'"created_at_ts"', b'"iso_time"', b'"manifest_signature"')
+
+
+def _is_rust_manifest(snapshot_path: str) -> bool:
+    """스냅샷 JSON 앞부분만 읽어 Rust 엔진이 쓴 형식인지 판별한다(수백 MB 매니페스트 전체 파싱 방지).
+
+    Python 엔진 매니페스트는 created_at_ts/iso_time/manifest_signature 키를 쓰고,
+    Rust 엔진 매니페스트는 files 키를 쓴다. 읽을 수 없으면 안전하게 False(레거시 사용)."""
+    try:
+        with open(snapshot_path, "rb") as f:
+            head = f.read(65536)
+    except OSError:
+        return False
+    return not any(marker in head for marker in _PYTHON_MANIFEST_MARKERS)
+
+
 def _run_rust_restore(cmd, creationflags, cancel_evt, on_progress):
     """Rust 복원 엔진을 실행하며 [PROGRESS] 줄을 진행률로 반영하고, 취소 요청 시 종료한다.
 
@@ -1011,7 +1028,15 @@ def _background_restore_task_impl(params: Dict[str, Any]):
         engine_exe = os.path.join(BASE_DIR, "engine_rust", "kova_fast_engine.exe")
         rust_snapshot_file = os.path.join(repo_dir, "snapshots", f"{snap_id}.json")
         result = None
-        if os.path.exists(engine_exe) and os.path.exists(rust_snapshot_file) and not selected and not in_place:
+        use_rust_restore = (
+            os.path.exists(engine_exe) and os.path.exists(rust_snapshot_file) and not selected and not in_place
+        )
+        if use_rust_restore and not _is_rust_manifest(rust_snapshot_file):
+            # Python 엔진이 만든 스냅샷은 팩(packs/)·chunk_ids 구조라 Rust 엔진이 읽지 못한다.
+            # (읽지 못한 파일을 빈 파일로 만들고 성공으로 끝나므로 반드시 레거시 복원을 쓴다)
+            append_task_log(f"Python 엔진 형식 스냅샷이므로 레거시 복원 엔진을 사용합니다: {snap_id}")
+            use_rust_restore = False
+        if use_rust_restore:
             append_task_log(f"[초고속 네이티브 Rust 엔진 가동 - 복원] 스냅샷: {snap_id}")
             start_rest = time.time()
             cmd = [engine_exe, "restore", "--session-id", snap_id, "--repo", repo_dir, "--target", target_dir]
@@ -1049,6 +1074,14 @@ def _background_restore_task_impl(params: Dict[str, Any]):
                 in_place=in_place,
                 progress_callback=on_progress,
                 cancel_event=cancel_evt
+            )
+
+        # 복원 대상이 있는데 한 개도 복원하지 않았고 실패 보고도 없으면 성공이 아니다
+        # (스냅샷 형식 불일치로 항목이 통째로 건너뛰어진 경우 등)
+        if result.get("total_files", 0) > 0 and result["restored_files"] == 0 and not result["failed_files"]:
+            raise RuntimeError(
+                f"복원할 파일 {result['total_files']}개 중 복원된 파일이 없습니다 "
+                f"(건너뜀 {result['skipped_files']}개). 스냅샷 형식 또는 저장소를 확인하세요."
             )
 
         append_task_log(

@@ -572,6 +572,18 @@ fn run_restore(
         }
 
         let mut ok = true;
+        // 내용이 있어야 할 파일(size>0)에 청크 정보가 없으면 Rust 형식이 아닌 매니페스트다.
+        // 빈 파일을 만들고 성공으로 끝내면 조용한 데이터 유실이므로 실패로 처리한다.
+        if entry.size > 0 && entry.chunks.is_empty() {
+            eprintln!(
+                "[ERROR] No chunk info for {} (size {}): not a Rust-format manifest",
+                file_path.display(),
+                entry.size
+            );
+            failed_files.fetch_add(1, Ordering::Relaxed);
+            done_files.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
         match File::create(&file_path) {
             Err(e) => {
                 eprintln!("[ERROR] Cannot create file {}: {}", file_path.display(), e);
