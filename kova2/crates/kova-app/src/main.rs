@@ -505,6 +505,48 @@ fn main() -> Result<(), slint::PlatformError> {
     w.on_save_offsite(|id, dir| save_offsite(&id, &dir));
     {
         let weak = w.as_weak();
+        w.on_make_diag(move || {
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                let svc = match rt.block_on(kova_ipc::request(
+                    kova_ipc::PIPE_NAME,
+                    &kova_ipc::Request::Status,
+                )) {
+                    Ok(_) => "연결됨",
+                    Err(_) => "연결 안 됨",
+                };
+                let text = kova_core::diag::report(
+                    &kova_service::default_config_dir(),
+                    env!("CARGO_PKG_VERSION"),
+                    svc,
+                );
+                let dir = std::env::var_os("USERPROFILE")
+                    .map(|u| std::path::PathBuf::from(u).join("Desktop"))
+                    .filter(|d| d.is_dir())
+                    .unwrap_or_else(std::env::temp_dir);
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let path = dir.join(format!("Kova2_진단_{secs}.txt"));
+                let msg = match std::fs::write(&path, text) {
+                    Ok(()) => format!("저장했습니다: {}", path.display()),
+                    Err(e) => format!("저장 실패: {e}"),
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_diag_text(msg.into());
+                    }
+                });
+            });
+        });
+    }
+    {
+        let weak = w.as_weak();
         w.on_edit_profile(move |id| {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
             if let (Some(p), Some(w)) = (store.get(&id), weak.upgrade()) {

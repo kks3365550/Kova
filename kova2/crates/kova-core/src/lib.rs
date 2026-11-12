@@ -2,6 +2,7 @@
 pub mod alerts;
 pub mod config;
 pub mod crypto;
+pub mod diag;
 pub mod fetch;
 pub mod filter;
 pub mod gc;

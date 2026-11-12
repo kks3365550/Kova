@@ -26,6 +26,8 @@ export component MainWindow inherits Window {
     callback restore-image(string, string);
     callback restore-snapshot(string, string, string);
     in property <string> restore-text;
+    callback make-diag();
+    in property <string> diag-text;
     callback save-profile(string, string, string, string, string, string);
     callback edit-profile(string);
     callback delete-profile(string);
@@ -172,6 +174,11 @@ export component MainWindow inherits Window {
                         Button { text: "업데이트 확인"; clicked => { root.check-update(); } }
                         Button { text: "업데이트 설치"; clicked => { root.install-update(); } }
                         Text { text: root.update-text; vertical-alignment: center; }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "진단 파일 만들기"; clicked => { root.make-diag(); } }
+                        Text { text: root.diag-text; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                     }
                     Text { text: "프로파일별 오프사이트 폴더(비우면 복제 안 함)"; font-weight: 600; }
                     ListView {
