@@ -73,7 +73,11 @@ pub fn download(url: &str, max_bytes: u64) -> Result<Vec<u8>, FetchError> {
 }
 
 /// 배포 서명에 쓰는 신뢰 공개키(공개키만 포함). 키를 바꾸면 여기와 릴리즈 서명을 함께 바꾼다.
-pub const TRUSTED_KEYS: &[&str] = &[include_str!("../keys/release_ed25519_v2.pub")];
+pub const TRUSTED_KEYS: &[&str] = &[
+    include_str!("../keys/release_ed25519_v2.pub"),
+    // Kova2 릴리즈 서명 키(개인키는 저장소 밖 %USERPROFILE%\.kova2_keys 에만 있다)
+    include_str!("../keys/release_ed25519_kova2.pub"),
+];
 
 #[derive(Debug)]
 pub enum UpdateError {
