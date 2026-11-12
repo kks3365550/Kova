@@ -89,6 +89,25 @@ component Field inherits Rectangle {
     }
 }
 
+component PathField inherits HorizontalLayout {
+    in-out property <string> text <=> f.text;
+    in property <string> placeholder;
+    in property <string> kind: "folder";
+    in property <bool> append: false;
+    callback pick(string) -> string;
+    spacing: 8px;
+    f := Field { placeholder: root.placeholder; horizontal-stretch: 1; }
+    Btn {
+        text: "찾아보기";
+        clicked => {
+            let r = root.pick(root.kind);
+            if (r != "") {
+                f.text = (root.append && f.text != "") ? f.text + ";" + r : r;
+            }
+        }
+    }
+}
+
 component Badge inherits Rectangle {
     in property <string> text;
     in property <color> tone: Theme.muted;
@@ -158,6 +177,7 @@ export component MainWindow inherits Window {
     callback capture-volume(string);
     callback restore-snapshot(string, string, string);
     in property <string> restore-text;
+    callback browse(string) -> string;
     callback make-diag();
     in property <string> diag-text;
     callback save-profile(string, string, string, string, string, string);
@@ -307,8 +327,8 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         Heading { text: root.form-id == "" ? "새 프로파일 추가" : "프로파일 수정 중"; }
                         Field { text <=> root.form-name; placeholder: "이름"; }
-                        Field { text <=> root.form-sources; placeholder: "백업할 폴더 전체 경로 (여러 개는 ; 로 구분)"; }
-                        Field { text <=> root.form-repo; placeholder: "백업 저장 폴더 전체 경로"; }
+                        PathField { text <=> root.form-sources; placeholder: "백업할 폴더 전체 경로 (여러 개는 ; 로 구분)"; append: true; pick(k) => { root.browse(k) } }
+                        PathField { text <=> root.form-repo; placeholder: "백업 저장 폴더 전체 경로"; pick(k) => { root.browse(k) } }
                         HorizontalLayout {
                             spacing: 8px;
                             Text { text: "보존 개수"; color: Theme.muted; font-size: 13px; vertical-alignment: center; }
@@ -335,7 +355,7 @@ export component MainWindow inherits Window {
                         padding: 16px;
                         spacing: 8px;
                         Heading { text: "복원 위치"; }
-                        rt := Field { placeholder: "복원할 새 폴더 전체 경로 (예: D 드라이브의 새 폴더)"; }
+                        rt := PathField { placeholder: "복원할 새 폴더 전체 경로 (예: D 드라이브의 새 폴더)"; pick(k) => { root.browse(k) } }
                         Hint { text: "스냅샷을 새 폴더(또는 빈 폴더)로 복원합니다. 원래 위치를 덮어쓰지 않습니다."; }
                     }
                 }
@@ -396,8 +416,8 @@ export component MainWindow inherits Window {
                             spacing: 8px;
                             Heading { text: "이미지(.qblk) 검증 · 복원"; }
                             Hint { text: "복원은 새 파일(.img/.raw/.vhd/.vhdx/.bin)로만 풉니다. 실제 디스크·드라이브로는 복원되지 않습니다."; }
-                            img := Field { placeholder: "이미지 파일(.qblk) 경로"; }
-                            out := Field { placeholder: "복원할 새 파일 경로 (예: 새 폴더의 restored.img)"; }
+                            img := PathField { placeholder: "이미지 파일(.qblk) 경로"; kind: "qblk-open"; pick(k) => { root.browse(k) } }
+                            out := PathField { placeholder: "복원할 새 파일 경로 (예: 새 폴더의 restored.img)"; kind: "img-save"; pick(k) => { root.browse(k) } }
                         }
                     }
                     HorizontalLayout {
@@ -413,8 +433,8 @@ export component MainWindow inherits Window {
                             spacing: 8px;
                             Heading { text: "디스크 이미지 파일 → .qblk"; }
                             Hint { text: ".img/.raw/.bin/.vhd 를 .qblk 로 만듭니다. 원본은 읽기만 합니다."; }
-                            csrc := Field { placeholder: "원본 이미지 파일 경로"; }
-                            cout := Field { placeholder: "만들 .qblk 파일 전체 경로 (새 파일)"; }
+                            csrc := PathField { placeholder: "원본 이미지 파일 경로"; kind: "img-open"; pick(k) => { root.browse(k) } }
+                            cout := PathField { placeholder: "만들 .qblk 파일 전체 경로 (새 파일)"; kind: "qblk-save"; pick(k) => { root.browse(k) } }
                         }
                     }
                     HorizontalLayout {
@@ -480,7 +500,7 @@ export component MainWindow inherits Window {
                             for o in root.offsite-rows: HorizontalLayout {
                                 spacing: 8px;
                                 Text { text: o.name; color: Theme.text; font-size: 13px; width: 140px; vertical-alignment: center; overflow: elide; }
-                                le := Field { text: o.dir; placeholder: "네트워크 경로나 다른 드라이브의 폴더"; horizontal-stretch: 1; }
+                                le := PathField { text: o.dir; placeholder: "네트워크 경로나 다른 드라이브의 폴더"; horizontal-stretch: 1; pick(k) => { root.browse(k) } }
                                 Btn { text: "저장"; kind: 1; clicked => { root.save-offsite(o.id, le.text); } }
                             }
                         }

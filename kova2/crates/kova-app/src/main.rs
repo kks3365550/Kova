@@ -294,6 +294,56 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
     });
 }
 
+/// Windows 폴더/파일 선택 창(PowerShell + WinForms, 창 없이 실행). 취소하면 빈 문자열.
+fn pick_path(kind: &str) -> String {
+    use std::os::windows::process::CommandExt;
+    let body = match kind {
+        "folder" => "$d=New-Object Windows.Forms.FolderBrowserDialog;$d.Description='폴더를 선택하세요';if($d.ShowDialog($f)-eq'OK'){$d.SelectedPath}".to_string(),
+        k => {
+            let (cls, filter, ext) = match k {
+                "qblk-open" => ("OpenFileDialog", "Kova 이미지 (*.qblk)|*.qblk|모든 파일|*.*", ""),
+                "qblk-save" => ("SaveFileDialog", "Kova 이미지 (*.qblk)|*.qblk", "qblk"),
+                "img-save" => ("SaveFileDialog", "디스크 이미지|*.img;*.raw;*.vhd;*.vhdx;*.bin", "img"),
+                _ => ("OpenFileDialog", "디스크 이미지|*.img;*.raw;*.bin;*.vhd|모든 파일|*.*", ""),
+            };
+            format!("$d=New-Object Windows.Forms.{cls};$d.Filter='{filter}';$d.DefaultExt='{ext}';if($d.ShowDialog($f)-eq'OK'){{$d.FileName}}")
+        }
+    };
+    let script = format!(
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8;Add-Type -AssemblyName System.Windows.Forms;$f=New-Object Windows.Forms.Form;$f.TopMost=$true;{body}"
+    );
+    let utf16: Vec<u8> = script
+        .encode_utf16()
+        .flat_map(|u| u.to_le_bytes())
+        .collect();
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut enc = String::new();
+    for c in utf16.chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            if i <= c.len() {
+                enc.push(T[(n >> (18 - 6 * i) & 63) as usize] as char);
+            } else {
+                enc.push('=');
+            }
+        }
+    }
+    std::process::Command::new("powershell.exe")
+        .args([
+            "-STA",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            &enc,
+        ])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default()
+}
+
 fn send(kind: impl Into<String>, id: String) {
     let kind: String = kind.into();
     std::thread::spawn(move || {
@@ -707,6 +757,7 @@ fn main() -> Result<(), slint::PlatformError> {
             )
         });
     }
+    w.on_browse(|k| pick_path(k.as_str()).into());
     w.on_run_gc(|id| send("gc", id.to_string()));
     w.on_ack_alerts(|| {
         let _ =
