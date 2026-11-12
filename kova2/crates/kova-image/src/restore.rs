@@ -95,6 +95,19 @@ pub fn check_target(target: &Path) -> Result<(), RestoreError> {
     }
 }
 
+/// 첫 섹터가 NTFS 부트 섹터면 볼륨 전체 바이트 수((전체 섹터+1) × 섹터 크기)를 돌려준다.
+fn ntfs_volume_len(path: &Path) -> Option<u64> {
+    use std::io::Read;
+    let mut b = [0u8; 512];
+    File::open(path).ok()?.read_exact(&mut b).ok()?;
+    if &b[3..11] != b"NTFS    " {
+        return None;
+    }
+    let bps = u16::from_le_bytes([b[11], b[12]]) as u64;
+    let sectors = u64::from_le_bytes(b[40..48].try_into().ok()?);
+    (bps >= 512 && bps.is_power_of_two()).then(|| (sectors + 1) * bps)
+}
+
 /// image 를 target(새 파일)로 푼다. 실패·취소 시 불완전한 대상 파일은 지운다. 읽는 쪽은 읽기 전용으로만 연다.
 pub fn restore_image_to_file(
     image: &Path,
@@ -116,8 +129,12 @@ pub fn restore_image_to_file(
             use std::io::Write;
             out.flush()?;
             // 마지막 클러스터들이 비어 있어도 파일 크기는 볼륨 전체 크기로 맞춘다(안 그러면 NTFS 가 RAW 로 보인다)
-            let full = r.0.total_clusters * r.0.cluster_size as u64;
+            let mut full = r.0.total_clusters * r.0.cluster_size as u64;
             let f = out.into_inner().map_err(|e| e.into_error())?;
+            // NTFS 는 클러스터 수 밖에 백업 부트 섹터 자리(마지막 섹터)까지 볼륨으로 센다 — 짧으면 RAW 로 보인다
+            if let Some(n) = ntfs_volume_len(target) {
+                full = full.max(n);
+            }
             if f.metadata()?.len() < full {
                 f.set_len(full)?;
             }
@@ -136,6 +153,20 @@ mod tests {
     use super::*;
 
     const PY: &[u8] = include_bytes!("../tests/fixtures/py_small.qblk");
+
+    #[test]
+    fn ntfs_volume_len_counts_the_backup_boot_sector() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("v.img");
+        let mut b = vec![0u8; 512];
+        b[3..11].copy_from_slice(b"NTFS    ");
+        b[11..13].copy_from_slice(&512u16.to_le_bytes());
+        b[40..48].copy_from_slice(&234_436_607u64.to_le_bytes());
+        fs::write(&p, &b).unwrap();
+        assert_eq!(ntfs_volume_len(&p), Some(234_436_608 * 512));
+        fs::write(&p, vec![0u8; 512]).unwrap();
+        assert_eq!(ntfs_volume_len(&p), None);
+    }
 
     #[test]
     fn device_drive_and_existing_targets_are_refused() {
