@@ -728,5 +728,10 @@ fn main() -> Result<(), slint::PlatformError> {
         },
     );
 
-    w.run()
+    // --tray: 로그인 자동 실행용. 창을 띄우지 않고 트레이로만 시작하며, 창을 닫아도 종료하지 않는다(트레이 "종료"로 끝낸다)
+    if std::env::args().any(|a| a == "--tray") {
+        slint::run_event_loop_until_quit()
+    } else {
+        w.run()
+    }
 }
