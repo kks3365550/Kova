@@ -1,0 +1,12 @@
+[package]
+name = "kova-image"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+zstd = "0.13"
+crc32fast = "1"
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

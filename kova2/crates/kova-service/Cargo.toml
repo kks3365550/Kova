@@ -1,0 +1,16 @@
+[package]
+name = "kova-service"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+kova-ipc = { path = "../kova-ipc" }
+kova-core = { path = "../kova-core" }
+kova-engine = { path = "../kova-engine" }
+chrono = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+windows-service = "0.7"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }

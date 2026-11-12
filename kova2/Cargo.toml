@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["crates/kova-image", "crates/kova-app", "crates/kova-ipc", "crates/kova-service", "crates/kova-engine", "crates/kova-core"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

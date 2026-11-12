@@ -1,0 +1,29 @@
+name: kova2-native
+
+# 네이티브(Rust) 재작성 전용 검사. 기존 ci.yml(파이썬)과 분리되어 있고 릴리즈·배포는 하지 않는다.
+on:
+  push:
+    paths: ["kova2/**", ".github/workflows/kova2.yml"]
+  pull_request:
+    paths: ["kova2/**", ".github/workflows/kova2.yml"]
+
+jobs:
+  test:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: kova2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            kova2/target
+          key: kova2-${{ hashFiles('kova2/Cargo.lock') }}
+      - name: Build
+        run: cargo build --workspace --locked
+      - name: Test
+        run: cargo test --workspace --locked

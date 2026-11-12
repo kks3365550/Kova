@@ -1,0 +1,129 @@
+import { Button, ListView, TabWidget, LineEdit } from "std-widgets.slint";
+
+export struct ProfileRow { id: string, name: string, last: string, detail: string }
+export struct SnapRow { id: string, when: string, summary: string, verified: string }
+export struct OffsiteRow { id: string, name: string, dir: string }
+export struct AlertRow { when: string, level: string, message: string, ack: bool }
+
+export component MainWindow inherits Window {
+    title: "Kova";
+    preferred-width: 800px;
+    preferred-height: 560px;
+    default-font-family: "맑은 고딕";
+    in property <string> service-status;
+    in property <string> alert-text;
+    in property <[ProfileRow]> profiles;
+    in property <[SnapRow]> snapshots;
+    in property <[AlertRow]> alerts;
+    in property <[string]> setting-lines;
+    in property <string> log-text;
+    callback run-backup(string);
+    callback run-verify(string);
+    callback run-gc(string);
+    callback ack-alerts();
+    callback check-update();
+    callback verify-image(string);
+    callback restore-image(string, string);
+    in property <string> image-text;
+    callback install-update();
+    in property <string> update-text;
+    callback save-offsite(string, string);
+    in property <[OffsiteRow]> offsite-rows;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+        Text { text: "Kova 백업"; font-size: 22px; font-weight: 700; }
+        Text { text: root.service-status; font-size: 14px; }
+        Text { text: root.alert-text; font-size: 14px; color: #c0392b; }
+        TabWidget {
+            Tab {
+                title: "홈";
+                VerticalLayout {
+                    spacing: 8px;
+                    ListView {
+                        height: 200px;
+                        for p in root.profiles: HorizontalLayout {
+                            spacing: 8px;
+                            padding: 4px;
+                            Text { text: p.name + "  (" + p.last + ")"; vertical-alignment: center; horizontal-stretch: 1; }
+                            Button { text: "지금 백업"; clicked => { root.run-backup(p.id); } }
+                            Button { text: "검증"; clicked => { root.run-verify(p.id); } }
+                            Button { text: "정리"; clicked => { root.run-gc(p.id); } }
+                        }
+                    }
+                    Text { text: "진행 상황"; font-size: 16px; font-weight: 600; }
+                    Text { text: root.log-text; wrap: word-wrap; vertical-stretch: 1; }
+                }
+            }
+            Tab {
+                title: "이력";
+                ListView {
+                    for s in root.snapshots: HorizontalLayout {
+                        spacing: 10px;
+                        padding: 3px;
+                        Text { text: s.when; width: 120px; }
+                        Text { text: s.summary; horizontal-stretch: 1; }
+                        Text { text: s.verified; width: 80px; }
+                    }
+                }
+            }
+            Tab {
+                title: "알림";
+                VerticalLayout {
+                    spacing: 6px;
+                    Button { text: "모두 확인"; clicked => { root.ack-alerts(); } }
+                    ListView {
+                        for a in root.alerts: HorizontalLayout {
+                            spacing: 10px;
+                            padding: 3px;
+                            Text { text: a.when; width: 100px; }
+                            Text { text: a.level; width: 50px; color: a.level == "error" ? #c0392b : #b9770e; }
+                            Text { text: a.message; horizontal-stretch: 1; wrap: word-wrap; font-weight: a.ack ? 400 : 700; }
+                        }
+                    }
+                }
+            }
+            Tab {
+                title: "이미지";
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: "디스크 이미지(.qblk) 검증·복원"; font-weight: 600; }
+                    Text { text: "복원은 새 파일(.img/.raw/.vhd/.vhdx/.bin)로만 풉니다. 실제 디스크·드라이브로는 복원되지 않습니다."; wrap: word-wrap; }
+                    img := LineEdit { placeholder-text: "이미지 파일(.qblk) 경로"; }
+                    out := LineEdit { placeholder-text: "복원할 새 파일 경로 (예: 새 폴더의 restored.img)"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "검증만"; clicked => { root.verify-image(img.text); } }
+                        Button { text: "복원"; clicked => { root.restore-image(img.text, out.text); } }
+                    }
+                    Text { text: root.image-text; wrap: word-wrap; vertical-stretch: 1; }
+                }
+            }
+            Tab {
+                title: "설정";
+                VerticalLayout {
+                    spacing: 6px;
+                    ListView {
+                        for l in root.setting-lines: Text { text: l; wrap: word-wrap; }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Button { text: "업데이트 확인"; clicked => { root.check-update(); } }
+                        Button { text: "업데이트 설치"; clicked => { root.install-update(); } }
+                        Text { text: root.update-text; vertical-alignment: center; }
+                    }
+                    Text { text: "프로파일별 오프사이트 폴더(비우면 복제 안 함)"; font-weight: 600; }
+                    ListView {
+                        height: 130px;
+                        for o in root.offsite-rows: HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: o.name; width: 140px; vertical-alignment: center; }
+                            le := LineEdit { text: o.dir; placeholder-text: "네트워크 경로나 다른 드라이브의 폴더"; horizontal-stretch: 1; }
+                            Button { text: "저장"; clicked => { root.save-offsite(o.id, le.text); } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
