@@ -26,6 +26,17 @@ export component MainWindow inherits Window {
     callback restore-image(string, string);
     callback restore-snapshot(string, string, string);
     in property <string> restore-text;
+    callback save-profile(string, string, string, string, string, string);
+    callback edit-profile(string);
+    callback delete-profile(string);
+    in-out property <string> form-id;
+    in-out property <string> form-name;
+    in-out property <string> form-sources;
+    in-out property <string> form-repo;
+    in-out property <string> form-count: "30";
+    in-out property <string> form-days: "60";
+    in-out property <string> delete-pending;
+    in property <string> form-text;
     in property <string> image-text;
     callback install-update();
     in property <string> update-text;
@@ -55,6 +66,47 @@ export component MainWindow inherits Window {
                     }
                     Text { text: "진행 상황"; font-size: 16px; font-weight: 600; }
                     Text { text: root.log-text; wrap: word-wrap; vertical-stretch: 1; }
+                }
+            }
+            Tab {
+                title: "프로파일";
+                VerticalLayout {
+                    spacing: 6px;
+                    ListView {
+                        height: 130px;
+                        for p in root.profiles: HorizontalLayout {
+                            spacing: 8px;
+                            padding: 3px;
+                            Text { text: p.name + " — " + p.detail; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
+                            Button { text: "수정"; clicked => { root.delete-pending = ""; root.edit-profile(p.id); } }
+                            Button {
+                                text: root.delete-pending == p.id ? "정말 삭제" : "삭제";
+                                clicked => {
+                                    if (root.delete-pending == p.id) {
+                                        root.delete-pending = "";
+                                        root.delete-profile(p.id);
+                                    } else {
+                                        root.delete-pending = p.id;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Text { text: root.form-id == "" ? "새 프로파일 추가" : "프로파일 수정 중"; font-weight: 600; }
+                    LineEdit { text <=> root.form-name; placeholder-text: "이름"; }
+                    LineEdit { text <=> root.form-sources; placeholder-text: "백업할 폴더 전체 경로 (여러 개는 ; 로 구분)"; }
+                    LineEdit { text <=> root.form-repo; placeholder-text: "백업 저장 폴더 전체 경로"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "보존 개수"; vertical-alignment: center; }
+                        LineEdit { text <=> root.form-count; width: 70px; }
+                        Text { text: "보존 일수"; vertical-alignment: center; }
+                        LineEdit { text <=> root.form-days; width: 70px; }
+                        Button { text: root.form-id == "" ? "추가" : "저장"; clicked => { root.save-profile(root.form-id, root.form-name, root.form-sources, root.form-repo, root.form-count, root.form-days); } }
+                        Button { text: "비우기"; clicked => { root.form-id = ""; root.form-name = ""; root.form-sources = ""; root.form-repo = ""; root.form-count = "30"; root.form-days = "60"; root.delete-pending = ""; } }
+                    }
+                    Text { text: root.form-text; wrap: word-wrap; }
+                    Text { text: "삭제는 프로파일 설정만 지우며 저장소의 백업 파일은 그대로 둡니다. 새 프로파일은 자동 백업이 꺼진 채로 시작합니다."; wrap: word-wrap; color: #777777; }
                 }
             }
             Tab {

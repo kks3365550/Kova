@@ -505,6 +505,66 @@ fn main() -> Result<(), slint::PlatformError> {
     w.on_save_offsite(|id, dir| save_offsite(&id, &dir));
     {
         let weak = w.as_weak();
+        w.on_edit_profile(move |id| {
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            if let (Some(p), Some(w)) = (store.get(&id), weak.upgrade()) {
+                w.set_form_id(p.id.clone().into());
+                w.set_form_name(p.name.clone().into());
+                w.set_form_sources(p.sources.join(";").into());
+                w.set_form_repo(p.repo_dir.clone().into());
+                w.set_form_count(p.retention_count.to_string().into());
+                w.set_form_days(p.retention_days.to_string().into());
+                w.set_form_text("".into());
+            }
+        });
+        let weak = w.as_weak();
+        w.on_save_profile(move |id, name, srcs, repo, count, days| {
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let all = store.profiles();
+            let base = all.iter().find(|p| p.id == id.as_str());
+            let new_id = format!(
+                "prof_{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            let msg = match kova_core::profile_form::build(
+                base, &new_id, &name, &srcs, &repo, &count, &days, &all,
+            ) {
+                Ok(p) => match store.upsert(p.clone()) {
+                    Ok(()) => {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_form_id(p.id.into());
+                        }
+                        "저장했습니다".to_string()
+                    }
+                    Err(e) => format!("저장 실패: {e}"),
+                },
+                Err(e) => format!("저장하지 않음: {e}"),
+            };
+            if let Some(w) = weak.upgrade() {
+                w.set_form_text(msg.into());
+            }
+        });
+        let weak = w.as_weak();
+        w.on_delete_profile(move |id| {
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let msg = match store.delete(&id) {
+                Ok(true) => "프로파일 설정을 삭제했습니다 (저장소의 백업 파일은 그대로입니다)",
+                Ok(false) => "이미 없는 프로파일입니다",
+                Err(_) => "삭제하지 못했습니다",
+            };
+            if let Some(w) = weak.upgrade() {
+                if w.get_form_id() == id {
+                    w.set_form_id("".into());
+                }
+                w.set_form_text(msg.into());
+            }
+        });
+    }
+    {
+        let weak = w.as_weak();
         w.on_check_update(move || check_update(weak.clone()));
     }
     {
