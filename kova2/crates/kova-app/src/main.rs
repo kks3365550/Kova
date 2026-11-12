@@ -442,6 +442,64 @@ fn image_job(weak: slint::Weak<MainWindow>, image: String, target: Option<String
     });
 }
 
+/// 파일 원본을 .qblk 로 만든다(읽기 전용 원본, 새 파일만 출력). 오래 걸리므로 별도 스레드에서 진행률을 흘린다.
+fn capture_job(weak: slint::Weak<MainWindow>, source: String, out: String) {
+    std::thread::spawn(move || {
+        let show = |w: &slint::Weak<MainWindow>, t: String| {
+            let w = w.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = w.upgrade() {
+                    w.set_image_text(t.into());
+                }
+            });
+        };
+        let clean = |s: &str| s.trim().trim_matches('"').trim().to_string();
+        let (source, out) = (clean(&source), clean(&out));
+        if source.is_empty() || out.is_empty() {
+            show(
+                &weak,
+                "원본 파일과 만들 .qblk 경로를 모두 입력하세요".into(),
+            );
+            return;
+        }
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let last =
+            std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(5));
+        let w2 = weak.clone();
+        let progress = |s: &kova_image::Stats| {
+            let mut l = last.lock().unwrap();
+            if l.elapsed() >= std::time::Duration::from_secs(1) {
+                *l = std::time::Instant::now();
+                show(
+                    &w2,
+                    format!("만드는 중… 사용 구간 {:.2}GB", s.raw_bytes as f64 / 1e9),
+                );
+            }
+        };
+        show(&weak, "만들기 시작…".into());
+        let label = std::path::Path::new(&source)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let text = match kova_image::capture::capture_file(
+            std::path::Path::new(&source),
+            std::path::Path::new(&out),
+            4096,
+            3,
+            &label,
+            &cancel,
+            &progress,
+        ) {
+            Ok((h, s)) => format!(
+                "만들기 완료: {out} (전체 {}클러스터 중 사용 {}, 청크 {}개)",
+                h.total_clusters, h.used_clusters, s.chunks
+            ),
+            Err(e) => format!("만들지 않음: {e}"),
+        };
+        show(&weak, text);
+    });
+}
+
 /// 스냅샷 복원: 새 폴더(또는 빈 폴더)로만 푼다. 대상은 먼저 검사하고, 복원은 별도 스레드에서 진행률을 흘린다.
 fn restore_snapshot_job(weak: slint::Weak<MainWindow>, repo: String, sid: String, target: String) {
     let show = |w: &slint::Weak<MainWindow>, t: String| {
@@ -616,6 +674,8 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = w.as_weak();
         w.on_verify_image(move |p| image_job(weak.clone(), p.to_string(), None));
+        let weak = w.as_weak();
+        w.on_capture_image(move |s, o| capture_job(weak.clone(), s.to_string(), o.to_string()));
         let weak = w.as_weak();
         w.on_restore_image(move |p, t| image_job(weak.clone(), p.to_string(), Some(t.to_string())));
     }

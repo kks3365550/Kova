@@ -24,6 +24,7 @@ export component MainWindow inherits Window {
     callback check-update();
     callback verify-image(string);
     callback restore-image(string, string);
+    callback capture-image(string, string);
     callback restore-snapshot(string, string, string);
     in property <string> restore-text;
     callback make-diag();
@@ -159,6 +160,10 @@ export component MainWindow inherits Window {
                         Button { text: "검증만"; clicked => { root.verify-image(img.text); } }
                         Button { text: "복원"; clicked => { root.restore-image(img.text, out.text); } }
                     }
+                    Text { text: "디스크 이미지 파일(.img/.raw/.bin/.vhd)을 .qblk 로 만들기 (원본은 읽기만 합니다)"; font-weight: 600; wrap: word-wrap; }
+                    csrc := LineEdit { placeholder-text: "원본 이미지 파일 경로"; }
+                    cout := LineEdit { placeholder-text: "만들 .qblk 파일 전체 경로 (새 파일)"; }
+                    Button { text: "이미지 만들기"; clicked => { root.capture-image(csrc.text, cout.text); } }
                     Text { text: root.image-text; wrap: word-wrap; vertical-stretch: 1; }
                 }
             }
