@@ -229,6 +229,7 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                 };
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = w.upgrade() {
+                        w.set_service_ok(text.starts_with("서비스 연결됨"));
                         w.set_service_status(text.into());
                         w.set_alert_text(alert.into());
                         if let Some(off) = off {
@@ -291,28 +292,71 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
     });
 }
 
-/// Windows 폴더/파일 선택 창(PowerShell + WinForms, 창 없이 실행). 취소하면 빈 문자열.
-fn pick_path(kind: &str) -> String {
-    use std::os::windows::process::CommandExt;
+/// 폴더 선택 창용 C# 어셈블리를 캐시하는 경로(처음 한 번만 컴파일하고 이후에는 읽기만 한다).
+fn folder_picker_dll() -> std::path::PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    base.join("Kova2")
+        .join(format!("fp_{}.dll", FOLDER_PICKER_CS.len()))
+}
+
+/// 선택 창을 띄우는 PowerShell 스크립트. 폴더 선택은 WinForms 없이 C# 어셈블리(캐시)만 쓰고,
+/// 소유 창은 PowerShell 이 직접 만든 투명 최상위 창이다. Kova 창을 소유자로 잡으면 선택 창이 열려 있는 동안
+/// Kova UI 스레드가 이 호출을 기다리므로(교착) 선택 창이 보이지 않고, 현재 전경 창을 잡으면 엉뚱한 창에 붙는다.
+fn build_pick_script(kind: &str) -> String {
     // 폴더 선택은 탐색기와 같은 최신 선택 창(IFileOpenDialog). "folders" 는 여러 폴더를 한 번에 고른다.
-    let body = match kind {
-        "folder" | "folders" => format!(
-            "Add-Type -TypeDefinition @'\n{FOLDER_PICKER_CS}\n'@;[FP]::Pick(${}) | ForEach-Object {{ $_ }}",
-            if kind == "folders" { "true" } else { "false" }
+    if kind == "folder" || kind == "folders" {
+        let dll = folder_picker_dll().to_string_lossy().replace('\'', "''");
+        return format!(
+            "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$ErrorActionPreference='Stop';$dll='{dll}';\
+             if(-not (Test-Path -LiteralPath $dll)){{New-Item -ItemType Directory -Force -Path (Split-Path $dll) | Out-Null;\
+             Add-Type -TypeDefinition @'\n{FOLDER_PICKER_CS}\n'@ -OutputAssembly $dll}};\
+             Add-Type -Path $dll;Add-Type -AssemblyName System.Windows.Forms;\
+             $f=New-Object Windows.Forms.Form;$f.TopMost=$true;$f.ShowInTaskbar=$false;$f.FormBorderStyle='None';\
+             $f.StartPosition='CenterScreen';$f.Opacity=0;$f.Size=New-Object Drawing.Size(1,1);$f.Show();\
+             [FP]::Pick(${multi},$f.Handle) | ForEach-Object {{ $_ }}",
+            multi = if kind == "folders" { "true" } else { "false" }
+        );
+    }
+    let (cls, filter, ext) = match kind {
+        "qblk-open" => (
+            "OpenFileDialog",
+            "Kova 이미지 (*.qblk)|*.qblk|모든 파일|*.*",
+            "",
         ),
-        k => {
-            let (cls, filter, ext) = match k {
-                "qblk-open" => ("OpenFileDialog", "Kova 이미지 (*.qblk)|*.qblk|모든 파일|*.*", ""),
-                "qblk-save" => ("SaveFileDialog", "Kova 이미지 (*.qblk)|*.qblk", "qblk"),
-                "img-save" => ("SaveFileDialog", "디스크 이미지|*.img;*.raw;*.vhd;*.vhdx;*.bin", "img"),
-                _ => ("OpenFileDialog", "디스크 이미지|*.img;*.raw;*.bin;*.vhd|모든 파일|*.*", ""),
-            };
-            format!("$d=New-Object Windows.Forms.{cls};$d.Filter='{filter}';$d.DefaultExt='{ext}';if($d.ShowDialog($f)-eq'OK'){{$d.FileName}}")
-        }
+        "qblk-save" => ("SaveFileDialog", "Kova 이미지 (*.qblk)|*.qblk", "qblk"),
+        "img-save" => (
+            "SaveFileDialog",
+            "디스크 이미지|*.img;*.raw;*.vhd;*.vhdx;*.bin",
+            "img",
+        ),
+        _ => (
+            "OpenFileDialog",
+            "디스크 이미지|*.img;*.raw;*.bin;*.vhd|모든 파일|*.*",
+            "",
+        ),
     };
-    let script = format!(
-        "[Console]::OutputEncoding=[Text.Encoding]::UTF8;Add-Type -AssemblyName System.Windows.Forms;$f=New-Object Windows.Forms.Form;$f.TopMost=$true;{body}"
-    );
+    format!(
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8;$ErrorActionPreference='Stop';Add-Type -AssemblyName System.Windows.Forms;$f=New-Object Windows.Forms.Form;$f.TopMost=$true;\
+         $d=New-Object Windows.Forms.{cls};$d.Filter='{filter}';$d.DefaultExt='{ext}';if($d.ShowDialog($f)-eq'OK'){{$d.FileName}}"
+    )
+}
+
+/// PowerShell 이 낸 여러 줄(여러 폴더)을 ';' 로 이어 한 칸에 넣는다. 줄 끝 공백·빈 줄·맨 앞 BOM(U+FEFF)은 버린다.
+fn parse_picked(stdout: &str) -> String {
+    stdout
+        .lines()
+        .map(|l| l.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}'))
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// Windows 폴더/파일 선택 창(PowerShell, 창 없이 실행). 취소하면 빈 문자열, 창을 못 열면 오류 문구.
+fn pick_path(kind: &str) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    let script = build_pick_script(kind);
     let utf16: Vec<u8> = script
         .encode_utf16()
         .flat_map(|u| u.to_le_bytes())
@@ -331,26 +375,31 @@ fn pick_path(kind: &str) -> String {
             }
         }
     }
-    std::process::Command::new("powershell.exe")
+    let out = std::process::Command::new("powershell.exe")
         .args([
             "-STA",
             "-NoProfile",
             "-NonInteractive",
+            "-OutputFormat",
+            "Text",
             "-EncodedCommand",
             &enc,
         ])
         .creation_flags(0x0800_0000)
         .output()
-        .map(|o| {
-            // 여러 줄(여러 폴더)은 ';' 로 이어 한 칸에 넣는다
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .collect::<Vec<_>>()
-                .join(";")
-        })
-        .unwrap_or_default()
+        .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        // 캐시된 어셈블리가 깨졌을 수 있으니 지워서 다음 번에 다시 만들게 한다
+        let _ = std::fs::remove_file(folder_picker_dll());
+        let err = String::from_utf8_lossy(&out.stderr);
+        let first = err.lines().map(str::trim).find(|l| !l.is_empty());
+        return Err(first
+            .unwrap_or("PowerShell 실행 실패")
+            .chars()
+            .take(80)
+            .collect());
+    }
+    Ok(parse_picked(&String::from_utf8_lossy(&out.stdout)))
 }
 
 const FOLDER_PICKER_CS: &str = r#"using System;
@@ -405,17 +454,23 @@ public class FP {
     void GetItemAt(uint i, out IShellItem s);
     void EnumItems(out IntPtr e);
   }
-  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-  public static string[] Pick(bool multi) {
+  public static string[] Pick(bool multi, IntPtr owner) {
     var d = (IFileOpenDialog)new FOD();
     uint o; d.GetOptions(out o);
     d.SetOptions(o | 0x20u | 0x40u | (multi ? 0x200u : 0u));
     d.SetTitle(multi ? "폴더 선택 (여러 개 선택 가능)" : "폴더 선택");
-    if (d.Show(GetForegroundWindow()) != 0) return new string[0];
-    IShellItemArray a; d.GetResults(out a);
-    uint c; a.GetCount(out c);
+    int hr = d.Show(owner);
+    if (hr == unchecked((int)0x800704C7)) return new string[0]; // 사용자가 취소
+    if (hr != 0) Marshal.ThrowExceptionForHR(hr);
     var l = new List<string>();
-    for (uint i = 0; i < c; i++) { IShellItem s; a.GetItemAt(i, out s); string p; s.GetDisplayName(0x80058000u, out p); l.Add(p); }
+    IShellItemArray a = null;
+    try { d.GetResults(out a); } catch (Exception) { a = null; }
+    if (a != null) {
+      uint c; a.GetCount(out c);
+      for (uint i = 0; i < c; i++) { IShellItem s; a.GetItemAt(i, out s); string p; s.GetDisplayName(0x80058000u, out p); l.Add(p); }
+    } else {
+      IShellItem s1; d.GetResult(out s1); string p1; s1.GetDisplayName(0x80058000u, out p1); l.Add(p1);
+    }
     return l.ToArray();
   }
 }"#;
@@ -460,11 +515,12 @@ fn check_update(weak: slint::Weak<MainWindow>) {
 }
 
 /// 최신 조회 → 서명 검증된 패키지 → 설치 폴더에 적용(실패 시 롤백). 설치 폴더(Program Files)에 쓰려면 관리자 권한이 필요하다.
-fn do_install() -> Result<String, String> {
+/// 반환값 `(안내 문구, 실제로 설치했는지)`. 재시작 여부는 문구가 아니라 이 값으로 정한다.
+fn do_install() -> Result<(String, bool), String> {
     let current = env!("CARGO_PKG_VERSION");
     let tag = kova_core::fetch::latest_tag(UPDATE_BASE, UPDATE_REPO).map_err(|e| e.to_string())?;
     if !kova_core::update::is_newer(&tag, current) {
-        return Ok(format!("이미 최신입니다 ({current})"));
+        return Ok((format!("이미 최신입니다 ({current})"), false));
     }
     let pkg = kova_core::fetch::fetch_verified(
         UPDATE_BASE,
@@ -490,10 +546,27 @@ fn do_install() -> Result<String, String> {
     svc("stop");
     std::thread::sleep(std::time::Duration::from_secs(3));
     svc("start");
-    Ok(format!(
-        "{tag} 설치 완료({}개 파일, 서비스 재시작). 앱을 다시 시작합니다",
-        r.files
+    Ok((
+        format!(
+            "{tag} 설치 완료({}개 파일, 서비스 재시작). 앱을 다시 시작합니다",
+            r.files
+        ),
+        true,
     ))
+}
+
+/// 관리자 권한 도우미가 결과 파일에 적는 형식: 첫 줄 `installed`/`noop`, 이어서 안내 문구.
+fn encode_install_result(installed: bool, text: &str) -> String {
+    format!("{}\n{text}", if installed { "installed" } else { "noop" })
+}
+
+/// `encode_install_result` 의 반대. 첫 줄 표식이 없으면(옛 버전이 쓴 파일) 설치 안 한 것으로 보고 전체를 문구로 쓴다.
+fn decode_install_result(raw: &str) -> (bool, String) {
+    match raw.split_once('\n') {
+        Some(("installed", t)) => (true, t.to_string()),
+        Some(("noop", t)) => (false, t.to_string()),
+        _ => (false, raw.to_string()),
+    }
 }
 
 /// 사용자가 "업데이트 설치"를 눌렀을 때만 실행. 설치 폴더 쓰기에 관리자 권한이 필요하므로
@@ -502,7 +575,7 @@ fn do_install() -> Result<String, String> {
 fn install_update(weak: slint::Weak<MainWindow>) {
     let exe_path = std::env::current_exe().unwrap_or_default();
     std::thread::spawn(move || {
-        let run = || -> Result<String, String> {
+        let run = || -> Result<(bool, String), String> {
             use std::os::windows::process::CommandExt;
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
             let res = std::env::temp_dir().join(format!("kova_update_{}.txt", std::process::id()));
@@ -521,27 +594,41 @@ fn install_update(weak: slint::Weak<MainWindow>) {
             let text = std::fs::read_to_string(&res).ok();
             let _ = std::fs::remove_file(&res);
             match text {
-                Some(t) => Ok(t),
+                Some(t) => Ok(decode_install_result(&t)),
                 None if !st.status.success() => Err("관리자 권한 승인이 취소되었습니다".into()),
                 None => Err("설치 결과를 받지 못했습니다".into()),
             }
         };
-        let text = run().unwrap_or_else(|e| format!("설치하지 않음: {e}"));
-        let installed = text.contains("설치 완료");
+        let (installed, mut text) =
+            run().unwrap_or_else(|e| (false, format!("설치하지 않음: {e}")));
+        // 설치가 끝났으면 새 앱을 띄운다(설치 전에 알아 둔 경로 사용: 교체 후 current_exe 는 옛 파일을 가리킬 수 있다).
+        // 새 앱이 살아 있는 것을 확인한 뒤에만 이 앱을 닫아, 새 앱이 죽으면 앱이 통째로 사라지지 않게 한다.
+        let mut restarted = false;
+        if installed {
+            use std::os::windows::process::CommandExt;
+            match std::process::Command::new(&exe_path)
+                .creation_flags(0x0800_0000)
+                .spawn()
+            {
+                Ok(mut child) => {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    if matches!(child.try_wait(), Ok(None)) {
+                        restarted = true;
+                    } else {
+                        text.push_str(" — 새 앱이 시작되지 않았습니다. Kova 를 직접 실행하세요");
+                    }
+                }
+                Err(e) => text.push_str(&format!(
+                    " — 자동 재시작 실패({e}). Kova 를 직접 실행하세요"
+                )),
+            }
+        }
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
                 w.set_update_text(text.into());
             }
-            // 설치가 끝났으면 새 앱을 띄우고 이 앱은 닫는다(설치 전에 알아 둔 경로 사용: 교체 후 current_exe 는 옛 파일을 가리킬 수 있다)
-            if installed {
-                use std::os::windows::process::CommandExt;
-                if std::process::Command::new(&exe_path)
-                    .creation_flags(0x0800_0000)
-                    .spawn()
-                    .is_ok()
-                {
-                    let _ = slint::quit_event_loop();
-                }
+            if restarted {
+                let _ = slint::quit_event_loop();
             }
         });
     });
@@ -737,9 +824,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // 관리자 권한으로 다시 실행된 업데이트 설치 도우미: 설치하고 결과를 파일에 적은 뒤 끝낸다
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--install-update") {
-        let text = do_install().unwrap_or_else(|e| format!("설치하지 않음: {e}"));
+        let (text, installed) =
+            do_install().unwrap_or_else(|e| (format!("설치하지 않음: {e}"), false));
         if let Some(f) = args.get(i + 1) {
-            let _ = std::fs::write(f, text);
+            let _ = std::fs::write(f, encode_install_result(installed, &text));
         }
         return Ok(());
     }
@@ -893,7 +981,19 @@ fn main() -> Result<(), slint::PlatformError> {
             )
         });
     }
-    w.on_browse(|k| pick_path(k.as_str()).into());
+    {
+        let weak = w.as_weak();
+        w.on_browse(move |k| {
+            let (path, err) = match pick_path(k.as_str()) {
+                Ok(p) => (p, String::new()),
+                Err(e) => (String::new(), format!("선택 창을 열지 못했습니다: {e}")),
+            };
+            if let Some(w) = weak.upgrade() {
+                w.set_pick_error(err.into());
+            }
+            path.into()
+        });
+    }
     w.on_run_gc(|id| send("gc", id.to_string()));
     w.on_ack_alerts(|| {
         let _ =
@@ -937,5 +1037,55 @@ fn main() -> Result<(), slint::PlatformError> {
         slint::run_event_loop_until_quit()
     } else {
         w.run()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_picked_joins_lines_and_strips_bom() {
+        assert_eq!(
+            parse_picked("\u{feff}C:\\a\r\nD:\\b b\r\n\r\n"),
+            "C:\\a;D:\\b b"
+        );
+        assert_eq!(parse_picked(""), "");
+        assert_eq!(parse_picked("  \r\n"), "");
+    }
+
+    #[test]
+    fn install_result_roundtrip_and_legacy() {
+        assert_eq!(
+            decode_install_result(&encode_install_result(true, "v1 설치 완료\n둘째 줄")),
+            (true, "v1 설치 완료\n둘째 줄".into())
+        );
+        assert_eq!(
+            decode_install_result(&encode_install_result(false, "이미 최신입니다")),
+            (false, "이미 최신입니다".into())
+        );
+        // 옛 버전은 표식 없이 문구만 적는다 -> 설치 문구가 들어 있어도 재시작하지 않는다
+        assert_eq!(
+            decode_install_result("v3 설치 완료(2개 파일)"),
+            (false, "v3 설치 완료(2개 파일)".into())
+        );
+    }
+
+    #[test]
+    fn pick_script_folder_vs_file() {
+        let one = build_pick_script("folder");
+        let many = build_pick_script("folders");
+        assert!(
+            one.contains("[FP]::Pick($false,$f.Handle)")
+                && many.contains("[FP]::Pick($true,$f.Handle)")
+        );
+        assert!(
+            one.contains("$f.TopMost=$true"),
+            "소유 창은 PowerShell 프로세스 안의 TopMost 폼이어야 한다"
+        );
+        assert!(one.contains("-OutputAssembly"));
+        let f = build_pick_script("qblk-open");
+        assert!(f.contains("OpenFileDialog") && f.contains("*.qblk"));
+        assert!(build_pick_script("qblk-save").contains("SaveFileDialog"));
     }
 }

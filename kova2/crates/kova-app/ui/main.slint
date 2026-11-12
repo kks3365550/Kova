@@ -161,6 +161,8 @@ export component MainWindow inherits Window {
     background: Theme.bg;
     default-font-family: "맑은 고딕";
     in property <string> service-status;
+    in property <bool> service-ok: true;
+    in-out property <string> pick-error;
     in property <string> alert-text;
     in property <[ProfileRow]> profiles;
     in property <[SnapRow]> snapshots;
@@ -238,7 +240,8 @@ export component MainWindow inherits Window {
                     vertical-alignment: center;
                 }
                 Rectangle { horizontal-stretch: 1; }
-                if root.page != 0: Badge { text: root.service-status; tone: Theme.accent; }
+                if root.pick-error != "": Badge { text: root.pick-error; tone: Theme.danger; }
+                if root.page != 0: Badge { text: root.service-status; tone: root.service-ok ? Theme.accent : Theme.danger; }
                 if root.alert-text != "": Badge { text: root.alert-text; tone: Theme.danger; }
             }
 
@@ -247,7 +250,7 @@ export component MainWindow inherits Window {
                 spacing: 12px;
                 HorizontalLayout {
                     spacing: 12px;
-                    Stat { label: "서비스"; value: root.service-status; horizontal-stretch: 2; }
+                    Stat { label: "서비스"; value: root.service-status; tone: root.service-ok ? Theme.text : Theme.danger; horizontal-stretch: 2; }
                     Stat { label: "프로파일"; value: root.profiles.length + "개"; horizontal-stretch: 1; }
                     Stat { label: "최근 스냅샷"; value: root.snapshots.length > 0 ? root.snapshots[0].when : "없음"; horizontal-stretch: 1; }
                 }
