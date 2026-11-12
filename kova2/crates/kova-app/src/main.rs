@@ -5,12 +5,8 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIconBuilder};
 
 fn make_icon() -> Icon {
-    // 32x32 단색 아이콘(스파이크용)
-    let mut rgba = Vec::with_capacity(32 * 32 * 4);
-    for _ in 0..(32 * 32) {
-        rgba.extend_from_slice(&[0x1f, 0x6f, 0xeb, 0xff]);
-    }
-    Icon::from_rgba(rgba, 32, 32).unwrap()
+    // 32x32 RGBA(assets/kova_32.rgba)
+    Icon::from_rgba(include_bytes!("../assets/kova_32.rgba").to_vec(), 32, 32).unwrap()
 }
 
 fn rows() -> Vec<ProfileRow> {
