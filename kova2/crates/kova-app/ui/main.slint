@@ -1,9 +1,9 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 
 export struct ProfileRow { id: string, name: string, last: string, detail: string }
-export struct SnapRow { id: string, repo: string, when: string, summary: string, verified: string }
+export struct SnapRow { id: string, repo: string, when: string, name: string, summary: string, verified: string }
 export struct OffsiteRow { id: string, name: string, dir: string }
-export struct AlertRow { when: string, level: string, message: string, ack: bool }
+export struct AlertRow { when: string, level: string, message: string, full: string, ack: bool }
 
 global Theme {
     in-out property <bool> dark: true;
@@ -168,6 +168,8 @@ export component MainWindow inherits Window {
     in property <[SnapRow]> snapshots;
     in property <[AlertRow]> alerts;
     in property <[string]> setting-lines;
+    // 알림 목록이 다시 그려져도 펼친 행을 기억한다
+    in-out property <int> open-alert: -1;
     in property <string> log-text;
     callback run-backup(string);
     callback run-verify(string);
@@ -386,9 +388,10 @@ export component MainWindow inherits Window {
                                 padding-right: 14px;
                                 spacing: 12px;
                                 Text { text: s.when; color: Theme.text; width: 130px; font-size: 13px; vertical-alignment: center; }
-                                Text { text: s.summary; color: Theme.muted; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                                Text { text: s.name; color: Theme.text; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                                Text { text: s.summary; color: Theme.muted; font-size: 13px; width: 150px; vertical-alignment: center; overflow: elide; }
                                 Text { text: s.verified; color: s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok; font-size: 12px; width: 70px; vertical-alignment: center; }
-                                Btn { text: "복원"; kind: 2; y: 6px; clicked => { root.restore-snapshot(s.repo, s.id, rt.text); } }
+                                Btn { text: "복원"; kind: 0; y: 6px; clicked => { root.restore-snapshot(s.repo, s.id, rt.text); } }
                             }
                             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
                         }
@@ -407,15 +410,16 @@ export component MainWindow inherits Window {
                 Card {
                     vertical-stretch: 1;
                     ListView {
-                        for a in root.alerts: Rectangle {
+                        for a[i] in root.alerts: Rectangle {
                             min-height: 44px;
                             HorizontalLayout {
                                 padding: 12px;
                                 spacing: 12px;
                                 Text { text: a.when; color: Theme.muted; width: 110px; font-size: 12px; vertical-alignment: top; }
                                 Badge { text: a.level; tone: a.level == "error" ? Theme.danger : Theme.warn; y: 0px; }
-                                Text { text: a.message; color: Theme.text; font-size: 13px; font-weight: a.ack ? 400 : 700; horizontal-stretch: 1; wrap: word-wrap; }
+                                Text { text: root.open-alert == i ? a.full : a.message; color: Theme.text; font-size: 13px; font-weight: a.ack ? 400 : 700; horizontal-stretch: 1; wrap: word-wrap; }
                             }
+                            TouchArea { clicked => { root.open-alert = root.open-alert == i ? -1 : i; } }
                             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
                         }
                     }
@@ -481,42 +485,43 @@ export component MainWindow inherits Window {
             if root.page == 5: ScrollView {
                 VerticalLayout {
                     spacing: 12px;
+                    alignment: start;
                     Card {
                         VerticalLayout {
+                            alignment: start;
                             padding: 16px;
                             spacing: 6px;
                             Heading { text: "현재 설정"; }
-                            for l in root.setting-lines: Text { text: l; color: Theme.muted; font-size: 13px; overflow: elide; }
+                            for l in root.setting-lines: Text { text: l; color: l == "프로파일" ? Theme.text : Theme.muted; font-size: 13px; font-weight: l == "프로파일" ? 700 : 400; wrap: word-wrap; }
                         }
                     }
                     Card {
-                        height: 120px;
                         VerticalLayout {
+                            alignment: start;
                             padding: 16px;
-                            spacing: 8px;
+                            spacing: 10px;
                             Heading { text: "업데이트 · 진단"; }
                             HorizontalLayout {
                                 spacing: 8px;
                                 Btn { text: "업데이트 확인"; clicked => { root.check-update(); } }
                                 Btn { text: "업데이트 설치"; kind: 1; clicked => { root.install-update(); } }
-                                Text { text: root.update-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
-                            }
-                            HorizontalLayout {
-                                spacing: 8px;
                                 Btn { text: "진단 파일 만들기"; clicked => { root.make-diag(); } }
-                                Text { text: root.diag-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                                Rectangle { horizontal-stretch: 1; }
                             }
+                            if root.update-text != "": Text { text: root.update-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
+                            if root.diag-text != "": Text { text: root.diag-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
                         }
                     }
                     Card {
                         VerticalLayout {
+                            alignment: start;
                             padding: 16px;
                             spacing: 8px;
                             Heading { text: "오프사이트 폴더"; }
                             Hint { text: "프로파일별 복제 위치입니다. 비우면 복제하지 않습니다."; }
                             for o in root.offsite-rows: HorizontalLayout {
                                 spacing: 8px;
-                                Text { text: o.name; color: Theme.text; font-size: 13px; width: 140px; vertical-alignment: center; overflow: elide; }
+                                Text { text: o.name; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; wrap: word-wrap; }
                                 le := PathField { text: o.dir; placeholder: "네트워크 경로나 다른 드라이브의 폴더"; horizontal-stretch: 1; pick(k) => { root.browse(k) } }
                                 Btn { text: "저장"; kind: 1; clicked => { root.save-offsite(o.id, le.text); } }
                             }

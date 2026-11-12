@@ -38,6 +38,26 @@ fn rows() -> Vec<ProfileRow> {
         .collect()
 }
 
+/// 알림 한 줄 요약: 길면 앞부분만 보이고 "…"로 줄인다(전체는 행을 눌러 펼친다).
+fn shorten_alert(s: &str) -> String {
+    const MAX: usize = 90;
+    if s.chars().count() <= MAX {
+        return s.to_string();
+    }
+    let head: String = s.chars().take(MAX).collect();
+    format!("{}… (눌러서 펼치기)", head.trim_end())
+}
+
+/// 용량 표시: 1GB 이상이면 GB, 아니면 MB.
+fn human_mb(bytes: u64) -> String {
+    let mb = bytes as f64 / 1_048_576.0;
+    if mb >= 1024.0 {
+        format!("{:.1}GB", mb / 1024.0)
+    } else {
+        format!("{mb:.1}MB")
+    }
+}
+
 fn alert_rows() -> Vec<AlertRow> {
     let mut v = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir()).list();
     v.reverse();
@@ -45,7 +65,8 @@ fn alert_rows() -> Vec<AlertRow> {
         .map(|a| AlertRow {
             when: chrono_fmt(a.at).into(),
             level: a.level.into(),
-            message: format!("{}: {}", a.profile_id, a.message).into(),
+            message: shorten_alert(&format!("{}: {}", a.profile_id, a.message)).into(),
+            full: format!("{}: {}", a.profile_id, a.message).into(),
             ack: a.acknowledged,
         })
         .collect()
@@ -106,14 +127,13 @@ fn setting_lines() -> Vec<slint::SharedString> {
             }
         ),
         format!("최소 여유 공간: {}GB", s.min_free_disk_gb),
-        String::new(),
         "프로파일".into(),
     ];
     for p in store.profiles() {
         v.push(format!(
-            "· {} — 원본 {} → {} · 보존 {}개/{}일 · 압축 {}",
+            "· {} — 원본 {}곳 → {} · 보존 {}개/{}일 · 압축 {}",
             p.name,
-            p.sources.join(", "),
+            p.sources.len(),
             p.repo_dir,
             p.retention_count,
             p.retention_days,
@@ -148,11 +168,11 @@ fn snaps() -> Vec<SnapRow> {
                     id: r.id.clone().into(),
                     repo: p.repo_dir.clone().into(),
                     when: chrono_fmt(r.created_at).into(),
+                    name: p.name.clone().into(),
                     summary: format!(
-                        "{} · 파일 {}개 · {:.1}MB",
-                        p.name,
+                        "파일 {}개 · {}",
                         r.total_files,
-                        r.total_bytes as f64 / 1_048_576.0
+                        human_mb(r.total_bytes as u64)
                     )
                     .into(),
                     verified: v.into(),
@@ -1042,6 +1062,16 @@ fn main() -> Result<(), slint::PlatformError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn alert_and_size_formatting() {
+        assert_eq!(shorten_alert("짧은 알림"), "짧은 알림");
+        let long = "가".repeat(300);
+        let out = shorten_alert(&long);
+        assert!(out.starts_with(&"가".repeat(90)) && out.contains("눌러서 펼치기"));
+        assert_eq!(human_mb(5 * 1_048_576), "5.0MB");
+        assert_eq!(human_mb(3 * 1_073_741_824), "3.0GB");
+    }
+
     use super::*;
 
     #[test]
