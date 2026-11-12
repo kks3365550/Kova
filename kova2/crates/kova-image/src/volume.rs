@@ -199,6 +199,15 @@ mod win {
         progress: &dyn Fn(&Stats),
     ) -> Result<(Header, Stats), QblkError> {
         let drive = norm_drive(drive)?;
+        {
+            extern "system" {
+                fn GetDriveTypeW(root: *const u16) -> u32;
+            }
+            let w: Vec<u16> = format!("{drive}\\").encode_utf16().chain(Some(0)).collect();
+            if unsafe { GetDriveTypeW(w.as_ptr()) } != 3 {
+                return Err(io_err("내장(고정) 드라이브만 이미지로 만들 수 있습니다"));
+            }
+        }
         check_output(Path::new(&format!("{drive}\\")), out_path)?;
         let shadow = Shadow::create(&drive)?;
         let res = (|| -> Result<(Header, Stats), QblkError> {

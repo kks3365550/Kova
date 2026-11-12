@@ -127,6 +127,7 @@ impl Supervisor {
             Kind::Backup => self.run_backup_job(&job, &cancel),
             Kind::Verify => self.run_verify_job(&job),
             Kind::Gc => self.run_gc_job(&job),
+            Kind::Image(d) => self.run_image_job(&job, d, &cancel),
         };
         // 실패·경고는 알림 기록에 남긴다(화면이 없는 서비스는 기록만, 표시는 앱이 한다). 사용자 취소는 알리지 않는다.
         if message != "취소됨" && (!ok || message.contains("복제 실패")) {
@@ -301,6 +302,52 @@ impl Supervisor {
         }
     }
 
+    /// 볼륨 이미지: 저장 위치는 프로파일 저장소 아래 `images` 폴더로 고정하고 이름도 서비스가 정한다
+    /// (이 서비스는 SYSTEM 권한이라 요청자가 출력 경로를 고르게 하지 않는다).
+    fn run_image_job(
+        &self,
+        job: &Job,
+        drive: char,
+        cancel: &AtomicBool,
+    ) -> (bool, String, Option<String>) {
+        let Some(prof) = self.0.store.get(&job.profile_id) else {
+            return (false, format!("프로파일 없음: {}", job.profile_id), None);
+        };
+        let dir = std::path::Path::new(&prof.repo_dir).join("images");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            return (false, format!("이미지 폴더를 만들 수 없음: {e}"), None);
+        }
+        let name = format!("{}_{}.qblk", drive, Local::now().format("%Y%m%d_%H%M%S"));
+        let out = dir.join(name);
+        let id = job.id;
+        let last = Mutex::new(u64::MAX);
+        let res = kova_image::volume::capture_volume(&format!("{drive}:"), &out, 3, cancel, &|s| {
+            let gb = s.raw_bytes >> 30;
+            let mut l = last.lock().unwrap();
+            if *l != gb {
+                *l = gb;
+                self.emit(SvcEvent::Progress {
+                    job_id: id,
+                    percent: 0,
+                    current: format!("{gb}GB 읽음"),
+                });
+            }
+        });
+        match res {
+            Ok((h, s)) => (
+                true,
+                format!(
+                    "이미지 완료: {} (사용 클러스터 {}, 압축 {}바이트)",
+                    out.display(),
+                    h.used_clusters,
+                    s.compressed_bytes
+                ),
+                None,
+            ),
+            Err(e) => (false, e.to_string(), None),
+        }
+    }
+
     fn run_verify_job(&self, job: &Job) -> (bool, String, Option<String>) {
         let Some(prof) = self.0.store.get(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
@@ -357,6 +404,7 @@ fn to_wire(e: SvcEvent) -> kova_ipc::Event {
             Kind::Backup => "backup",
             Kind::Verify => "verify",
             Kind::Gc => "gc",
+            Kind::Image(d) => return format!("image:{d}"),
         }
         .to_string()
     };
@@ -411,6 +459,12 @@ impl kova_ipc::Handler for IpcHandler {
                     "backup" => Kind::Backup,
                     "verify" => Kind::Verify,
                     "gc" => Kind::Gc,
+                    s if s.len() == 7
+                        && s.starts_with("image:")
+                        && s.as_bytes()[6].is_ascii_alphabetic() =>
+                    {
+                        Kind::Image(s.as_bytes()[6].to_ascii_uppercase() as char)
+                    }
                     other => {
                         return Reply::Once(vec![Event::Error {
                             message: format!("알 수 없는 작업 종류: {other}"),
@@ -667,6 +721,21 @@ mod tests {
         assert!(rx
             .try_iter()
             .any(|e| matches!(e, SvcEvent::JobFinished { ok: true, .. })));
+    }
+
+    #[test]
+    fn image_job_rejects_non_fixed_drive_and_leaves_no_output() {
+        let (d, s) = setup(true);
+        let rx = s.subscribe();
+        // 존재하지 않는 드라이브(Q:)는 고정 드라이브가 아니라 섀도 복사본을 만들기 전에 거부된다
+        s.enqueue("p1", Kind::Image('Q'));
+        wait_idle(&s);
+        assert!(rx.try_iter().any(|e| matches!(
+            e,
+            SvcEvent::JobFinished { ok: false, ref message, .. } if message.contains("고정")
+        )));
+        let imgs = d.path().join("repo").join("images");
+        assert!(!imgs.exists() || std::fs::read_dir(imgs).unwrap().count() == 0);
     }
 
     #[tokio::test]

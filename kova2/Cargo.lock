@@ -2976,6 +2976,7 @@ dependencies = [
  "chrono",
  "kova-core",
  "kova-engine",
+ "kova-image",
  "kova-ipc",
  "tempfile",
  "tokio",

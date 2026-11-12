@@ -294,7 +294,8 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
     });
 }
 
-fn send(kind: &'static str, id: String) {
+fn send(kind: impl Into<String>, id: String) {
+    let kind: String = kind.into();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -304,7 +305,7 @@ fn send(kind: &'static str, id: String) {
             kova_ipc::PIPE_NAME,
             &kova_ipc::Request::RunNow {
                 profile_id: id,
-                kind: kind.into(),
+                kind,
             },
         ));
     });
@@ -676,6 +677,22 @@ fn main() -> Result<(), slint::PlatformError> {
         w.on_verify_image(move |p| image_job(weak.clone(), p.to_string(), None));
         let weak = w.as_weak();
         w.on_capture_image(move |s, o| capture_job(weak.clone(), s.to_string(), o.to_string()));
+        let weak = w.as_weak();
+        w.on_capture_volume(move |d| {
+            let d = d.trim().trim_end_matches([':', '\\']).to_string();
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let text = match (d.len() == 1 && d.as_bytes()[0].is_ascii_alphabetic(), store.profiles().first()) {
+                (false, _) => "드라이브 문자 한 글자를 입력하세요 (예: F)".to_string(),
+                (_, None) => "프로파일이 없습니다. 프로파일 탭에서 먼저 만드세요".to_string(),
+                (true, Some(p)) => {
+                    send(format!("image:{}", d.to_ascii_uppercase()), p.id.clone());
+                    format!("{}: 이미지 작업을 서비스에 요청했습니다. 진행·결과는 홈의 작업 기록에 표시됩니다", d.to_ascii_uppercase())
+                }
+            };
+            if let Some(w) = weak.upgrade() {
+                w.set_image_text(text.into());
+            }
+        });
         let weak = w.as_weak();
         w.on_restore_image(move |p, t| image_job(weak.clone(), p.to_string(), Some(t.to_string())));
     }

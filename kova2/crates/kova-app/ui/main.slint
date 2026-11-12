@@ -25,6 +25,7 @@ export component MainWindow inherits Window {
     callback verify-image(string);
     callback restore-image(string, string);
     callback capture-image(string, string);
+    callback capture-volume(string);
     callback restore-snapshot(string, string, string);
     in property <string> restore-text;
     callback make-diag();
@@ -164,6 +165,12 @@ export component MainWindow inherits Window {
                     csrc := LineEdit { placeholder-text: "원본 이미지 파일 경로"; }
                     cout := LineEdit { placeholder-text: "만들 .qblk 파일 전체 경로 (새 파일)"; }
                     Button { text: "이미지 만들기"; clicked => { root.capture-image(csrc.text, cout.text); } }
+                    Text { text: "내장 드라이브를 서비스가 섀도 복사본으로 이미지 만들기 (읽기 전용, 저장 위치: 첫 프로파일 저장 폴더 안 images 폴더)"; font-weight: 600; wrap: word-wrap; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        cvol := LineEdit { placeholder-text: "드라이브 문자 (예: F)"; width: 160px; }
+                        Button { text: "볼륨 이미지 만들기"; clicked => { root.capture-volume(cvol.text); } }
+                    }
                     Text { text: root.image-text; wrap: word-wrap; vertical-stretch: 1; }
                 }
             }

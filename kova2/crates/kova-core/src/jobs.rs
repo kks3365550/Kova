@@ -9,6 +9,8 @@ pub enum Kind {
     Backup,
     Verify,
     Gc,
+    /// 볼륨 이미지(.qblk) 만들기. 값은 드라이브 문자(대문자).
+    Image(char),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
