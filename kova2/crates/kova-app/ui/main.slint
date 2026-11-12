@@ -1,7 +1,7 @@
 import { Button, ListView, TabWidget, LineEdit } from "std-widgets.slint";
 
 export struct ProfileRow { id: string, name: string, last: string, detail: string }
-export struct SnapRow { id: string, when: string, summary: string, verified: string }
+export struct SnapRow { id: string, repo: string, when: string, summary: string, verified: string }
 export struct OffsiteRow { id: string, name: string, dir: string }
 export struct AlertRow { when: string, level: string, message: string, ack: bool }
 
@@ -24,6 +24,8 @@ export component MainWindow inherits Window {
     callback check-update();
     callback verify-image(string);
     callback restore-image(string, string);
+    callback restore-snapshot(string, string, string);
+    in property <string> restore-text;
     in property <string> image-text;
     callback install-update();
     in property <string> update-text;
@@ -57,14 +59,21 @@ export component MainWindow inherits Window {
             }
             Tab {
                 title: "이력";
-                ListView {
-                    for s in root.snapshots: HorizontalLayout {
-                        spacing: 10px;
-                        padding: 3px;
-                        Text { text: s.when; width: 120px; }
-                        Text { text: s.summary; horizontal-stretch: 1; }
-                        Text { text: s.verified; width: 80px; }
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "스냅샷을 새 폴더(또는 빈 폴더)로 복원합니다. 원래 위치를 덮어쓰지 않습니다."; wrap: word-wrap; }
+                    rt := LineEdit { placeholder-text: "복원할 새 폴더 전체 경로 (예: D 드라이브의 새 폴더)"; }
+                    ListView {
+                        for s in root.snapshots: HorizontalLayout {
+                            spacing: 10px;
+                            padding: 3px;
+                            Text { text: s.when; width: 120px; vertical-alignment: center; }
+                            Text { text: s.summary; horizontal-stretch: 1; vertical-alignment: center; }
+                            Text { text: s.verified; width: 70px; vertical-alignment: center; }
+                            Button { text: "복원"; clicked => { root.restore-snapshot(s.repo, s.id, rt.text); } }
+                        }
                     }
+                    Text { text: root.restore-text; wrap: word-wrap; }
                 }
             }
             Tab {

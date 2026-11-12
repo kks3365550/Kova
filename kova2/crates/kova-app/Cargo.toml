@@ -10,6 +10,7 @@ tray-icon = { version = "0.19", default-features = false }
 kova-ipc = { path = "../kova-ipc" }
 kova-core = { path = "../kova-core" }
 kova-image = { path = "../kova-image" }
+kova-engine = { path = "../kova-engine" }
 kova-service = { path = "../kova-service" }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 

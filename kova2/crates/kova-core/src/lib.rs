@@ -10,6 +10,7 @@ pub mod install;
 pub mod jobs;
 pub mod lock;
 pub mod offsite;
+pub mod restore_target;
 pub mod retention;
 pub mod schedule;
 pub mod sign;

@@ -149,6 +149,7 @@ fn snaps() -> Vec<SnapRow> {
                 r.created_at,
                 SnapRow {
                     id: r.id.clone().into(),
+                    repo: p.repo_dir.clone().into(),
                     when: chrono_fmt(r.created_at).into(),
                     summary: format!(
                         "{} · 파일 {}개 · {:.1}MB",
@@ -441,6 +442,62 @@ fn image_job(weak: slint::Weak<MainWindow>, image: String, target: Option<String
     });
 }
 
+/// 스냅샷 복원: 새 폴더(또는 빈 폴더)로만 푼다. 대상은 먼저 검사하고, 복원은 별도 스레드에서 진행률을 흘린다.
+fn restore_snapshot_job(weak: slint::Weak<MainWindow>, repo: String, sid: String, target: String) {
+    let show = |w: &slint::Weak<MainWindow>, t: String| {
+        let w = w.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = w.upgrade() {
+                w.set_restore_text(t.into());
+            }
+        });
+    };
+    let repo_path = std::path::PathBuf::from(&repo);
+    let target = match kova_core::restore_target::check(&target, &repo_path) {
+        Ok(t) => t,
+        Err(e) => {
+            show(&weak, format!("복원하지 않음: {e}"));
+            return;
+        }
+    };
+    show(&weak, "복원 시작…".into());
+    std::thread::spawn(move || {
+        let last =
+            std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(5));
+        let w2 = weak.clone();
+        let on_event = move |ev: kova_engine::ops::Event| {
+            if let kova_engine::ops::Event::RestoreProgress { done, total } = ev {
+                let mut l = last.lock().unwrap();
+                if l.elapsed() >= std::time::Duration::from_secs(1) {
+                    *l = std::time::Instant::now();
+                    let w = w2.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = w.upgrade() {
+                            w.set_restore_text(format!("복원 중… {done}/{total}").into());
+                        }
+                    });
+                }
+            }
+        };
+        let opts = kova_engine::ops::RestoreOptions {
+            repo: repo_path,
+            session_id: sid,
+            target: Some(target.clone()),
+        };
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let text = match kova_engine::ops::run_restore(&opts, &on_event, &cancel) {
+            Ok(s) => format!(
+                "복원 완료: {} (항목 {}개, {:.0}초)",
+                target.display(),
+                s.total_files,
+                s.elapsed_seconds
+            ),
+            Err(e) => format!("복원 실패: {e}"),
+        };
+        show(&weak, text);
+    });
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let w = MainWindow::new()?;
     w.on_run_backup(|id| send("backup", id.to_string()));
@@ -459,6 +516,17 @@ fn main() -> Result<(), slint::PlatformError> {
         w.on_verify_image(move |p| image_job(weak.clone(), p.to_string(), None));
         let weak = w.as_weak();
         w.on_restore_image(move |p, t| image_job(weak.clone(), p.to_string(), Some(t.to_string())));
+    }
+    {
+        let weak = w.as_weak();
+        w.on_restore_snapshot(move |repo, sid, t| {
+            restore_snapshot_job(
+                weak.clone(),
+                repo.to_string(),
+                sid.to_string(),
+                t.to_string(),
+            )
+        });
     }
     w.on_run_gc(|id| send("gc", id.to_string()));
     w.on_ack_alerts(|| {

@@ -2901,6 +2901,7 @@ name = "kova-app"
 version = "0.0.1"
 dependencies = [
  "kova-core",
+ "kova-engine",
  "kova-image",
  "kova-ipc",
  "kova-service",
