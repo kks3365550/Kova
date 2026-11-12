@@ -340,7 +340,9 @@ impl Supervisor {
                     "이미지 완료: {} (사용 클러스터 {}, 압축 {}바이트)",
                     out.display(),
                     h.used_clusters,
-                    s.compressed_bytes
+                    std::fs::metadata(&out)
+                        .map(|m| m.len())
+                        .unwrap_or(s.compressed_bytes)
                 ),
                 None,
             ),
