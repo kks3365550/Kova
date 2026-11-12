@@ -23,6 +23,10 @@ jobs:
             ~/.cargo/git
             kova2/target
           key: kova2-${{ hashFiles('kova2/Cargo.lock') }}
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build
         run: cargo build --workspace --locked
       - name: Test

@@ -5,10 +5,12 @@ use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-
 #[derive(Parser)]
 #[command(name = "kova_fast_engine")]
-#[command(about = "Kova Ultra-Fast Native Backup Engine (Rust + FastCDC + Zstd + BLAKE3)", version = "0.1.0")]
+#[command(
+    about = "Kova Ultra-Fast Native Backup Engine (Rust + FastCDC + Zstd + BLAKE3)",
+    version = "0.1.0"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -175,7 +177,10 @@ fn run_backup(
     let on_event = move |ev: ops::Event| match ev {
         ops::Event::Phase { phase, message } => {
             if json_mode {
-                println!("{}", serde_json::json!({"event": "phase", "phase": phase, "message": message}));
+                println!(
+                    "{}",
+                    serde_json::json!({"event": "phase", "phase": phase, "message": message})
+                );
             } else {
                 println!("[KOVA-FAST] {}", message);
             }
@@ -216,11 +221,23 @@ fn run_backup(
     } else {
         println!("Session ID       : {}", s.session_id);
         println!("Total Items      : {}", s.total_files);
-        println!("Source Raw Size  : {:.2} MB", s.total_bytes as f64 / 1048576.0);
-        println!("Deduplicated     : {:.2} MB", s.dedup_bytes as f64 / 1048576.0);
-        println!("Compressed Stored: {:.2} MB", s.compressed_bytes as f64 / 1048576.0);
+        println!(
+            "Source Raw Size  : {:.2} MB",
+            s.total_bytes as f64 / 1048576.0
+        );
+        println!(
+            "Deduplicated     : {:.2} MB",
+            s.dedup_bytes as f64 / 1048576.0
+        );
+        println!(
+            "Compressed Stored: {:.2} MB",
+            s.compressed_bytes as f64 / 1048576.0
+        );
         println!("Skipped files    : {}", s.skipped_files.len());
-        println!("Elapsed Time     : {:.3}s ({:.2} MB/s)", s.elapsed_seconds, s.throughput_mb);
+        println!(
+            "Elapsed Time     : {:.3}s ({:.2} MB/s)",
+            s.elapsed_seconds, s.throughput_mb
+        );
     }
     Ok(())
 }
@@ -237,7 +254,11 @@ fn run_restore(
     let opts = ops::RestoreOptions {
         repo: repo.to_path_buf(),
         session_id: session_id.to_string(),
-        target: if in_place { None } else { target.map(|t| t.to_path_buf()) },
+        target: if in_place {
+            None
+        } else {
+            target.map(|t| t.to_path_buf())
+        },
     };
     let on_event = |ev: ops::Event| {
         if let ops::Event::RestoreProgress { done, total } = ev {
@@ -251,7 +272,10 @@ fn run_restore(
 }
 
 fn run_benchmark(size_mb: usize) -> Result<(), Box<dyn std::error::Error>> {
-    println!("[KOVA-FAST] Generating {} MB synthetic test buffer...", size_mb);
+    println!(
+        "[KOVA-FAST] Generating {} MB synthetic test buffer...",
+        size_mb
+    );
     let bytes_len = size_mb * 1024 * 1024;
     let mut data = vec![0u8; bytes_len];
 
@@ -299,8 +323,14 @@ fn run_benchmark(size_mb: usize) -> Result<(), Box<dyn std::error::Error>> {
     println!("========================================================");
     println!("Dataset Size     : {} MB", size_mb);
     println!("Total Elapsed    : {:.3}s", total_elapsed);
-    println!("Total Throughput : {:.2} MB/s", (size_mb as f64) / total_elapsed);
-    println!("Compression Ratio: {:.2}%", (total_comp_bytes as f64 / bytes_len as f64) * 100.0);
+    println!(
+        "Total Throughput : {:.2} MB/s",
+        (size_mb as f64) / total_elapsed
+    );
+    println!(
+        "Compression Ratio: {:.2}%",
+        (total_comp_bytes as f64 / bytes_len as f64) * 100.0
+    );
     println!("========================================================\n");
 
     Ok(())

@@ -6,12 +6,24 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-fn d_sched() -> String { "interval_hours".into() }
-fn d_sval() -> String { "12".into() }
-fn d_cnt() -> u32 { 30 }
-fn d_days() -> u32 { 60 }
-fn d_comp() -> i32 { 3 }
-fn d_status() -> String { "never".into() }
+fn d_sched() -> String {
+    "interval_hours".into()
+}
+fn d_sval() -> String {
+    "12".into()
+}
+fn d_cnt() -> u32 {
+    30
+}
+fn d_days() -> u32 {
+    60
+}
+fn d_comp() -> i32 {
+    3
+}
+fn d_status() -> String {
+    "never".into()
+}
 
 /// schedule_value 는 파일에 문자열("12")로 저장된다(숫자여도 읽을 수 있게 한다).
 fn de_str<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
@@ -84,20 +96,36 @@ pub struct Settings {
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
-fn d_port() -> u16 { 8765 }
-fn d_host() -> String { "0.0.0.0".into() }
-fn d_true() -> bool { true }
-fn d_log() -> String { "INFO".into() }
-fn d_free() -> u32 { 10 }
-fn d_prov() -> String { "local".into() }
+fn d_port() -> u16 {
+    8765
+}
+fn d_host() -> String {
+    "0.0.0.0".into()
+}
+fn d_true() -> bool {
+    true
+}
+fn d_log() -> String {
+    "INFO".into()
+}
+fn d_free() -> u32 {
+    10
+}
+fn d_prov() -> String {
+    "local".into()
+}
 
 impl Default for Settings {
-    fn default() -> Self { serde_json::from_str("{}").unwrap() }
+    fn default() -> Self {
+        serde_json::from_str("{}").unwrap()
+    }
 }
 
 /// 임시 파일에 쓴 뒤 rename 하는 원자적 저장.
 fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
-    if let Some(p) = path.parent() { fs::create_dir_all(p)?; }
+    if let Some(p) = path.parent() {
+        fs::create_dir_all(p)?;
+    }
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, text)?;
     fs::rename(&tmp, path)
@@ -123,9 +151,15 @@ pub struct ConfigStore {
 }
 
 impl ConfigStore {
-    pub fn new(dir: impl Into<PathBuf>) -> Self { Self { dir: dir.into() } }
-    fn profiles_path(&self) -> PathBuf { self.dir.join("profiles.json") }
-    fn settings_path(&self) -> PathBuf { self.dir.join("app_settings.json") }
+    pub fn new(dir: impl Into<PathBuf>) -> Self {
+        Self { dir: dir.into() }
+    }
+    fn profiles_path(&self) -> PathBuf {
+        self.dir.join("profiles.json")
+    }
+    fn settings_path(&self) -> PathBuf {
+        self.dir.join("app_settings.json")
+    }
 
     pub fn settings(&self) -> Settings {
         read_json(&self.settings_path()).unwrap_or_default()
@@ -156,7 +190,9 @@ impl ConfigStore {
         let n = all.len();
         all.retain(|p| p.id != id);
         let removed = all.len() != n;
-        if removed { self.save_profiles(&all)?; }
+        if removed {
+            self.save_profiles(&all)?;
+        }
         Ok(removed)
     }
 }

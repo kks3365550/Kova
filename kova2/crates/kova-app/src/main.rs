@@ -20,10 +20,21 @@ fn rows() -> Vec<ProfileRow> {
         .map(|p| ProfileRow {
             id: p.id.clone().into(),
             name: p.name.clone().into(),
-            detail: format!("원본 {} → {} · 보존 {}개/{}일", p.sources.join(", "), p.repo_dir, p.retention_count, p.retention_days).into(),
+            detail: format!(
+                "원본 {} → {} · 보존 {}개/{}일",
+                p.sources.join(", "),
+                p.repo_dir,
+                p.retention_count,
+                p.retention_days
+            )
+            .into(),
             last: match (p.last_status.as_str(), p.last_run) {
                 ("", _) | (_, None) => "기록 없음".to_string(),
-                (s, Some(t)) => format!("{} · {}", if s == "success" { "성공" } else { "실패" }, chrono_fmt(t)),
+                (s, Some(t)) => format!(
+                    "{} · {}",
+                    if s == "success" { "성공" } else { "실패" },
+                    chrono_fmt(t)
+                ),
             }
             .into(),
         })
@@ -33,16 +44,32 @@ fn rows() -> Vec<ProfileRow> {
 fn alert_rows() -> Vec<AlertRow> {
     let mut v = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir()).list();
     v.reverse();
-    v.into_iter().map(|a| AlertRow { when: chrono_fmt(a.at).into(), level: a.level.into(), message: format!("{}: {}", a.profile_id, a.message).into(), ack: a.acknowledged }).collect()
+    v.into_iter()
+        .map(|a| AlertRow {
+            when: chrono_fmt(a.at).into(),
+            level: a.level.into(),
+            message: format!("{}: {}", a.profile_id, a.message).into(),
+            ack: a.acknowledged,
+        })
+        .collect()
 }
 
 fn offsite_rows() -> Vec<OffsiteRow> {
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-    store.profiles().into_iter().map(|p| OffsiteRow {
-        id: p.id.clone().into(),
-        name: p.name.clone().into(),
-        dir: p.extra.get("offsite_dir").and_then(|v| v.as_str()).unwrap_or("").into(),
-    }).collect()
+    store
+        .profiles()
+        .into_iter()
+        .map(|p| OffsiteRow {
+            id: p.id.clone().into(),
+            name: p.name.clone().into(),
+            dir: p
+                .extra
+                .get("offsite_dir")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .into(),
+        })
+        .collect()
 }
 
 /// 해당 프로파일의 오프사이트 폴더만 바꾼다(다른 필드는 최신 파일을 다시 읽어 보존). 빈 값이면 설정을 지운다.
@@ -50,7 +77,11 @@ fn save_offsite(id: &str, dir: &str) {
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
     if let Some(mut p) = store.get(id) {
         let dir = dir.trim();
-        if dir.is_empty() { p.extra.remove("offsite_dir"); } else { p.extra.insert("offsite_dir".into(), dir.into()); }
+        if dir.is_empty() {
+            p.extra.remove("offsite_dir");
+        } else {
+            p.extra.insert("offsite_dir".into(), dir.into());
+        }
         let _ = store.upsert(p);
     }
 }
@@ -59,14 +90,38 @@ fn setting_lines() -> Vec<slint::SharedString> {
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
     let s = store.settings();
     let mut v = vec![
-        format!("오프사이트: {} ({}) {}", if s.offsite_enabled { "사용" } else { "사용 안 함" }, s.offsite_provider, s.offsite_remote_path),
-        format!("랜섬웨어 보호: {}", if s.enable_ransomware_protection { "켜짐" } else { "꺼짐" }),
+        format!(
+            "오프사이트: {} ({}) {}",
+            if s.offsite_enabled {
+                "사용"
+            } else {
+                "사용 안 함"
+            },
+            s.offsite_provider,
+            s.offsite_remote_path
+        ),
+        format!(
+            "랜섬웨어 보호: {}",
+            if s.enable_ransomware_protection {
+                "켜짐"
+            } else {
+                "꺼짐"
+            }
+        ),
         format!("최소 여유 공간: {}GB", s.min_free_disk_gb),
         String::new(),
         "프로파일".into(),
     ];
     for p in store.profiles() {
-        v.push(format!("· {} — 원본 {} → {} · 보존 {}개/{}일 · 압축 {}", p.name, p.sources.join(", "), p.repo_dir, p.retention_count, p.retention_days, p.compression_level));
+        v.push(format!(
+            "· {} — 원본 {} → {} · 보존 {}개/{}일 · 압축 {}",
+            p.name,
+            p.sources.join(", "),
+            p.repo_dir,
+            p.retention_count,
+            p.retention_days,
+            p.compression_level
+        ));
     }
     v.into_iter().map(Into::into).collect()
 }
@@ -79,15 +134,32 @@ fn snaps() -> Vec<SnapRow> {
         if !repo.join("metadata.db").exists() {
             continue; // 읽기만 한다: 없는 저장소에 DB 를 새로 만들지 않는다
         }
-        let Ok(h) = kova_core::history::History::open(&repo) else { continue };
+        let Ok(h) = kova_core::history::History::open(&repo) else {
+            continue;
+        };
         for r in h.list_snapshots().unwrap_or_default() {
-            let v = if r.verify_error_count > 0 { "오류 있음" } else if r.is_verified { "검증됨" } else { "미검증" };
-            all.push((r.created_at, SnapRow {
-                id: r.id.clone().into(),
-                when: chrono_fmt(r.created_at).into(),
-                summary: format!("{} · 파일 {}개 · {:.1}MB", p.name, r.total_files, r.total_bytes as f64 / 1_048_576.0).into(),
-                verified: v.into(),
-            }));
+            let v = if r.verify_error_count > 0 {
+                "오류 있음"
+            } else if r.is_verified {
+                "검증됨"
+            } else {
+                "미검증"
+            };
+            all.push((
+                r.created_at,
+                SnapRow {
+                    id: r.id.clone().into(),
+                    when: chrono_fmt(r.created_at).into(),
+                    summary: format!(
+                        "{} · 파일 {}개 · {:.1}MB",
+                        p.name,
+                        r.total_files,
+                        r.total_bytes as f64 / 1_048_576.0
+                    )
+                    .into(),
+                    verified: v.into(),
+                },
+            ));
         }
     }
     all.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -96,7 +168,12 @@ fn snaps() -> Vec<SnapRow> {
 
 fn chrono_fmt(ts: f64) -> String {
     // 외부 의존 없이 "N분/시간/일 전"으로 표시
-    let secs = (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0) - ts).max(0.0) as u64;
+    let secs = (std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+        - ts)
+        .max(0.0) as u64;
     match secs {
         0..=59 => "방금".into(),
         60..=3599 => format!("{}분 전", secs / 60),
@@ -107,15 +184,25 @@ fn chrono_fmt(ts: f64) -> String {
 
 /// 서비스와 통신하는 백그라운드 스레드: 상태 폴링 + 이벤트 구독. 화면 갱신은 이벤트 루프로 넘긴다.
 fn spawn_ipc(weak: slint::Weak<MainWindow>) {
-    let rt = std::sync::Arc::new(tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().unwrap());
+    let rt = std::sync::Arc::new(
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap(),
+    );
     let (w1, rt1) = (weak.clone(), rt.clone());
     std::thread::spawn(move || {
         rt1.block_on(async move {
             let mut last_off: Option<Vec<(String, String, String)>> = None;
             loop {
-                let text = match kova_ipc::request(kova_ipc::PIPE_NAME, &kova_ipc::Request::Status).await {
+                let text = match kova_ipc::request(kova_ipc::PIPE_NAME, &kova_ipc::Request::Status)
+                    .await
+                {
                     Ok(evs) => match evs.first() {
-                        Some(kova_ipc::Event::Status { waiting, running }) => format!("서비스 연결됨 · 실행 중 {running} · 대기 {waiting}"),
+                        Some(kova_ipc::Event::Status { waiting, running }) => {
+                            format!("서비스 연결됨 · 실행 중 {running} · 대기 {waiting}")
+                        }
                         _ => "서비스 응답 이상".into(),
                     },
                     Err(_) => "서비스에 연결할 수 없음 (Kova 서비스가 꺼져 있습니다)".into(),
@@ -125,10 +212,23 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                 let snapshots = snaps();
                 let (alerts, lines, off) = (alert_rows(), setting_lines(), offsite_rows());
                 // 입력 중인 칸이 2초마다 초기화되지 않도록, 내용이 바뀐 때만 모델을 교체한다
-                let key: Vec<(String, String, String)> = off.iter().map(|o| (o.id.to_string(), o.name.to_string(), o.dir.to_string())).collect();
-                let off = if last_off.as_ref() == Some(&key) { None } else { last_off = Some(key); Some(off) };
-                let n = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir()).unacknowledged();
-                let alert = if n > 0 { format!("확인하지 않은 알림 {n}건 (백업 실패 등)") } else { String::new() };
+                let key: Vec<(String, String, String)> = off
+                    .iter()
+                    .map(|o| (o.id.to_string(), o.name.to_string(), o.dir.to_string()))
+                    .collect();
+                let off = if last_off.as_ref() == Some(&key) {
+                    None
+                } else {
+                    last_off = Some(key);
+                    Some(off)
+                };
+                let n = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir())
+                    .unacknowledged();
+                let alert = if n > 0 {
+                    format!("확인하지 않은 알림 {n}건 (백업 실패 등)")
+                } else {
+                    String::new()
+                };
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = w.upgrade() {
                         w.set_service_status(text.into());
@@ -152,16 +252,35 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                 let w = weak.clone();
                 let _ = kova_ipc::stream(kova_ipc::PIPE_NAME, &kova_ipc::Request::Subscribe, |e| {
                     let line = match e {
-                        kova_ipc::Event::JobStarted { profile_id, kind, .. } => format!("시작: {profile_id} ({kind})"),
-                        kova_ipc::Event::Progress { percent, current, .. } => format!("진행 {percent}% {current}"),
-                        kova_ipc::Event::JobFinished { profile_id, ok, message, .. } => format!("{} {profile_id}: {message}", if ok { "완료" } else { "실패" }),
+                        kova_ipc::Event::JobStarted {
+                            profile_id, kind, ..
+                        } => format!("시작: {profile_id} ({kind})"),
+                        kova_ipc::Event::Progress {
+                            percent, current, ..
+                        } => format!("진행 {percent}% {current}"),
+                        kova_ipc::Event::JobFinished {
+                            profile_id,
+                            ok,
+                            message,
+                            ..
+                        } => format!(
+                            "{} {profile_id}: {message}",
+                            if ok { "완료" } else { "실패" }
+                        ),
                         _ => return true,
                     };
                     let w = w.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = w.upgrade() {
                             let old = w.get_log_text().to_string();
-                            let keep: Vec<&str> = old.lines().rev().take(11).collect::<Vec<_>>().into_iter().rev().collect();
+                            let keep: Vec<&str> = old
+                                .lines()
+                                .rev()
+                                .take(11)
+                                .collect::<Vec<_>>()
+                                .into_iter()
+                                .rev()
+                                .collect();
                             w.set_log_text((keep.join("\n") + "\n" + &line).trim_start().into());
                         }
                     });
@@ -176,8 +295,17 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
 
 fn send(kind: &'static str, id: String) {
     std::thread::spawn(move || {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-        let _ = rt.block_on(kova_ipc::request(kova_ipc::PIPE_NAME, &kova_ipc::Request::RunNow { profile_id: id, kind: kind.into() }));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _ = rt.block_on(kova_ipc::request(
+            kova_ipc::PIPE_NAME,
+            &kova_ipc::Request::RunNow {
+                profile_id: id,
+                kind: kind.into(),
+            },
+        ));
     });
 }
 
@@ -189,7 +317,9 @@ fn check_update(weak: slint::Weak<MainWindow>) {
     std::thread::spawn(move || {
         let current = env!("CARGO_PKG_VERSION");
         let text = match kova_core::fetch::latest_tag(UPDATE_BASE, UPDATE_REPO) {
-            Ok(tag) if kova_core::update::is_newer(&tag, current) => format!("새 버전 {tag} 이(가) 있습니다 (현재 {current})"),
+            Ok(tag) if kova_core::update::is_newer(&tag, current) => {
+                format!("새 버전 {tag} 이(가) 있습니다 (현재 {current})")
+            }
             Ok(tag) => format!("최신입니다 (최신 {tag}, 현재 {current})"),
             Err(e) => format!("확인 실패: {e}"),
         };
@@ -207,16 +337,28 @@ fn install_update(weak: slint::Weak<MainWindow>) {
     std::thread::spawn(move || {
         let current = env!("CARGO_PKG_VERSION");
         let run = || -> Result<String, String> {
-            let tag = kova_core::fetch::latest_tag(UPDATE_BASE, UPDATE_REPO).map_err(|e| e.to_string())?;
+            let tag = kova_core::fetch::latest_tag(UPDATE_BASE, UPDATE_REPO)
+                .map_err(|e| e.to_string())?;
             if !kova_core::update::is_newer(&tag, current) {
                 return Ok(format!("이미 최신입니다 ({current})"));
             }
-            let pkg = kova_core::fetch::fetch_verified(UPDATE_BASE, UPDATE_REPO, &tag, kova_core::fetch::TRUSTED_KEYS, 500 << 20).map_err(|e| e.to_string())?;
+            let pkg = kova_core::fetch::fetch_verified(
+                UPDATE_BASE,
+                UPDATE_REPO,
+                &tag,
+                kova_core::fetch::TRUSTED_KEYS,
+                500 << 20,
+            )
+            .map_err(|e| e.to_string())?;
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
             let dir = exe.parent().ok_or("설치 폴더를 알 수 없음")?.to_path_buf();
             let backup = dir.join("update_backup");
-            let r = kova_core::install::apply(&pkg, &dir, &backup, &["kova-app.exe"]).map_err(|e| e.to_string())?;
-            Ok(format!("{tag} 설치 완료({}개 파일). 앱을 다시 시작하세요", r.files))
+            let r = kova_core::install::apply(&pkg, &dir, &backup, &["kova-app.exe"])
+                .map_err(|e| e.to_string())?;
+            Ok(format!(
+                "{tag} 설치 완료({}개 파일). 앱을 다시 시작하세요",
+                r.files
+            ))
         };
         let text = run().unwrap_or_else(|e| format!("설치하지 않음: {e}"));
         let _ = slint::invoke_from_event_loop(move || {
@@ -239,13 +381,17 @@ fn image_job(weak: slint::Weak<MainWindow>, image: String, target: Option<String
             });
         };
         let cancel = std::sync::atomic::AtomicBool::new(false);
-        let last = std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(5));
+        let last =
+            std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(5));
         let w2 = weak.clone();
         let progress = |s: &kova_image::Stats| {
             let mut l = last.lock().unwrap();
             if l.elapsed() >= std::time::Duration::from_secs(1) {
                 *l = std::time::Instant::now();
-                show(&w2, format!("진행 중… {:.1}GB 처리", s.raw_bytes as f64 / 1e9));
+                show(
+                    &w2,
+                    format!("진행 중… {:.1}GB 처리", s.raw_bytes as f64 / 1e9),
+                );
             }
         };
         let res: Result<String, String> = (|| {
@@ -253,13 +399,41 @@ fn image_job(weak: slint::Weak<MainWindow>, image: String, target: Option<String
             match &target {
                 None => {
                     let f = std::fs::File::open(img).map_err(|e| e.to_string())?;
-                    let (h, s) = kova_image::verify(std::io::BufReader::with_capacity(8 << 20, f), &cancel, &progress).map_err(|e| e.to_string())?;
-                    Ok(format!("검증 통과: 청크 {}개, 원본 {:.2}GB, 클러스터 {}/{}{}", s.chunks, s.raw_bytes as f64 / 1e9, s.clusters, h.used_clusters,
-                        if s.empty_chunks > 0 { format!(" (비어 있는 청크 {}개: 그 구간은 복원되지 않음)", s.empty_chunks) } else { String::new() }))
+                    let (h, s) = kova_image::verify(
+                        std::io::BufReader::with_capacity(8 << 20, f),
+                        &cancel,
+                        &progress,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(format!(
+                        "검증 통과: 청크 {}개, 원본 {:.2}GB, 클러스터 {}/{}{}",
+                        s.chunks,
+                        s.raw_bytes as f64 / 1e9,
+                        s.clusters,
+                        h.used_clusters,
+                        if s.empty_chunks > 0 {
+                            format!(
+                                " (비어 있는 청크 {}개: 그 구간은 복원되지 않음)",
+                                s.empty_chunks
+                            )
+                        } else {
+                            String::new()
+                        }
+                    ))
                 }
                 Some(t) => {
-                    let (_, s) = kova_image::restore::restore_image_to_file(img, std::path::Path::new(t), &cancel, &progress).map_err(|e| e.to_string())?;
-                    Ok(format!("복원 완료: {t} (청크 {}개, {:.2}GB)", s.chunks, s.raw_bytes as f64 / 1e9))
+                    let (_, s) = kova_image::restore::restore_image_to_file(
+                        img,
+                        std::path::Path::new(t),
+                        &cancel,
+                        &progress,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(format!(
+                        "복원 완료: {t} (청크 {}개, {:.2}GB)",
+                        s.chunks,
+                        s.raw_bytes as f64 / 1e9
+                    ))
                 }
             }
         })();
@@ -288,7 +462,8 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     w.on_run_gc(|id| send("gc", id.to_string()));
     w.on_ack_alerts(|| {
-        let _ = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir()).acknowledge_all();
+        let _ =
+            kova_core::alerts::AlertLog::new(&kova_service::default_config_dir()).acknowledge_all();
     });
     spawn_ipc(w.as_weak());
 
@@ -307,17 +482,21 @@ fn main() -> Result<(), slint::PlatformError> {
     let weak = w.as_weak();
     let (open_id, quit_id) = (open.id().clone(), quit.id().clone());
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(100), move || {
-        while let Ok(ev) = MenuEvent::receiver().try_recv() {
-            if ev.id == open_id {
-                if let Some(w) = weak.upgrade() {
-                    let _ = w.show();
+    timer.start(
+        slint::TimerMode::Repeated,
+        std::time::Duration::from_millis(100),
+        move || {
+            while let Ok(ev) = MenuEvent::receiver().try_recv() {
+                if ev.id == open_id {
+                    if let Some(w) = weak.upgrade() {
+                        let _ = w.show();
+                    }
+                } else if ev.id == quit_id {
+                    let _ = slint::quit_event_loop();
                 }
-            } else if ev.id == quit_id {
-                let _ = slint::quit_event_loop();
             }
-        }
-    });
+        },
+    );
 
     w.run()
 }

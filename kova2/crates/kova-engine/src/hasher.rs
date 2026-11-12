@@ -35,9 +35,13 @@ mod tests {
 
     #[test]
     fn hash_file_matches_hash_bytes() {
-        let path = std::env::temp_dir().join(format!("kova_hasher_test_{}.bin", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("kova_hasher_test_{}.bin", std::process::id()));
         let data: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
-        std::fs::File::create(&path).unwrap().write_all(&data).unwrap();
+        std::fs::File::create(&path)
+            .unwrap()
+            .write_all(&data)
+            .unwrap();
         let from_file = hash_file(&path).unwrap();
         std::fs::remove_file(&path).ok();
         assert_eq!(from_file, hash_bytes(&data));

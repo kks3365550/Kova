@@ -24,7 +24,10 @@ pub struct Policy {
 
 impl Default for Policy {
     fn default() -> Self {
-        Policy { retention_count: Some(30), retention_days: Some(60) }
+        Policy {
+            retention_count: Some(30),
+            retention_days: Some(60),
+        }
     }
 }
 
@@ -51,7 +54,11 @@ pub fn parse_timestamp(v: &serde_json::Value) -> f64 {
             if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
                 return dt.timestamp_millis() as f64 / 1000.0;
             }
-            for fmt in ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%d %H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S"] {
+            for fmt in [
+                "%Y-%m-%dT%H:%M:%S%.f",
+                "%Y-%m-%d %H:%M:%S%.f",
+                "%Y-%m-%dT%H:%M:%S",
+            ] {
                 if let Ok(nd) = NaiveDateTime::parse_from_str(s, fmt) {
                     if let Some(dt) = Local.from_local_datetime(&nd).single() {
                         return dt.timestamp_millis() as f64 / 1000.0;
@@ -82,10 +89,17 @@ pub fn select_expired(snapshots: &[SnapshotMeta], policy: Policy, now: f64) -> V
     for s in snapshots {
         groups.entry(s.profile_id.as_str()).or_default().push(s);
     }
-    let cutoff = policy.retention_days.filter(|d| *d > 0).map(|d| now - d as f64 * 86400.0);
+    let cutoff = policy
+        .retention_days
+        .filter(|d| *d > 0)
+        .map(|d| now - d as f64 * 86400.0);
     let mut out = std::collections::BTreeSet::new();
     for group in groups.values_mut() {
-        group.sort_by(|a, b| b.created_at.partial_cmp(&a.created_at).unwrap_or(std::cmp::Ordering::Equal));
+        group.sort_by(|a, b| {
+            b.created_at
+                .partial_cmp(&a.created_at)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         if let Some(count) = policy.retention_count.filter(|c| *c > 0) {
             if group.len() > count {
                 for s in &group[count..] {
@@ -129,12 +143,16 @@ pub fn list_snapshots(repo: &Path) -> std::io::Result<Vec<SnapshotMeta>> {
     }
     for e in fs::read_dir(&dir)? {
         let p = e?.path();
-        if p.extension().map_or(true, |x| x != "json") {
+        if p.extension().is_none_or(|x| x != "json") {
             continue;
         }
         let f = fs::File::open(&p)?;
-        let m: MetaOnly = serde_json::from_reader(std::io::BufReader::new(f))
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, format!("{}: {}", p.display(), e)))?;
+        let m: MetaOnly = serde_json::from_reader(std::io::BufReader::new(f)).map_err(|e| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("{}: {}", p.display(), e),
+            )
+        })?;
         let id = m
             .session_id
             .or(m.id)
@@ -163,7 +181,10 @@ pub fn apply(repo: &Path, policy: Policy) -> RetentionResult {
 /// (한 저장소를 여러 프로파일이 공유할 때 다른 프로파일의 정책으로 잘못 지우지 않기 위함)
 pub fn apply_for_profile(repo: &Path, profile_id: &str, policy: Policy) -> RetentionResult {
     if profile_id.is_empty() {
-        return RetentionResult { status: "no_profile".into(), ..Default::default() };
+        return RetentionResult {
+            status: "no_profile".into(),
+            ..Default::default()
+        };
     }
     apply_inner(repo, policy, Some(profile_id))
 }
@@ -172,20 +193,29 @@ fn apply_inner(repo: &Path, policy: Policy, only: Option<&str>) -> RetentionResu
     let mut snaps = match list_snapshots(repo) {
         Ok(s) => s,
         Err(e) => {
-            return RetentionResult { status: format!("list_failed: {}", e), ..Default::default() };
+            return RetentionResult {
+                status: format!("list_failed: {}", e),
+                ..Default::default()
+            };
         }
     };
     if let Some(pid) = only {
         snaps.retain(|s| s.profile_id == pid);
     }
     if snaps.len() <= 1 {
-        return RetentionResult { status: "safe_minimum".into(), ..Default::default() };
+        return RetentionResult {
+            status: "safe_minimum".into(),
+            ..Default::default()
+        };
     }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs_f64())
         .unwrap_or(0.0);
-    let mut res = RetentionResult { status: "ok".into(), ..Default::default() };
+    let mut res = RetentionResult {
+        status: "ok".into(),
+        ..Default::default()
+    };
     for id in select_expired(&snaps, policy, now) {
         // 경로 조작 방지: id 는 파일 이름 한 조각이어야 한다
         if id.is_empty() || id.contains(['/', '\\']) || id == "." || id == ".." {
@@ -209,36 +239,78 @@ mod tests {
     use super::*;
 
     fn s(id: &str, ts: f64, p: &str) -> SnapshotMeta {
-        SnapshotMeta { id: id.into(), created_at: ts, profile_id: p.into() }
+        SnapshotMeta {
+            id: id.into(),
+            created_at: ts,
+            profile_id: p.into(),
+        }
     }
     const DAY: f64 = 86400.0;
 
     #[test]
     fn single_snapshot_is_never_deleted() {
         let v = vec![s("a", 1.0, "")];
-        assert!(select_expired(&v, Policy { retention_count: Some(1), retention_days: Some(1) }, 1e9).is_empty());
+        assert!(select_expired(
+            &v,
+            Policy {
+                retention_count: Some(1),
+                retention_days: Some(1)
+            },
+            1e9
+        )
+        .is_empty());
     }
 
     #[test]
     fn count_limit_keeps_newest_n() {
-        let v: Vec<_> = (0..5).map(|i| s(&format!("s{}", i), 1000.0 + i as f64, "")).collect();
-        let del = select_expired(&v, Policy { retention_count: Some(2), retention_days: None }, 2000.0);
+        let v: Vec<_> = (0..5)
+            .map(|i| s(&format!("s{}", i), 1000.0 + i as f64, ""))
+            .collect();
+        let del = select_expired(
+            &v,
+            Policy {
+                retention_count: Some(2),
+                retention_days: None,
+            },
+            2000.0,
+        );
         assert_eq!(del, vec!["s0", "s1", "s2"]);
     }
 
     #[test]
     fn age_limit_never_deletes_newest_even_if_old() {
         let now = 1_000_000_000.0;
-        let v = vec![s("old1", now - 100.0 * DAY, ""), s("old2", now - 90.0 * DAY, "")];
-        let del = select_expired(&v, Policy { retention_count: None, retention_days: Some(60) }, now);
+        let v = vec![
+            s("old1", now - 100.0 * DAY, ""),
+            s("old2", now - 90.0 * DAY, ""),
+        ];
+        let del = select_expired(
+            &v,
+            Policy {
+                retention_count: None,
+                retention_days: Some(60),
+            },
+            now,
+        );
         assert_eq!(del, vec!["old1"]);
     }
 
     #[test]
     fn groups_by_profile_are_independent() {
         let now = 1_000_000_000.0;
-        let v = vec![s("a1", now - 1.0, "A"), s("a2", now - 2.0, "A"), s("b1", now - 3.0, "B")];
-        let del = select_expired(&v, Policy { retention_count: Some(1), retention_days: None }, now);
+        let v = vec![
+            s("a1", now - 1.0, "A"),
+            s("a2", now - 2.0, "A"),
+            s("b1", now - 3.0, "B"),
+        ];
+        let del = select_expired(
+            &v,
+            Policy {
+                retention_count: Some(1),
+                retention_days: None,
+            },
+            now,
+        );
         assert_eq!(del, vec!["a2"]);
     }
 
@@ -246,9 +318,15 @@ mod tests {
     fn parse_timestamp_handles_formats() {
         use serde_json::json;
         assert_eq!(parse_timestamp(&json!(1_700_000_000)), 1_700_000_000.0);
-        assert_eq!(parse_timestamp(&json!(1_700_000_000_000u64)), 1_700_000_000.0);
+        assert_eq!(
+            parse_timestamp(&json!(1_700_000_000_000u64)),
+            1_700_000_000.0
+        );
         assert_eq!(parse_timestamp(&json!("1700000000.5")), 1_700_000_000.5);
-        assert_eq!(parse_timestamp(&json!("2023-11-14T22:13:20+00:00")), 1_700_000_000.0);
+        assert_eq!(
+            parse_timestamp(&json!("2023-11-14T22:13:20+00:00")),
+            1_700_000_000.0
+        );
         assert!(parse_timestamp(&json!("2026-11-11T10:00:00")) > 0.0);
         assert_eq!(parse_timestamp(&json!("garbage")), 0.0);
         assert_eq!(parse_timestamp(&json!(null)), 0.0);
@@ -261,7 +339,13 @@ mod tests {
         fs::create_dir_all(&snaps).unwrap();
         fs::write(snaps.join("good.json"), r#"{"id":"good","created_at":1}"#).unwrap();
         fs::write(snaps.join("bad.json"), "not json").unwrap();
-        let r = apply(d.path(), Policy { retention_count: Some(1), retention_days: None });
+        let r = apply(
+            d.path(),
+            Policy {
+                retention_count: Some(1),
+                retention_days: None,
+            },
+        );
         assert!(r.status.starts_with("list_failed"));
         assert!(snaps.join("good.json").exists() && snaps.join("bad.json").exists());
     }
@@ -271,17 +355,46 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let snap = d.path().join("snapshots");
         fs::create_dir_all(&snap).unwrap();
-        for (id, ts, p) in [("a1", 100, "A"), ("a2", 200, "A"), ("a3", 300, "A"), ("b1", 100, "B"), ("b2", 200, "B"), ("old1", 1, ""), ("old2", 2, "")] {
-            let pj = if p.is_empty() { String::new() } else { format!(",\"profile_id\":\"{p}\"") };
-            fs::write(snap.join(format!("{id}.json")), format!("{{\"id\":\"{id}\",\"created_at\":{ts}{pj}}}")).unwrap();
+        for (id, ts, p) in [
+            ("a1", 100, "A"),
+            ("a2", 200, "A"),
+            ("a3", 300, "A"),
+            ("b1", 100, "B"),
+            ("b2", 200, "B"),
+            ("old1", 1, ""),
+            ("old2", 2, ""),
+        ] {
+            let pj = if p.is_empty() {
+                String::new()
+            } else {
+                format!(",\"profile_id\":\"{p}\"")
+            };
+            fs::write(
+                snap.join(format!("{id}.json")),
+                format!("{{\"id\":\"{id}\",\"created_at\":{ts}{pj}}}"),
+            )
+            .unwrap();
         }
-        let r = apply_for_profile(d.path(), "A", Policy { retention_count: Some(1), retention_days: None });
+        let r = apply_for_profile(
+            d.path(),
+            "A",
+            Policy {
+                retention_count: Some(1),
+                retention_days: None,
+            },
+        );
         let mut del = r.deleted_snapshots.clone();
         del.sort();
         assert_eq!(del, vec!["a1", "a2"]);
         for keep in ["a3", "b1", "b2", "old1", "old2"] {
-            assert!(snap.join(format!("{keep}.json")).exists(), "{keep} 가 지워짐");
+            assert!(
+                snap.join(format!("{keep}.json")).exists(),
+                "{keep} 가 지워짐"
+            );
         }
-        assert_eq!(apply_for_profile(d.path(), "", Policy::default()).status, "no_profile");
+        assert_eq!(
+            apply_for_profile(d.path(), "", Policy::default()).status,
+            "no_profile"
+        );
     }
 }

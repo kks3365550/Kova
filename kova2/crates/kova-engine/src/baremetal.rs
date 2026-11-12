@@ -11,16 +11,13 @@ use std::time::{Duration, Instant};
 use windows::core::{HRESULT, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
 use windows::Win32::Storage::FileSystem::{
-    CreateFileW, ReadFile, WriteFile, FILE_FLAG_NO_BUFFERING,
-    FILE_FLAG_OVERLAPPED, FILE_FLAG_WRITE_THROUGH, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+    CreateFileW, ReadFile, WriteFile, FILE_FLAG_NO_BUFFERING, FILE_FLAG_OVERLAPPED,
+    FILE_FLAG_WRITE_THROUGH, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::Memory::{
     VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
 };
-use windows::Win32::System::IO::{
-    CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED,
-};
+use windows::Win32::System::IO::{CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED};
 
 const SECTOR_SIZE: usize = 4096;
 
@@ -33,6 +30,7 @@ pub struct CloneProgress {
 
 struct AlignedBuffer {
     ptr: *mut u8,
+    #[allow(dead_code)]
     size: usize,
 }
 
@@ -42,14 +40,8 @@ unsafe impl Sync for AlignedBuffer {}
 impl AlignedBuffer {
     fn new(size: usize) -> Result<Self, String> {
         let aligned_size = (size + SECTOR_SIZE - 1) & !(SECTOR_SIZE - 1);
-        let ptr = unsafe {
-            VirtualAlloc(
-                None,
-                aligned_size,
-                MEM_COMMIT | MEM_RESERVE,
-                PAGE_READWRITE,
-            )
-        };
+        let ptr =
+            unsafe { VirtualAlloc(None, aligned_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE) };
         if ptr.is_null() {
             return Err("VirtualAlloc failed to allocate memory".to_string());
         }
@@ -78,7 +70,11 @@ struct OverlappedSlot {
 }
 
 fn to_wide_chars(s: &str) -> Vec<u16> {
-    Path::new(s).as_os_str().encode_wide().chain(std::iter::once(0)).collect()
+    Path::new(s)
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
 }
 
 /// Closes the handle on every exit path (early returns included).
@@ -109,7 +105,9 @@ pub fn run_baremetal_clone(
     if total_bytes == 0 {
         return Err("total_bytes must be greater than 0".into());
     }
-    if start_offset % SECTOR_SIZE as u64 != 0 || total_bytes % SECTOR_SIZE as u64 != 0 {
+    if !start_offset.is_multiple_of(SECTOR_SIZE as u64)
+        || !total_bytes.is_multiple_of(SECTOR_SIZE as u64)
+    {
         return Err(format!(
             "start_offset({}) and total_bytes({}) must be multiples of {} bytes",
             start_offset, total_bytes, SECTOR_SIZE
@@ -266,9 +264,8 @@ pub fn run_baremetal_clone(
             let aligned_read = (read_req + SECTOR_SIZE - 1) & !(SECTOR_SIZE - 1);
 
             let mut bytes_read = 0u32;
-            let read_slice = unsafe {
-                std::slice::from_raw_parts_mut(slots[slot_idx].buffer.ptr, aligned_read)
-            };
+            let read_slice =
+                unsafe { std::slice::from_raw_parts_mut(slots[slot_idx].buffer.ptr, aligned_read) };
 
             // Set file pointer for source read (source handle is synchronous)
             let mut read_ov = unsafe { std::mem::zeroed::<OVERLAPPED>() };
@@ -286,8 +283,14 @@ pub fn run_baremetal_clone(
 
             // The source handle is synchronous, so any error here is a real failure.
             if let Err(e) = read_res {
-                eprintln!("[RUST IOCP ERROR] ReadFile failed at offset {}: {:?}", current_offset, e);
-                failure = Some(format!("ReadFile failed at offset {}: {:?}", current_offset, e));
+                eprintln!(
+                    "[RUST IOCP ERROR] ReadFile failed at offset {}: {:?}",
+                    current_offset, e
+                );
+                failure = Some(format!(
+                    "ReadFile failed at offset {}: {:?}",
+                    current_offset, e
+                ));
                 free_slots.push(slot_idx);
                 break;
             }
@@ -310,13 +313,12 @@ pub fn run_baremetal_clone(
             slot.overlapped.Internal = 0;
             slot.overlapped.InternalHigh = 0;
             slot.overlapped.Anonymous.Anonymous.Offset = (current_offset & 0xFFFF_FFFF) as u32;
-            slot.overlapped.Anonymous.Anonymous.OffsetHigh = ((current_offset >> 32) & 0xFFFF_FFFF) as u32;
+            slot.overlapped.Anonymous.Anonymous.OffsetHigh =
+                ((current_offset >> 32) & 0xFFFF_FFFF) as u32;
             slot.in_flight = true;
             slot.bytes_written = aligned_read as u32;
 
-            let write_buf = unsafe {
-                std::slice::from_raw_parts(slot.buffer.ptr, aligned_read)
-            };
+            let write_buf = unsafe { std::slice::from_raw_parts(slot.buffer.ptr, aligned_read) };
 
             let write_res = unsafe {
                 WriteFile(
@@ -329,8 +331,14 @@ pub fn run_baremetal_clone(
 
             if let Err(e) = write_res {
                 if e.code() != ERROR_IO_PENDING_HR {
-                    eprintln!("[RUST IOCP ERROR] WriteFile failed at offset {}: {:?}", current_offset, e);
-                    failure = Some(format!("WriteFile failed at offset {}: {:?}", current_offset, e));
+                    eprintln!(
+                        "[RUST IOCP ERROR] WriteFile failed at offset {}: {:?}",
+                        current_offset, e
+                    );
+                    failure = Some(format!(
+                        "WriteFile failed at offset {}: {:?}",
+                        current_offset, e
+                    ));
                     slots[slot_idx].in_flight = false;
                     free_slots.push(slot_idx);
                     break;
@@ -360,7 +368,7 @@ pub fn run_baremetal_clone(
             // A null OVERLAPPED means timeout (or a port error): just wait again.
             if !p_overlapped.is_null() {
                 if let Some(idx) = (0..qd).find(|&i| {
-                    slots[i].in_flight && (&*slots[i].overlapped as *const OVERLAPPED) == p_overlapped
+                    slots[i].in_flight && std::ptr::eq(&*slots[i].overlapped, p_overlapped)
                 }) {
                     slots[idx].in_flight = false;
                     free_slots.push(idx);
@@ -382,7 +390,8 @@ pub fn run_baremetal_clone(
                             )
                         });
                     } else {
-                        completed_bytes.fetch_add(slots[idx].bytes_written as u64, Ordering::Relaxed);
+                        completed_bytes
+                            .fetch_add(slots[idx].bytes_written as u64, Ordering::Relaxed);
                     }
                 }
             }
@@ -440,7 +449,9 @@ mod tests {
     }
 
     fn make_source(path: &PathBuf, size: usize) -> Vec<u8> {
-        let data: Vec<u8> = (0..size).map(|i| ((i * 31 + i / 4096) % 251) as u8).collect();
+        let data: Vec<u8> = (0..size)
+            .map(|i| ((i * 31 + i / 4096) % 251) as u8)
+            .collect();
         fs::write(path, &data).unwrap();
         data
     }
@@ -458,8 +469,16 @@ mod tests {
         let data = make_source(&src, 8 * MB);
         make_target(&tgt, 8 * MB);
 
-        run_baremetal_clone(src.to_str().unwrap(), tgt.to_str().unwrap(), 0, (8 * MB) as u64, 4, 1, false)
-            .expect("clone should succeed");
+        run_baremetal_clone(
+            src.to_str().unwrap(),
+            tgt.to_str().unwrap(),
+            0,
+            (8 * MB) as u64,
+            4,
+            1,
+            false,
+        )
+        .expect("clone should succeed");
 
         assert_eq!(fs::read(&tgt).unwrap(), data);
     }
@@ -472,8 +491,19 @@ mod tests {
         make_source(&src, 4 * MB);
         make_target(&tgt, 8 * MB);
 
-        let res = run_baremetal_clone(src.to_str().unwrap(), tgt.to_str().unwrap(), 0, (8 * MB) as u64, 4, 1, false);
-        assert!(res.is_err(), "reading past source end must fail, not report success");
+        let res = run_baremetal_clone(
+            src.to_str().unwrap(),
+            tgt.to_str().unwrap(),
+            0,
+            (8 * MB) as u64,
+            4,
+            1,
+            false,
+        );
+        assert!(
+            res.is_err(),
+            "reading past source end must fail, not report success"
+        );
     }
 
     #[test]
@@ -484,7 +514,15 @@ mod tests {
         make_source(&src, MB);
         make_target(&tgt, MB);
 
-        let res = run_baremetal_clone(src.to_str().unwrap(), tgt.to_str().unwrap(), 0, 5000, 4, 1, false);
+        let res = run_baremetal_clone(
+            src.to_str().unwrap(),
+            tgt.to_str().unwrap(),
+            0,
+            5000,
+            4,
+            1,
+            false,
+        );
         assert!(res.is_err());
     }
 

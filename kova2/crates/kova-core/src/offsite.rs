@@ -35,7 +35,9 @@ impl std::fmt::Display for OffsiteError {
     }
 }
 impl From<io::Error> for OffsiteError {
-    fn from(e: io::Error) -> Self { Self::Io(e) }
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
 fn blob_path(root: &Path, hash: &str) -> PathBuf {
@@ -44,7 +46,9 @@ fn blob_path(root: &Path, hash: &str) -> PathBuf {
 }
 
 fn copy_atomic(src: &Path, dst: &Path) -> io::Result<u64> {
-    if let Some(p) = dst.parent() { fs::create_dir_all(p)?; }
+    if let Some(p) = dst.parent() {
+        fs::create_dir_all(p)?;
+    }
     let tmp = dst.with_extension("part");
     let n = fs::copy(src, &tmp)?;
     fs::rename(&tmp, dst)?;
@@ -55,36 +59,57 @@ fn hashes_of(m: SnapshotManifest) -> Vec<String> {
     let mut v = vec![];
     for fe in m.files() {
         v.extend(fe.chunks.into_iter().map(|c| c.hash));
-        if let Some(b) = fe.blob_id { v.push(b); }
-        if let Some(s) = fe.sha256 { v.push(s); }
+        if let Some(b) = fe.blob_id {
+            v.push(b);
+        }
+        if let Some(s) = fe.sha256 {
+            v.push(s);
+        }
     }
     v
 }
 
 /// repo 의 스냅샷을 dest 로 복제한다. 대상에 이미 있는 스냅샷은 건너뛴다.
-pub fn replicate(repo: &Path, dest: &Path, cancel: &AtomicBool) -> Result<ReplicaReport, OffsiteError> {
+pub fn replicate(
+    repo: &Path,
+    dest: &Path,
+    cancel: &AtomicBool,
+) -> Result<ReplicaReport, OffsiteError> {
     let mut rep = ReplicaReport::default();
     let snaps = repo.join("snapshots");
-    if !snaps.is_dir() { return Ok(rep); }
+    if !snaps.is_dir() {
+        return Ok(rep);
+    }
     let mut manifests: Vec<PathBuf> = fs::read_dir(&snaps)?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().map_or(false, |x| x == "json"))
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     manifests.sort();
     for mp in manifests {
         let name = mp.file_name().unwrap().to_owned();
         let dm = dest.join("snapshots").join(&name);
-        if dm.exists() { rep.snapshots_skipped += 1; continue; }
+        if dm.exists() {
+            rep.snapshots_skipped += 1;
+            continue;
+        }
         let m: SnapshotManifest = serde_json::from_reader(io::BufReader::new(fs::File::open(&mp)?))
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", mp.display())))?;
+            .map_err(|e| {
+                io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", mp.display()))
+            })?;
         let mut seen = std::collections::HashSet::new();
         for h in hashes_of(m) {
-            if !seen.insert(h.clone()) { continue; }
-            if cancel.load(Ordering::Relaxed) { return Err(OffsiteError::Cancelled); }
+            if !seen.insert(h.clone()) {
+                continue;
+            }
+            if cancel.load(Ordering::Relaxed) {
+                return Err(OffsiteError::Cancelled);
+            }
             let s = blob_path(repo, &h);
             let d = blob_path(dest, &h);
-            let Ok(sm) = fs::metadata(&s) else { return Err(OffsiteError::MissingBlob(h)); };
-            if fs::metadata(&d).map_or(false, |dm| dm.len() == sm.len()) {
+            let Ok(sm) = fs::metadata(&s) else {
+                return Err(OffsiteError::MissingBlob(h));
+            };
+            if fs::metadata(&d).is_ok_and(|dm| dm.len() == sm.len()) {
                 rep.blobs_skipped += 1;
                 continue;
             }
@@ -107,7 +132,14 @@ mod tests {
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("a.txt"), content).unwrap();
         let repo = d.join("repo");
-        let opts = BackupOptions { sources: vec![src], repo: repo.clone(), session_id: None, zstd_level: 3, exclude: vec![], profile_id: None };
+        let opts = BackupOptions {
+            sources: vec![src],
+            repo: repo.clone(),
+            session_id: None,
+            zstd_level: 3,
+            exclude: vec![],
+            profile_id: None,
+        };
         run_backup(&opts, &|_| {}, &AtomicBool::new(false)).unwrap();
         repo
     }
@@ -125,9 +157,14 @@ mod tests {
         assert!(crate::verify::verify_repo(&dest, true).unwrap().ok());
         // 두 번째는 전부 건너뜀
         let r2 = replicate(&repo, &dest, &no).unwrap();
-        assert_eq!((r2.snapshots_copied, r2.snapshots_skipped, r2.blobs_copied), (0, 1, 0));
+        assert_eq!(
+            (r2.snapshots_copied, r2.snapshots_skipped, r2.blobs_copied),
+            (0, 1, 0)
+        );
         // 매니페스트가 지워진 상태(중단 후 재개)에서는 블롭은 건너뛰고 매니페스트만 다시 복사
-        for e in fs::read_dir(dest.join("snapshots")).unwrap() { fs::remove_file(e.unwrap().path()).unwrap(); }
+        for e in fs::read_dir(dest.join("snapshots")).unwrap() {
+            fs::remove_file(e.unwrap().path()).unwrap();
+        }
         let r3 = replicate(&repo, &dest, &no).unwrap();
         assert_eq!((r3.snapshots_copied, r3.blobs_copied), (1, 0));
         assert!(r3.blobs_skipped >= 1);
@@ -138,13 +175,30 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let repo = make_repo(d.path(), "내용");
         let dest = d.path().join("offsite");
-        assert!(matches!(replicate(&repo, &dest, &AtomicBool::new(true)), Err(OffsiteError::Cancelled)));
-        assert!(!dest.join("snapshots").exists() || fs::read_dir(dest.join("snapshots")).unwrap().count() == 0);
+        assert!(matches!(
+            replicate(&repo, &dest, &AtomicBool::new(true)),
+            Err(OffsiteError::Cancelled)
+        ));
+        assert!(
+            !dest.join("snapshots").exists()
+                || fs::read_dir(dest.join("snapshots")).unwrap().count() == 0
+        );
         // 원본 블롭이 사라지면 오류이고 대상에 스냅샷이 생기지 않는다
-        let blob = fs::read_dir(repo.join("blobs")).unwrap().next().unwrap().unwrap().path();
+        let blob = fs::read_dir(repo.join("blobs"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
         let f = fs::read_dir(&blob).unwrap().next().unwrap().unwrap().path();
         fs::remove_file(f).unwrap();
-        assert!(matches!(replicate(&repo, &dest, &AtomicBool::new(false)), Err(OffsiteError::MissingBlob(_))));
-        assert!(!dest.join("snapshots").exists() || fs::read_dir(dest.join("snapshots")).unwrap().count() == 0);
+        assert!(matches!(
+            replicate(&repo, &dest, &AtomicBool::new(false)),
+            Err(OffsiteError::MissingBlob(_))
+        ));
+        assert!(
+            !dest.join("snapshots").exists()
+                || fs::read_dir(dest.join("snapshots")).unwrap().count() == 0
+        );
     }
 }

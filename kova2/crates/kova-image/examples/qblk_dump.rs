@@ -7,10 +7,20 @@ fn main() {
     let mut a = std::env::args().skip(1);
     let path = a.next().expect("경로가 필요합니다");
     let n: usize = a.next().and_then(|s| s.parse().ok()).unwrap_or(1000);
-    let mut r = Reader::new(BufReader::with_capacity(8 << 20, File::open(&path).expect("열기 실패"))).expect("헤더");
+    let mut r = Reader::new(BufReader::with_capacity(
+        8 << 20,
+        File::open(&path).expect("열기 실패"),
+    ))
+    .expect("헤더");
     for _ in 0..n {
         match r.next_chunk().expect("청크") {
-            Some(c) => println!("{} {} {} {}", c.lcn, c.cluster_count, c.raw.len(), crc32fast::hash(&c.raw)),
+            Some(c) => println!(
+                "{} {} {} {}",
+                c.lcn,
+                c.cluster_count,
+                c.raw.len(),
+                crc32fast::hash(&c.raw)
+            ),
             None => break,
         }
     }

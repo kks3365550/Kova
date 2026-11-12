@@ -26,8 +26,13 @@ impl std::fmt::Display for CryptoError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Corrupt(m) => write!(f, "손상된 블롭: {m}"),
-            Self::Auth => write!(f, "블롭 복호화 실패 (인증 태그 불일치: 키 오류 또는 데이터·AAD 손상)"),
-            Self::HashMismatch { expected, actual } => write!(f, "해시 불일치 (기대 {expected}, 실제 {actual})"),
+            Self::Auth => write!(
+                f,
+                "블롭 복호화 실패 (인증 태그 불일치: 키 오류 또는 데이터·AAD 손상)"
+            ),
+            Self::HashMismatch { expected, actual } => {
+                write!(f, "해시 불일치 (기대 {expected}, 실제 {actual})")
+            }
             Self::Io(e) => write!(f, "입출력 오류: {e}"),
             Self::Kdf(m) => write!(f, "키 파생 실패: {m}"),
         }
@@ -35,21 +40,40 @@ impl std::fmt::Display for CryptoError {
 }
 impl std::error::Error for CryptoError {}
 impl From<io::Error> for CryptoError {
-    fn from(e: io::Error) -> Self { Self::Io(e) }
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
 }
 
-pub fn hex(b: &[u8]) -> String { b.iter().map(|x| format!("{x:02x}")).collect() }
+pub fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
 pub fn unhex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 || !s.is_ascii() { return None; }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
+    if !s.len().is_multiple_of(2) || !s.is_ascii() {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
 }
 
 /// scrypt 로 32바이트 저장 키를 만든다 (파이썬 StorageKeyDeriver.derive 와 같은 값).
-pub fn derive_key(passphrase: &str, salt: &[u8], n: u32, r: u32, p: u32) -> Result<[u8; 32], CryptoError> {
-    if n < 2 || !n.is_power_of_two() { return Err(CryptoError::Kdf("n 은 2의 거듭제곱이어야 함".into())); }
-    let params = scrypt::Params::new(n.trailing_zeros() as u8, r, p, 32).map_err(|e| CryptoError::Kdf(e.to_string()))?;
+pub fn derive_key(
+    passphrase: &str,
+    salt: &[u8],
+    n: u32,
+    r: u32,
+    p: u32,
+) -> Result<[u8; 32], CryptoError> {
+    if n < 2 || !n.is_power_of_two() {
+        return Err(CryptoError::Kdf("n 은 2의 거듭제곱이어야 함".into()));
+    }
+    let params = scrypt::Params::new(n.trailing_zeros() as u8, r, p, 32)
+        .map_err(|e| CryptoError::Kdf(e.to_string()))?;
     let mut out = [0u8; 32];
-    scrypt::scrypt(passphrase.as_bytes(), salt, &params, &mut out).map_err(|e| CryptoError::Kdf(e.to_string()))?;
+    scrypt::scrypt(passphrase.as_bytes(), salt, &params, &mut out)
+        .map_err(|e| CryptoError::Kdf(e.to_string()))?;
     Ok(out)
 }
 
@@ -72,20 +96,37 @@ pub struct CryptoEngine {
 }
 
 impl CryptoEngine {
-    pub fn new(key: &[u8; 32]) -> Self { Self { cipher: Aes256Gcm::new(key.into()) } }
+    pub fn new(key: &[u8; 32]) -> Self {
+        Self {
+            cipher: Aes256Gcm::new(key.into()),
+        }
+    }
 
     pub fn from_passphrase(pass: &str, salt: &[u8]) -> Result<Self, CryptoError> {
-        Ok(Self::new(&derive_key(pass, salt, SCRYPT_N, SCRYPT_R, SCRYPT_P)?))
+        Ok(Self::new(&derive_key(
+            pass, salt, SCRYPT_N, SCRYPT_R, SCRYPT_P,
+        )?))
     }
 
     /// 평문 → zstd → AES-GCM. plain_hash 는 중복제거 키(평문 SHA-256 hex)이며 AAD 에 묶인다.
-    pub fn encrypt_blob(&self, plain: &[u8], plain_hash: &str, level: i32) -> Result<Vec<u8>, CryptoError> {
+    pub fn encrypt_blob(
+        &self,
+        plain: &[u8],
+        plain_hash: &str,
+        level: i32,
+    ) -> Result<Vec<u8>, CryptoError> {
         let comp = zstd::encode_all(plain, level)?;
         let nonce: [u8; 12] = random_bytes();
         let aad = blob_aad(plain_hash);
         let ct = self
             .cipher
-            .encrypt(Nonce::from_slice(&nonce), Payload { msg: &comp, aad: &aad })
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &comp,
+                    aad: &aad,
+                },
+            )
             .map_err(|_| CryptoError::Auth)?;
         let mut out = Vec::with_capacity(16 + ct.len());
         out.extend_from_slice(MAGIC_V1);
@@ -96,40 +137,69 @@ impl CryptoEngine {
 
     /// v0(평문 zstd)·v1(암호화) 모두 복호화하고 해시를 재검증한다.
     pub fn decrypt_blob(&self, blob: &[u8], expected_hash: &str) -> Result<Vec<u8>, CryptoError> {
-        if blob.len() < 4 { return Err(CryptoError::Corrupt("길이가 너무 짧음".into())); }
+        if blob.len() < 4 {
+            return Err(CryptoError::Corrupt("길이가 너무 짧음".into()));
+        }
         let comp = if &blob[..4] == MAGIC_V1 {
-            if blob.len() < 4 + 12 + 16 { return Err(CryptoError::Corrupt("헤더/태그 길이 부족".into())); }
+            if blob.len() < 4 + 12 + 16 {
+                return Err(CryptoError::Corrupt("헤더/태그 길이 부족".into()));
+            }
             let aad = blob_aad(expected_hash);
             self.cipher
-                .decrypt(Nonce::from_slice(&blob[4..16]), Payload { msg: &blob[16..], aad: &aad })
+                .decrypt(
+                    Nonce::from_slice(&blob[4..16]),
+                    Payload {
+                        msg: &blob[16..],
+                        aad: &aad,
+                    },
+                )
                 .map_err(|_| CryptoError::Auth)?
         } else {
-            if blob[..4] != ZSTD_MAGIC { return Err(CryptoError::Corrupt("알 수 없는 매직".into())); }
+            if blob[..4] != ZSTD_MAGIC {
+                return Err(CryptoError::Corrupt("알 수 없는 매직".into()));
+            }
             blob.to_vec()
         };
         let plain = zstd::decode_all(&comp[..]).map_err(|e| CryptoError::Corrupt(e.to_string()))?;
         let actual = hex(&Sha256::digest(&plain));
         if !actual.eq_ignore_ascii_case(expected_hash) {
-            return Err(CryptoError::HashMismatch { expected: expected_hash.into(), actual });
+            return Err(CryptoError::HashMismatch {
+                expected: expected_hash.into(),
+                actual,
+            });
         }
         Ok(plain)
     }
 
     /// CAS 원자적 저장. 이미 있으면 (경로, false). 임시 파일 → fsync → 읽기 전용 → rename.
-    pub fn save_blob_atomic(&self, repo: &Path, plain: &[u8], plain_hash: &str, level: i32) -> Result<(PathBuf, bool), CryptoError> {
+    pub fn save_blob_atomic(
+        &self,
+        repo: &Path,
+        plain: &[u8],
+        plain_hash: &str,
+        level: i32,
+    ) -> Result<(PathBuf, bool), CryptoError> {
         let dir = repo.join("blobs").join(&plain_hash[..2]);
         let path = dir.join(format!("{plain_hash}.blob"));
-        if fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) { return Ok((path, false)); }
+        if fs::metadata(&path).map(|m| m.len() > 0).unwrap_or(false) {
+            return Ok((path, false));
+        }
         let enc = self.encrypt_blob(plain, plain_hash, level)?;
         fs::create_dir_all(&dir)?;
-        let tmp = dir.join(format!("{plain_hash}.blob.tmp_{}_{}", std::process::id(), hex(&random_bytes::<4>())));
+        let tmp = dir.join(format!(
+            "{plain_hash}.blob.tmp_{}_{}",
+            std::process::id(),
+            hex(&random_bytes::<4>())
+        ));
         let res = (|| -> io::Result<bool> {
             use std::io::Write;
             let mut f = fs::File::create(&tmp)?;
             f.write_all(&enc)?;
             f.sync_all()?;
             drop(f);
-            if path.exists() { return Ok(false); }
+            if path.exists() {
+                return Ok(false);
+            }
             let mut perm = fs::metadata(&tmp)?.permissions();
             perm.set_readonly(true);
             fs::set_permissions(&tmp, perm)?;
@@ -156,7 +226,9 @@ impl CryptoEngine {
 mod tests {
     use super::*;
 
-    fn sha(d: &[u8]) -> String { hex(&Sha256::digest(d)) }
+    fn sha(d: &[u8]) -> String {
+        hex(&Sha256::digest(d))
+    }
 
     #[test]
     fn scrypt_matches_python_cryptography() {
@@ -175,7 +247,10 @@ mod tests {
         assert_eq!(&blob[..4], MAGIC_V1);
         assert_eq!(e.decrypt_blob(&blob, &h).unwrap(), data);
         // 다른 해시(AAD)로는 복호화 불가
-        assert!(matches!(e.decrypt_blob(&blob, &sha(b"x")), Err(CryptoError::Auth)));
+        assert!(matches!(
+            e.decrypt_blob(&blob, &sha(b"x")),
+            Err(CryptoError::Auth)
+        ));
         // 다른 키 불가
         let e2 = CryptoEngine::from_passphrase("다른", &[7u8; 16]).unwrap();
         assert!(matches!(e2.decrypt_blob(&blob, &h), Err(CryptoError::Auth)));
@@ -199,7 +274,10 @@ mod tests {
         let data = b"legacy".to_vec();
         let v0 = zstd::encode_all(&data[..], 1).unwrap();
         assert_eq!(e.decrypt_blob(&v0, &sha(&data)).unwrap(), data);
-        assert!(matches!(e.decrypt_blob(&v0, &sha(b"other")), Err(CryptoError::HashMismatch { .. })));
+        assert!(matches!(
+            e.decrypt_blob(&v0, &sha(b"other")),
+            Err(CryptoError::HashMismatch { .. })
+        ));
     }
 
     #[test]
@@ -222,7 +300,10 @@ mod tests {
     fn python_made_blob_and_key_are_compatible() {
         let salt: Vec<u8> = (0u8..16).collect();
         let key = derive_key("한글 pass", &salt, SCRYPT_N, SCRYPT_R, SCRYPT_P).unwrap();
-        assert_eq!(hex(&key), "b42bd0d36575380adf82620949a9a30a53099f9c777b45007dcf05276e019506");
+        assert_eq!(
+            hex(&key),
+            "b42bd0d36575380adf82620949a9a30a53099f9c777b45007dcf05276e019506"
+        );
         let h = "e81a54d87adae860c120b83890cfd4fa1d6b8aca6b7fc3648c19ca69ff3837e2";
         let blob = unhex("454e430196f322604aeda5195cbc4c7360ae23da47e27ad43253f44bf528723ef79a6e33bb13bd5580caf7c835805fee0c5951e5c6f9f80c831f5e1fef4609588048").unwrap();
         let plain = CryptoEngine::new(&key).decrypt_blob(&blob, h).unwrap();

@@ -1,8 +1,8 @@
+use fastcdc::FastCDC;
+use memmap2::Mmap;
 use std::fs::File;
 use std::io;
 use std::path::Path;
-use fastcdc::FastCDC;
-use memmap2::Mmap;
 
 const ONE_MIB: usize = 1024 * 1024;
 const MIN_CHUNK_SIZE: usize = 256 * 1024; // 256 KB

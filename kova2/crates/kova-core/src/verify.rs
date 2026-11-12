@@ -12,9 +12,19 @@ use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Problem {
-    MissingBlob { snapshot: String, path: String, hash: String },
-    CorruptBlob { hash: String, reason: String },
-    BadManifest { file: String, reason: String },
+    MissingBlob {
+        snapshot: String,
+        path: String,
+        hash: String,
+    },
+    CorruptBlob {
+        hash: String,
+        reason: String,
+    },
+    BadManifest {
+        file: String,
+        reason: String,
+    },
 }
 
 #[derive(Debug, Default)]
@@ -40,7 +50,7 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
     let dir = repo.join("snapshots");
     for e in fs::read_dir(&dir)? {
         let p = e?.path();
-        if p.extension().map_or(true, |x| x != "json") {
+        if p.extension().is_none_or(|x| x != "json") {
             continue;
         }
         let name = p.file_name().unwrap().to_string_lossy().to_string();
@@ -50,7 +60,8 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
         {
             Ok(m) => m,
             Err(reason) => {
-                rep.problems.push(Problem::BadManifest { file: name, reason });
+                rep.problems
+                    .push(Problem::BadManifest { file: name, reason });
                 continue;
             }
         };
@@ -82,7 +93,10 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
                 let raw = match compressor::decompress(&comp) {
                     Ok(r) => r,
                     Err(e) => {
-                        return Some(Problem::CorruptBlob { hash: hash.clone(), reason: format!("압축 해제 실패: {}", e) })
+                        return Some(Problem::CorruptBlob {
+                            hash: hash.clone(),
+                            reason: format!("압축 해제 실패: {}", e),
+                        })
                     }
                 };
                 if *len != 0 && raw.len() != *len {
@@ -92,7 +106,10 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
                     });
                 }
                 if &hasher::hash_bytes(&raw) != hash {
-                    return Some(Problem::CorruptBlob { hash: hash.clone(), reason: "해시 불일치".into() });
+                    return Some(Problem::CorruptBlob {
+                        hash: hash.clone(),
+                        reason: "해시 불일치".into(),
+                    });
                 }
                 None
             })
@@ -111,7 +128,8 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let cas = CasStorage::new(d.path()).unwrap();
         let hash = hasher::hash_bytes(data);
-        cas.save_blob(&hash, &compressor::compress(data, 3).unwrap()).unwrap();
+        cas.save_blob(&hash, &compressor::compress(data, 3).unwrap())
+            .unwrap();
         fs::write(
             d.path().join("snapshots").join("s1.json"),
             format!(
@@ -136,7 +154,13 @@ mod tests {
     #[test]
     fn missing_blob_is_reported() {
         let (d, hash) = make_repo(b"data");
-        fs::remove_file(d.path().join("blobs").join(&hash[..2]).join(format!("{}.blob", hash))).unwrap();
+        fs::remove_file(
+            d.path()
+                .join("blobs")
+                .join(&hash[..2])
+                .join(format!("{}.blob", hash)),
+        )
+        .unwrap();
         let r = verify_repo(d.path(), false).unwrap();
         assert!(matches!(r.problems[0], Problem::MissingBlob { .. }));
     }
@@ -146,16 +170,34 @@ mod tests {
         let (d, hash) = make_repo(b"original content");
         // 정상 압축본이지만 내용이 다른 데이터로 바꿔치기 (해시 불일치)
         let evil = compressor::compress(b"tampered content", 3).unwrap();
-        fs::write(d.path().join("blobs").join(&hash[..2]).join(format!("{}.blob", hash)), evil).unwrap();
+        fs::write(
+            d.path()
+                .join("blobs")
+                .join(&hash[..2])
+                .join(format!("{}.blob", hash)),
+            evil,
+        )
+        .unwrap();
         assert!(verify_repo(d.path(), false).unwrap().ok());
         let r = verify_repo(d.path(), true).unwrap();
-        assert!(matches!(r.problems[0], Problem::CorruptBlob { .. }), "{:?}", r.problems);
+        assert!(
+            matches!(r.problems[0], Problem::CorruptBlob { .. }),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]
     fn garbage_blob_is_caught() {
         let (d, hash) = make_repo(b"original content");
-        fs::write(d.path().join("blobs").join(&hash[..2]).join(format!("{}.blob", hash)), b"not zstd").unwrap();
+        fs::write(
+            d.path()
+                .join("blobs")
+                .join(&hash[..2])
+                .join(format!("{}.blob", hash)),
+            b"not zstd",
+        )
+        .unwrap();
         let r = verify_repo(d.path(), true).unwrap();
         assert!(matches!(r.problems[0], Problem::CorruptBlob { .. }));
     }
@@ -165,6 +207,9 @@ mod tests {
         let (d, _) = make_repo(b"data");
         fs::write(d.path().join("snapshots").join("bad.json"), "{{{").unwrap();
         let r = verify_repo(d.path(), false).unwrap();
-        assert!(r.problems.iter().any(|p| matches!(p, Problem::BadManifest { .. })));
+        assert!(r
+            .problems
+            .iter()
+            .any(|p| matches!(p, Problem::BadManifest { .. })));
     }
 }

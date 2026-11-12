@@ -20,16 +20,26 @@ pub struct Alert {
 pub struct AlertLog(PathBuf);
 
 impl AlertLog {
-    pub fn new(config_dir: &Path) -> Self { Self(config_dir.join("alerts.json")) }
+    pub fn new(config_dir: &Path) -> Self {
+        Self(config_dir.join("alerts.json"))
+    }
 
     pub fn list(&self) -> Vec<Alert> {
-        std::fs::read(&self.0).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        std::fs::read(&self.0)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default()
     }
 
     fn save(&self, v: &[Alert]) -> io::Result<()> {
-        if let Some(p) = self.0.parent() { std::fs::create_dir_all(p)?; }
+        if let Some(p) = self.0.parent() {
+            std::fs::create_dir_all(p)?;
+        }
         let tmp = self.0.with_extension("tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(v).map_err(io::Error::other)?)?;
+        std::fs::write(
+            &tmp,
+            serde_json::to_vec_pretty(v).map_err(io::Error::other)?,
+        )?;
         std::fs::rename(&tmp, &self.0)
     }
 
@@ -37,11 +47,15 @@ impl AlertLog {
         let mut v = self.list();
         v.push(a);
         let n = v.len();
-        if n > MAX_ALERTS { v.drain(0..n - MAX_ALERTS); }
+        if n > MAX_ALERTS {
+            v.drain(0..n - MAX_ALERTS);
+        }
         self.save(&v)
     }
 
-    pub fn unacknowledged(&self) -> usize { self.list().iter().filter(|a| !a.acknowledged).count() }
+    pub fn unacknowledged(&self) -> usize {
+        self.list().iter().filter(|a| !a.acknowledged).count()
+    }
 
     pub fn acknowledge_all(&self) -> io::Result<()> {
         let mut v = self.list();
@@ -54,14 +68,24 @@ impl AlertLog {
 mod tests {
     use super::*;
 
-    fn a(i: usize) -> Alert { Alert { at: i as f64, profile_id: "p".into(), level: "error".into(), message: format!("m{i}"), acknowledged: false } }
+    fn a(i: usize) -> Alert {
+        Alert {
+            at: i as f64,
+            profile_id: "p".into(),
+            level: "error".into(),
+            message: format!("m{i}"),
+            acknowledged: false,
+        }
+    }
 
     #[test]
     fn push_list_ack_and_cap() {
         let d = tempfile::tempdir().unwrap();
         let l = AlertLog::new(d.path());
         assert!(l.list().is_empty());
-        for i in 0..105 { l.push(a(i)).unwrap(); }
+        for i in 0..105 {
+            l.push(a(i)).unwrap();
+        }
         let v = l.list();
         assert_eq!(v.len(), 100);
         assert_eq!(v[0].message, "m5", "오래된 것부터 버린다");

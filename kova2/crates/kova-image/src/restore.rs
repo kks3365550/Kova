@@ -23,20 +23,46 @@ impl std::fmt::Display for RestoreError {
         }
     }
 }
-impl From<std::io::Error> for RestoreError { fn from(e: std::io::Error) -> Self { Self::Io(e) } }
-impl From<QblkError> for RestoreError { fn from(e: QblkError) -> Self { Self::Image(e) } }
+impl From<std::io::Error> for RestoreError {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+impl From<QblkError> for RestoreError {
+    fn from(e: QblkError) -> Self {
+        Self::Image(e)
+    }
+}
 
 /// NTFS 희소 파일로 표시한다(안 하면 LCN 사이 빈 구간이 실제로 0으로 채워져 볼륨 전체 크기만큼 쓰게 된다). 실패해도 복원은 계속된다.
 #[cfg(windows)]
 fn mark_sparse(f: &File) {
     use std::os::windows::io::AsRawHandle;
     extern "system" {
-        fn DeviceIoControl(h: *mut core::ffi::c_void, code: u32, inb: *const u8, inlen: u32, outb: *mut u8, outlen: u32, ret: *mut u32, ov: *mut core::ffi::c_void) -> i32;
+        fn DeviceIoControl(
+            h: *mut core::ffi::c_void,
+            code: u32,
+            inb: *const u8,
+            inlen: u32,
+            outb: *mut u8,
+            outlen: u32,
+            ret: *mut u32,
+            ov: *mut core::ffi::c_void,
+        ) -> i32;
     }
     const FSCTL_SET_SPARSE: u32 = 0x000900C4;
     let mut ret = 0u32;
     unsafe {
-        DeviceIoControl(f.as_raw_handle() as *mut _, FSCTL_SET_SPARSE, std::ptr::null(), 0, std::ptr::null_mut(), 0, &mut ret, std::ptr::null_mut());
+        DeviceIoControl(
+            f.as_raw_handle() as *mut _,
+            FSCTL_SET_SPARSE,
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            0,
+            &mut ret,
+            std::ptr::null_mut(),
+        );
     }
 }
 #[cfg(not(windows))]
@@ -46,12 +72,24 @@ fn mark_sparse(_f: &File) {}
 pub fn check_target(target: &Path) -> Result<(), RestoreError> {
     let s = target.to_string_lossy().replace('/', "\\");
     let bad = |why: &str| Err(RestoreError::UnsafeTarget(format!("{s} ({why})")));
-    if s.starts_with("\\\\.\\") || s.starts_with("\\\\?\\") { return bad("장치/확장 경로"); }
+    if s.starts_with("\\\\.\\") || s.starts_with("\\\\?\\") {
+        return bad("장치/확장 경로");
+    }
     let b = s.as_bytes();
-    if b.len() <= 3 && b.len() >= 2 && b[1] == b':' { return bad("드라이브 루트"); }
-    if target.file_name().is_none() { return bad("파일 이름이 없음"); }
-    if target.exists() { return bad("이미 존재함 — 덮어쓰지 않음"); }
-    match target.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase()) {
+    if b.len() <= 3 && b.len() >= 2 && b[1] == b':' {
+        return bad("드라이브 루트");
+    }
+    if target.file_name().is_none() {
+        return bad("파일 이름이 없음");
+    }
+    if target.exists() {
+        return bad("이미 존재함 — 덮어쓰지 않음");
+    }
+    match target
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase())
+    {
         Some(e) if ["img", "raw", "vhd", "vhdx", "bin"].contains(&e.as_str()) => Ok(()),
         _ => bad("확장자는 img/raw/vhd/vhdx/bin 만 허용"),
     }
@@ -67,7 +105,10 @@ pub fn restore_image_to_file(
     check_target(target)?;
     let src = BufReader::with_capacity(8 << 20, File::open(image)?);
     // create_new: 검사와 생성 사이에 같은 이름이 생겨도 덮어쓰지 않는다
-    let f = OpenOptions::new().write(true).create_new(true).open(target)?;
+    let f = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(target)?;
     mark_sparse(&f);
     let mut out = BufWriter::with_capacity(8 << 20, f);
     match restore_to(src, &mut out, cancel, progress) {
@@ -77,7 +118,9 @@ pub fn restore_image_to_file(
             // 마지막 클러스터들이 비어 있어도 파일 크기는 볼륨 전체 크기로 맞춘다(안 그러면 NTFS 가 RAW 로 보인다)
             let full = r.0.total_clusters * r.0.cluster_size as u64;
             let f = out.into_inner().map_err(|e| e.into_error())?;
-            if f.metadata()?.len() < full { f.set_len(full)?; }
+            if f.metadata()?.len() < full {
+                f.set_len(full)?;
+            }
             Ok(r)
         }
         Err(e) => {
@@ -96,14 +139,33 @@ mod tests {
 
     #[test]
     fn device_drive_and_existing_targets_are_refused() {
-        for t in [r"\\.\PhysicalDrive0", r"\\?\Volume{1234}\x.img", r"C:", r"C:\", "D:", r"\\.\C:"] {
-            assert!(matches!(check_target(Path::new(t)), Err(RestoreError::UnsafeTarget(_))), "{t}");
+        for t in [
+            r"\\.\PhysicalDrive0",
+            r"\\?\Volume{1234}\x.img",
+            r"C:",
+            r"C:\",
+            "D:",
+            r"\\.\C:",
+        ] {
+            assert!(
+                matches!(
+                    check_target(Path::new(t)),
+                    Err(RestoreError::UnsafeTarget(_))
+                ),
+                "{t}"
+            );
         }
         let d = tempfile::tempdir().unwrap();
         let existing = d.path().join("a.img");
         fs::write(&existing, b"x").unwrap();
-        assert!(matches!(check_target(&existing), Err(RestoreError::UnsafeTarget(_))));
-        assert!(matches!(check_target(&d.path().join("a.exe")), Err(RestoreError::UnsafeTarget(_))));
+        assert!(matches!(
+            check_target(&existing),
+            Err(RestoreError::UnsafeTarget(_))
+        ));
+        assert!(matches!(
+            check_target(&d.path().join("a.exe")),
+            Err(RestoreError::UnsafeTarget(_))
+        ));
         assert!(check_target(&d.path().join("new.vhd")).is_ok());
     }
 
@@ -116,9 +178,15 @@ mod tests {
         let (h, st) = restore_image_to_file(&img, &out, &AtomicBool::new(false), &|_| {}).unwrap();
         assert_eq!(st.clusters, 6);
         assert!(fs::metadata(&out).unwrap().len() >= 101 * h.cluster_size as u64);
-        assert_eq!(fs::metadata(&out).unwrap().len(), h.total_clusters * h.cluster_size as u64);
+        assert_eq!(
+            fs::metadata(&out).unwrap().len(),
+            h.total_clusters * h.cluster_size as u64
+        );
         // 같은 대상으로 다시 → 덮어쓰지 않고 거부
-        assert!(matches!(restore_image_to_file(&img, &out, &AtomicBool::new(false), &|_| {}), Err(RestoreError::UnsafeTarget(_))));
+        assert!(matches!(
+            restore_image_to_file(&img, &out, &AtomicBool::new(false), &|_| {}),
+            Err(RestoreError::UnsafeTarget(_))
+        ));
         // 깨진 이미지 → 대상 파일이 남지 않는다
         let bad = d.path().join("bad.qblk");
         let mut b = PY.to_vec();
@@ -130,7 +198,10 @@ mod tests {
         assert!(!out2.exists());
         // 취소 → 남지 않는다
         let out3 = d.path().join("r3.img");
-        assert!(matches!(restore_image_to_file(&img, &out3, &AtomicBool::new(true), &|_| {}), Err(RestoreError::Image(QblkError::Cancelled))));
+        assert!(matches!(
+            restore_image_to_file(&img, &out3, &AtomicBool::new(true), &|_| {}),
+            Err(RestoreError::Image(QblkError::Cancelled))
+        ));
         assert!(!out3.exists());
     }
 }

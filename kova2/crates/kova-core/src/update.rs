@@ -12,7 +12,11 @@ pub fn parse_version(s: &str) -> Vec<u64> {
             d.parse().unwrap_or(0)
         })
         .collect();
-    if parts.is_empty() { vec![0, 0, 0] } else { parts }
+    if parts.is_empty() {
+        vec![0, 0, 0]
+    } else {
+        parts
+    }
 }
 
 /// 자리 수가 달라도 뒤를 0 으로 채워 비교한다('2.17' == '2.17.0').
@@ -34,7 +38,9 @@ pub enum VerifyError {
 impl std::fmt::Display for VerifyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::HashMismatch { expected, actual } => write!(f, "SHA-256 불일치(기대 {expected}, 실제 {actual})"),
+            Self::HashMismatch { expected, actual } => {
+                write!(f, "SHA-256 불일치(기대 {expected}, 실제 {actual})")
+            }
             Self::NoSignature => write!(f, "서명이 없는 업데이트는 설치하지 않습니다"),
             Self::NoTrustedKeys => write!(f, "신뢰할 공개키가 없습니다"),
             Self::BadSignature => write!(f, "서명 검증 실패"),
@@ -43,14 +49,30 @@ impl std::fmt::Display for VerifyError {
 }
 
 /// 패키지 바이트의 SHA-256(기대값이 있으면)과 Ed25519 서명(신뢰 키 중 하나)을 검증한다.
-pub fn verify_package(bytes: &[u8], expected_sha256: &str, signature_hex: &str, trusted_pems: &[&str]) -> Result<(), VerifyError> {
+pub fn verify_package(
+    bytes: &[u8],
+    expected_sha256: &str,
+    signature_hex: &str,
+    trusted_pems: &[&str],
+) -> Result<(), VerifyError> {
     let actual = format!("{:x}", Sha256::digest(bytes));
     if !expected_sha256.is_empty() && !actual.eq_ignore_ascii_case(expected_sha256) {
-        return Err(VerifyError::HashMismatch { expected: expected_sha256.to_lowercase(), actual });
+        return Err(VerifyError::HashMismatch {
+            expected: expected_sha256.to_lowercase(),
+            actual,
+        });
     }
-    if signature_hex.is_empty() { return Err(VerifyError::NoSignature); }
-    if trusted_pems.is_empty() { return Err(VerifyError::NoTrustedKeys); }
-    if crate::sign::verify_bytes_any(bytes, signature_hex, trusted_pems) { Ok(()) } else { Err(VerifyError::BadSignature) }
+    if signature_hex.is_empty() {
+        return Err(VerifyError::NoSignature);
+    }
+    if trusted_pems.is_empty() {
+        return Err(VerifyError::NoTrustedKeys);
+    }
+    if crate::sign::verify_bytes_any(bytes, signature_hex, trusted_pems) {
+        Ok(())
+    } else {
+        Err(VerifyError::BadSignature)
+    }
 }
 
 #[cfg(test)]
@@ -69,7 +91,10 @@ mod tests {
     fn newer_means_strictly_greater_numerically() {
         assert!(is_newer("2.17.83", "2.17.82"));
         assert!(is_newer("2.18", "2.17.99"));
-        assert!(is_newer("v10.0.0", "9.99.99"), "문자열 비교가 아니라 숫자 비교");
+        assert!(
+            is_newer("v10.0.0", "9.99.99"),
+            "문자열 비교가 아니라 숫자 비교"
+        );
         assert!(!is_newer("2.17.82", "2.17.82"));
         assert!(!is_newer("2.17", "2.17.0"));
         assert!(!is_newer("2.17.81", "2.17.82"));
@@ -82,12 +107,31 @@ mod tests {
         let sig = crate::sign::sign_bytes(data, &private).unwrap();
         let sha = format!("{:x}", Sha256::digest(data));
         assert_eq!(verify_package(data, &sha, &sig, &[&public]), Ok(()));
-        assert_eq!(verify_package(data, "", &sig, &[&public]), Ok(()), "기대 해시를 안 줘도 서명이 맞으면 통과");
-        assert!(matches!(verify_package(data, &"0".repeat(64), &sig, &[&public]), Err(VerifyError::HashMismatch { .. })));
-        assert_eq!(verify_package(data, &sha, "", &[&public]), Err(VerifyError::NoSignature));
-        assert_eq!(verify_package(data, &sha, &sig, &[]), Err(VerifyError::NoTrustedKeys));
+        assert_eq!(
+            verify_package(data, "", &sig, &[&public]),
+            Ok(()),
+            "기대 해시를 안 줘도 서명이 맞으면 통과"
+        );
+        assert!(matches!(
+            verify_package(data, &"0".repeat(64), &sig, &[&public]),
+            Err(VerifyError::HashMismatch { .. })
+        ));
+        assert_eq!(
+            verify_package(data, &sha, "", &[&public]),
+            Err(VerifyError::NoSignature)
+        );
+        assert_eq!(
+            verify_package(data, &sha, &sig, &[]),
+            Err(VerifyError::NoTrustedKeys)
+        );
         let (_, other_public) = crate::sign::generate_key_pair().unwrap();
-        assert_eq!(verify_package(data, &sha, &sig, &[&other_public]), Err(VerifyError::BadSignature));
-        assert_eq!(verify_package(b"tampered", "", &sig, &[&public]), Err(VerifyError::BadSignature));
+        assert_eq!(
+            verify_package(data, &sha, &sig, &[&other_public]),
+            Err(VerifyError::BadSignature)
+        );
+        assert_eq!(
+            verify_package(b"tampered", "", &sig, &[&public]),
+            Err(VerifyError::BadSignature)
+        );
     }
 }

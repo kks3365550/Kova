@@ -25,12 +25,16 @@ pub fn referenced_hashes(repo: &Path) -> io::Result<HashSet<String>> {
     }
     for e in fs::read_dir(&dir)? {
         let p = e?.path();
-        if p.extension().map_or(true, |x| x != "json") {
+        if p.extension().is_none_or(|x| x != "json") {
             continue;
         }
         let f = fs::File::open(&p)?;
-        let m: SnapshotManifest = serde_json::from_reader(io::BufReader::new(f))
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {}", p.display(), e)))?;
+        let m: SnapshotManifest = serde_json::from_reader(io::BufReader::new(f)).map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("{}: {}", p.display(), e),
+            )
+        })?;
         for fe in m.files() {
             for c in fe.chunks {
                 set.insert(c.hash);
@@ -62,7 +66,7 @@ pub fn prune_orphans(repo: &Path, min_age_secs: u64) -> io::Result<GcResult> {
         for f in fs::read_dir(&d)? {
             let f = f?;
             let p = f.path();
-            if p.extension().map_or(true, |x| x != "blob") {
+            if p.extension().is_none_or(|x| x != "blob") {
                 continue;
             }
             let stem = match p.file_stem() {
@@ -77,7 +81,7 @@ pub fn prune_orphans(repo: &Path, min_age_secs: u64) -> io::Result<GcResult> {
                 .modified()
                 .ok()
                 .and_then(|m| now.duration_since(m).ok())
-                .map_or(true, |age| age < Duration::from_secs(min_age_secs));
+                .is_none_or(|age| age < Duration::from_secs(min_age_secs));
             if young {
                 res.kept_young += 1;
                 continue;
@@ -104,10 +108,16 @@ mod tests {
             fs::write(dir.join(format!("{}.blob", h)), b"x").unwrap();
         }
         fs::create_dir_all(d.path().join("snapshots")).unwrap();
-        let chunks: Vec<String> = referenced.iter().map(|h| format!(r#"{{"hash":"{}"}}"#, h)).collect();
+        let chunks: Vec<String> = referenced
+            .iter()
+            .map(|h| format!(r#"{{"hash":"{}"}}"#, h))
+            .collect();
         fs::write(
             d.path().join("snapshots").join("s1.json"),
-            format!(r#"{{"id":"s1","files":[{{"path":"a","chunks":[{}]}}]}}"#, chunks.join(",")),
+            format!(
+                r#"{{"id":"s1","files":[{{"path":"a","chunks":[{}]}}]}}"#,
+                chunks.join(",")
+            ),
         )
         .unwrap();
         d

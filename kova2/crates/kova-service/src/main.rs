@@ -7,7 +7,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use windows_service::{
     define_windows_service,
-    service::{ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType},
+    service::{
+        ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus,
+        ServiceType,
+    },
     service_control_handler::{self, ServiceControlHandlerResult},
     service_dispatcher,
 };
@@ -58,9 +61,14 @@ fn service_main(_args: Vec<OsString>) {
 }
 
 fn install() -> Result<(), Box<dyn std::error::Error>> {
-    use windows_service::service::{ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType};
+    use windows_service::service::{
+        ServiceAccess, ServiceErrorControl, ServiceInfo, ServiceStartType,
+    };
     use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
-    let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE)?;
+    let mgr = ServiceManager::local_computer(
+        None::<&str>,
+        ServiceManagerAccess::CONNECT | ServiceManagerAccess::CREATE_SERVICE,
+    )?;
     let info = ServiceInfo {
         name: OsString::from(SERVICE_NAME),
         display_name: OsString::from("Kova 백업 서비스"),
@@ -83,7 +91,10 @@ fn uninstall() -> Result<(), Box<dyn std::error::Error>> {
     use windows_service::service::ServiceAccess;
     use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
     let mgr = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-    let svc = mgr.open_service(SERVICE_NAME, ServiceAccess::DELETE | ServiceAccess::STOP | ServiceAccess::QUERY_STATUS)?;
+    let svc = mgr.open_service(
+        SERVICE_NAME,
+        ServiceAccess::DELETE | ServiceAccess::STOP | ServiceAccess::QUERY_STATUS,
+    )?;
     let _ = svc.stop(); // 실행 중이 아니면 오류가 나도 무시
     svc.delete()?;
     println!("서비스 {SERVICE_NAME} 제거 표시 완료(중지 후 완전히 사라집니다)");
@@ -99,7 +110,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::args().any(|a| a == "--console") {
         let rt = tokio::runtime::Runtime::new()?;
-        println!("KovaSvc console, pipe {}, config {}", kova_ipc::PIPE_NAME, default_config_dir().display());
+        println!(
+            "KovaSvc console, pipe {}, config {}",
+            kova_ipc::PIPE_NAME,
+            default_config_dir().display()
+        );
         let _stop = start_core(&rt);
         rt.block_on(std::future::pending::<()>());
         return Ok(());

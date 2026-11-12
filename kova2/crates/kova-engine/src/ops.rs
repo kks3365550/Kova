@@ -59,9 +59,15 @@ pub struct Progress {
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    Phase { phase: &'static str, message: String },
+    Phase {
+        phase: &'static str,
+        message: String,
+    },
     Progress(Progress),
-    RestoreProgress { done: usize, total: usize },
+    RestoreProgress {
+        done: usize,
+        total: usize,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +98,7 @@ pub struct BackupSummary {
     pub skipped_files: Vec<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn now_progress(
     start: &Instant,
     done: usize,
@@ -102,7 +109,11 @@ fn now_progress(
     m: usize,
     u: usize,
 ) -> Progress {
-    let pct = if total > 0 { (done as f64 / total as f64) * 100.0 } else { 100.0 };
+    let pct = if total > 0 {
+        (done as f64 / total as f64) * 100.0
+    } else {
+        100.0
+    };
     let elapsed = start.elapsed().as_secs_f64();
     Progress {
         percent: pct.round() as u64,
@@ -137,7 +148,10 @@ pub fn run_backup(
     }
     let cas = CasStorage::new(&opts.repo)?;
 
-    on_event(Event::Phase { phase: "scanning", message: "[1/3] 대상 경로 파일 병렬 스캔 중...".into() });
+    on_event(Event::Phase {
+        phase: "scanning",
+        message: "[1/3] 대상 경로 파일 병렬 스캔 중...".into(),
+    });
     let scan_start = Instant::now();
     let exclude_filter = scanner::ExcludeFilter::new(&opts.exclude);
     let items: Vec<scanner::ScannedItem> = sources
@@ -204,7 +218,11 @@ pub fn run_backup(
                 }
             }
             // 같은 상대경로가 서로 다른 원본에 있을 수 있으므로 (원본 번호, 경로)를 키로 쓴다
-            let key = format!("{}|{}", entry.src.unwrap_or(0), entry.path.replace('\\', "/").to_lowercase());
+            let key = format!(
+                "{}|{}",
+                entry.src.unwrap_or(0),
+                entry.path.replace('\\', "/").to_lowercase()
+            );
             prev_files_map.entry(key).or_insert(entry);
         }
     }
@@ -213,11 +231,14 @@ pub fn run_backup(
     let total_file_count = files.len();
     on_event(Event::Phase {
         phase: "processing",
-        message: format!("[3/3] 초고속 증분 백업 가동 (대상: {}개 파일)", total_file_count),
+        message: format!(
+            "[3/3] 초고속 증분 백업 가동 (대상: {}개 파일)",
+            total_file_count
+        ),
     });
 
     let report = |done: usize, cur: &str| {
-        if done % 50 == 0 || done == total_file_count {
+        if done.is_multiple_of(50) || done == total_file_count {
             on_event(Event::Progress(now_progress(
                 &start_time,
                 done,
@@ -237,11 +258,16 @@ pub fn run_backup(
             if cancel.load(Ordering::Relaxed) {
                 return None;
             }
-            let key = format!("{}|{}", item.src, item.rel_path.replace('\\', "/").to_lowercase());
+            let key = format!(
+                "{}|{}",
+                item.src,
+                item.rel_path.replace('\\', "/").to_lowercase()
+            );
             if let Some(prev) = prev_files_map.get(&key) {
                 let diff = prev.modified.abs_diff(item.modified);
                 let mtime_match = diff <= 5
-                    || (prev.modified % 1000 == 0 && (item.modified / 1000) == (prev.modified / 1000));
+                    || (prev.modified % 1000 == 0
+                        && (item.modified / 1000) == (prev.modified / 1000));
                 // 이전 청크의 blob 이 저장소에 실제로 있을 때만 재사용한다
                 if prev.size == item.size
                     && mtime_match
@@ -251,7 +277,10 @@ pub fn run_backup(
                     total_bytes.fetch_add(prev.size, Ordering::Relaxed);
                     dedup_bytes.fetch_add(prev.size, Ordering::Relaxed);
                     unmodified_files.fetch_add(1, Ordering::Relaxed);
-                    report(processed_files.fetch_add(1, Ordering::Relaxed) + 1, &item.rel_path);
+                    report(
+                        processed_files.fetch_add(1, Ordering::Relaxed) + 1,
+                        &item.rel_path,
+                    );
                     return Some(FileEntry {
                         path: item.rel_path,
                         size: prev.size,
@@ -269,8 +298,14 @@ pub fn run_backup(
             }
 
             let skip = |why: String| {
-                skipped.lock().unwrap().push(format!("{} ({})", item.rel_path, why));
-                report(processed_files.fetch_add(1, Ordering::Relaxed) + 1, &item.rel_path);
+                skipped
+                    .lock()
+                    .unwrap()
+                    .push(format!("{} ({})", item.rel_path, why));
+                report(
+                    processed_files.fetch_add(1, Ordering::Relaxed) + 1,
+                    &item.rel_path,
+                );
                 None
             };
 
@@ -285,7 +320,12 @@ pub fn run_backup(
                 total_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
                 if cas.has_blob(&c.hash) {
                     dedup_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
-                    file_chunks.push(FileChunkInfo { hash: c.hash, offset: c.offset, length: c.length, compressed_length: 0 });
+                    file_chunks.push(FileChunkInfo {
+                        hash: c.hash,
+                        offset: c.offset,
+                        length: c.length,
+                        compressed_length: 0,
+                    });
                 } else {
                     let compressed = match compressor::compress(&c.data, opts.zstd_level) {
                         Ok(d) => d,
@@ -304,7 +344,10 @@ pub fn run_backup(
                     });
                 }
             }
-            report(processed_files.fetch_add(1, Ordering::Relaxed) + 1, &item.rel_path);
+            report(
+                processed_files.fetch_add(1, Ordering::Relaxed) + 1,
+                &item.rel_path,
+            );
             Some(FileEntry {
                 path: item.rel_path,
                 size: file_size,
@@ -341,7 +384,10 @@ pub fn run_backup(
     let ded_b = dedup_bytes.load(Ordering::Relaxed);
     let cmp_b = compressed_bytes.load(Ordering::Relaxed);
     let elapsed = start_time.elapsed().as_secs_f64();
-    let src_strs: Vec<String> = sources.iter().map(|s| s.to_string_lossy().to_string()).collect();
+    let src_strs: Vec<String> = sources
+        .iter()
+        .map(|s| s.to_string_lossy().to_string())
+        .collect();
 
     let manifest = SnapshotManifest {
         id: Some(sid.clone()),
@@ -349,9 +395,24 @@ pub fn run_backup(
         profile_id: opts.profile_id.clone(),
         created_at: Some(serde_json::Value::String(chrono::Local::now().to_rfc3339())),
         source_root: Some(src_strs.join(";")),
-        sources: Some(serde_json::Value::Array(src_strs.iter().cloned().map(serde_json::Value::String).collect())),
+        sources: Some(serde_json::Value::Array(
+            src_strs
+                .iter()
+                .cloned()
+                .map(serde_json::Value::String)
+                .collect(),
+        )),
         source_kinds: Some(
-            sources.iter().map(|s| if s.is_file() { "file".to_string() } else { "dir".to_string() }).collect(),
+            sources
+                .iter()
+                .map(|s| {
+                    if s.is_file() {
+                        "file".to_string()
+                    } else {
+                        "dir".to_string()
+                    }
+                })
+                .collect(),
         ),
         format_version: Some(2),
         total_files: all_entries.len(),
@@ -408,7 +469,13 @@ fn source_label(idx: usize, root: &str) -> String {
         .unwrap_or_else(|| root.chars().filter(|c| c.is_alphanumeric()).collect());
     let clean: String = base
         .chars()
-        .map(|c| if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') { '_' } else { c })
+        .map(|c| {
+            if matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     format!("{:03}_{}", idx + 1, clean)
 }
@@ -416,7 +483,10 @@ fn source_label(idx: usize, root: &str) -> String {
 fn resolve_restore_path(base: &RestoreBase, entry: &FileEntry) -> Result<PathBuf, String> {
     let rel = Path::new(&entry.path);
     // 매니페스트 경로가 상위 폴더(..)나 절대경로로 빠져나가는 것을 막는다
-    if rel.components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir)) {
+    if rel
+        .components()
+        .any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+    {
         return Err(format!("unsafe path in manifest: {}", entry.path));
     }
     if let Some(t) = &base.target {
@@ -426,7 +496,10 @@ fn resolve_restore_path(base: &RestoreBase, entry: &FileEntry) -> Result<PathBuf
                 if let Some(root) = base.sources.get(i) {
                     let label = source_label(i, root);
                     if base.kinds.get(i).map(|k| k == "file").unwrap_or(false) {
-                        let name = Path::new(root).file_name().map(|n| n.to_os_string()).unwrap_or_default();
+                        let name = Path::new(root)
+                            .file_name()
+                            .map(|n| n.to_os_string())
+                            .unwrap_or_default();
                         return Ok(t.join(label).join(name));
                     }
                     return Ok(t.join(label).join(rel));
@@ -435,7 +508,9 @@ fn resolve_restore_path(base: &RestoreBase, entry: &FileEntry) -> Result<PathBuf
         }
         return Ok(t.join(rel));
     }
-    let idx = entry.src.ok_or_else(|| format!("no source index for {}", entry.path))? as usize;
+    let idx = entry
+        .src
+        .ok_or_else(|| format!("no source index for {}", entry.path))? as usize;
     let root = base
         .sources
         .get(idx)
@@ -459,7 +534,10 @@ pub fn run_restore(
     }
     let manifest = cas.load_manifest(&opts.session_id)?;
     let sources: Vec<String> = match &manifest.sources {
-        Some(serde_json::Value::Array(arr)) => arr.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect(),
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+            .collect(),
         _ => Vec::new(),
     };
     let kinds: Vec<String> = manifest.source_kinds.clone().unwrap_or_default();
@@ -471,11 +549,19 @@ pub fn run_restore(
                     "in-place restore is not supported for this snapshot (no per-file source info); restore to a target folder instead",
                 ));
             }
-            RestoreBase { target: None, sources, kinds }
+            RestoreBase {
+                target: None,
+                sources,
+                kinds,
+            }
         }
         Some(t) => {
             fs::create_dir_all(t)?;
-            RestoreBase { target: Some(t.clone()), sources, kinds }
+            RestoreBase {
+                target: Some(t.clone()),
+                sources,
+                kinds,
+            }
         }
     };
 
@@ -503,7 +589,7 @@ pub fn run_restore(
             Err(why) => fail(why),
         }
         let d = done.fetch_add(1, Ordering::Relaxed) + 1;
-        if d % 200 == 0 || d == total {
+        if d.is_multiple_of(200) || d == total {
             on_event(Event::RestoreProgress { done: d, total });
         }
     });
@@ -521,7 +607,10 @@ pub fn run_restore(
             errs.iter().take(5).cloned().collect::<Vec<_>>().join("; ")
         )));
     }
-    Ok(RestoreSummary { total_files: total, elapsed_seconds: start.elapsed().as_secs_f64() })
+    Ok(RestoreSummary {
+        total_files: total,
+        elapsed_seconds: start.elapsed().as_secs_f64(),
+    })
 }
 
 fn restore_one(cas: &CasStorage, base: &RestoreBase, entry: &FileEntry) -> Result<(), String> {
@@ -532,16 +621,28 @@ fn restore_one(cas: &CasStorage, base: &RestoreBase, entry: &FileEntry) -> Resul
     // 내용이 있어야 할 파일(size>0)에 청크 정보가 없으면 Rust 형식이 아닌 매니페스트다.
     // 빈 파일을 만들고 성공으로 끝내면 조용한 데이터 유실이므로 실패로 처리한다.
     if entry.size > 0 && entry.chunks.is_empty() {
-        return Err(format!("No chunk info for {} (size {}): not a Rust-format manifest", file_path.display(), entry.size));
+        return Err(format!(
+            "No chunk info for {} (size {}): not a Rust-format manifest",
+            file_path.display(),
+            entry.size
+        ));
     }
-    let mut file = File::create(&file_path).map_err(|e| format!("Cannot create file {}: {}", file_path.display(), e))?;
+    let mut file = File::create(&file_path)
+        .map_err(|e| format!("Cannot create file {}: {}", file_path.display(), e))?;
     for c in &entry.chunks {
-        let comp = cas.read_blob(&c.hash).map_err(|e| format!("Missing blob {}: {}", c.hash, e))?;
-        let raw = compressor::decompress(&comp).map_err(|e| format!("Decompress failed for {}: {}", c.hash, e))?;
+        let comp = cas
+            .read_blob(&c.hash)
+            .map_err(|e| format!("Missing blob {}: {}", c.hash, e))?;
+        let raw = compressor::decompress(&comp)
+            .map_err(|e| format!("Decompress failed for {}: {}", c.hash, e))?;
         if hasher::hash_bytes(&raw) != c.hash {
-            return Err(format!("Hash mismatch for blob {} (corrupt or tampered)", c.hash));
+            return Err(format!(
+                "Hash mismatch for blob {} (corrupt or tampered)",
+                c.hash
+            ));
         }
-        file.write_all(&raw).map_err(|e| format!("Write failed for {}: {}", file_path.display(), e))?;
+        file.write_all(&raw)
+            .map_err(|e| format!("Write failed for {}: {}", file_path.display(), e))?;
     }
     // 원래 수정 시각 복원 (실패해도 복원 자체는 성공)
     if entry.modified > 0 {
@@ -560,7 +661,9 @@ mod tests {
     fn make_tree(root: &Path) {
         fs::create_dir_all(root.join("하위 폴더")).unwrap();
         fs::write(root.join("가나다.txt"), "한글 내용\n".repeat(500)).unwrap();
-        let big: Vec<u8> = (0..3_000_000u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8).collect();
+        let big: Vec<u8> = (0..3_000_000u32)
+            .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
+            .collect();
         fs::write(root.join("하위 폴더").join("big.bin"), big).unwrap();
         fs::write(root.join("empty.txt"), b"").unwrap();
     }
@@ -568,7 +671,11 @@ mod tests {
     fn tree_hashes(root: &Path) -> BTreeMap<String, String> {
         let mut m = BTreeMap::new();
         for e in walk(root) {
-            let rel = e.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+            let rel = e
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
             m.insert(rel, hasher::hash_file(&e).unwrap());
         }
         m
@@ -613,7 +720,11 @@ mod tests {
         assert!(s.skipped_files.is_empty());
         let out = d.path().join("out");
         run_restore(
-            &RestoreOptions { repo: repo.clone(), session_id: "t1".into(), target: Some(out.clone()) },
+            &RestoreOptions {
+                repo: repo.clone(),
+                session_id: "t1".into(),
+                target: Some(out.clone()),
+            },
             &no_events,
             &AtomicBool::new(false),
         )
@@ -628,17 +739,29 @@ mod tests {
         make_tree(&src);
         let f = src.join("가나다.txt");
         let t = UNIX_EPOCH + Duration::from_secs(1_600_000_000);
-        File::options().write(true).open(&f).unwrap().set_modified(t).unwrap();
+        File::options()
+            .write(true)
+            .open(&f)
+            .unwrap()
+            .set_modified(t)
+            .unwrap();
         let repo = d.path().join("repo");
         backup(&src, &repo, "t1");
         let out = d.path().join("out");
         run_restore(
-            &RestoreOptions { repo, session_id: "t1".into(), target: Some(out.clone()) },
+            &RestoreOptions {
+                repo,
+                session_id: "t1".into(),
+                target: Some(out.clone()),
+            },
             &no_events,
             &AtomicBool::new(false),
         )
         .unwrap();
-        let got = fs::metadata(out.join("가나다.txt")).unwrap().modified().unwrap();
+        let got = fs::metadata(out.join("가나다.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
         assert_eq!(got, t);
     }
 
@@ -667,7 +790,11 @@ mod tests {
         backup(&src, &repo, "t1");
         fs::remove_dir_all(&src).unwrap();
         run_restore(
-            &RestoreOptions { repo, session_id: "t1".into(), target: None },
+            &RestoreOptions {
+                repo,
+                session_id: "t1".into(),
+                target: None,
+            },
             &no_events,
             &AtomicBool::new(false),
         )
@@ -709,9 +836,17 @@ mod tests {
         let m = cas.load_manifest("t1").unwrap();
         let hash = m.files()[0].chunks[0].hash.clone();
         // 정상 압축본이지만 다른 내용으로 바꿔치기
-        fs::write(cas.blob_path(&hash), compressor::compress(b"evil data!!!!", 3).unwrap()).unwrap();
+        fs::write(
+            cas.blob_path(&hash),
+            compressor::compress(b"evil data!!!!", 3).unwrap(),
+        )
+        .unwrap();
         let r = run_restore(
-            &RestoreOptions { repo, session_id: "t1".into(), target: Some(d.path().join("out")) },
+            &RestoreOptions {
+                repo,
+                session_id: "t1".into(),
+                target: Some(d.path().join("out")),
+            },
             &no_events,
             &AtomicBool::new(false),
         );
@@ -721,10 +856,20 @@ mod tests {
 
     #[test]
     fn unsafe_manifest_path_is_rejected() {
-        let base = RestoreBase { target: Some(PathBuf::from("C:/out")), sources: vec![], kinds: vec![] };
-        let e = FileEntry { path: "../evil.txt".into(), ..Default::default() };
+        let base = RestoreBase {
+            target: Some(PathBuf::from("C:/out")),
+            sources: vec![],
+            kinds: vec![],
+        };
+        let e = FileEntry {
+            path: "../evil.txt".into(),
+            ..Default::default()
+        };
         assert!(resolve_restore_path(&base, &e).is_err());
-        let e = FileEntry { path: "C:/evil.txt".into(), ..Default::default() };
+        let e = FileEntry {
+            path: "C:/evil.txt".into(),
+            ..Default::default()
+        };
         assert!(resolve_restore_path(&base, &e).is_err());
     }
 
@@ -773,12 +918,22 @@ mod tests {
         .unwrap();
         let out = d.path().join("out");
         run_restore(
-            &RestoreOptions { repo, session_id: "t1".into(), target: Some(out.clone()) },
+            &RestoreOptions {
+                repo,
+                session_id: "t1".into(),
+                target: Some(out.clone()),
+            },
             &no_events,
             &AtomicBool::new(false),
         )
         .unwrap();
-        assert_eq!(fs::read_to_string(out.join("001_A").join("same.txt")).unwrap(), "from A");
-        assert_eq!(fs::read_to_string(out.join("002_B").join("same.txt")).unwrap(), "from B");
+        assert_eq!(
+            fs::read_to_string(out.join("001_A").join("same.txt")).unwrap(),
+            "from A"
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("002_B").join("same.txt")).unwrap(),
+            "from B"
+        );
     }
 }

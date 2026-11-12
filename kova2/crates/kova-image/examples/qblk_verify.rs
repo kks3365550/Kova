@@ -13,7 +13,13 @@ fn main() {
     let cancel = AtomicBool::new(false);
     let res = verify(BufReader::with_capacity(8 << 20, f), &cancel, &|s| {
         let secs = t.elapsed().as_secs_f64().max(0.001);
-        eprintln!("chunks={} raw={:.2}GB comp={:.2}GB {:.0}MB/s(압축본 기준)", s.chunks, s.raw_bytes as f64 / 1e9, s.compressed_bytes as f64 / 1e9, s.compressed_bytes as f64 / 1e6 / secs);
+        eprintln!(
+            "chunks={} raw={:.2}GB comp={:.2}GB {:.0}MB/s(압축본 기준)",
+            s.chunks,
+            s.raw_bytes as f64 / 1e9,
+            s.compressed_bytes as f64 / 1e9,
+            s.compressed_bytes as f64 / 1e6 / secs
+        );
     });
     match res {
         Ok((h, s)) => {

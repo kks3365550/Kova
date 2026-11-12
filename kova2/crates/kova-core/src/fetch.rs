@@ -22,33 +22,53 @@ impl std::fmt::Display for FetchError {
 }
 
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout(Duration::from_secs(30)).user_agent("Kova-Updater").build()
+    ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(30))
+        .user_agent("Kova-Updater")
+        .build()
 }
 
 /// `{base}/{repo}/releases/latest` 의 최종 주소에서 태그를 뽑는다. 예: base="https://github.com", repo="owner/Kova".
 pub fn latest_tag(base: &str, repo: &str) -> Result<String, FetchError> {
     let url = format!("{}/{}/releases/latest", base.trim_end_matches('/'), repo);
-    let resp = agent().get(&url).call().map_err(|e| FetchError::Http(e.to_string()))?;
+    let resp = agent()
+        .get(&url)
+        .call()
+        .map_err(|e| FetchError::Http(e.to_string()))?;
     let final_url = resp.get_url().to_string();
     final_url
         .split("/releases/tag/")
         .nth(1)
         .map(|t| t.trim().trim_end_matches('/').to_string())
         .filter(|t| !t.is_empty())
-        .ok_or_else(|| FetchError::Unexpected(final_url))
+        .ok_or(FetchError::Unexpected(final_url))
 }
 
 /// 파이썬 릴리즈 관례: release_<tag>.zip
 pub fn package_url(base: &str, repo: &str, tag: &str) -> String {
-    format!("{}/{}/releases/download/{}/release_{}.zip", base.trim_end_matches('/'), repo, tag, tag)
+    format!(
+        "{}/{}/releases/download/{}/release_{}.zip",
+        base.trim_end_matches('/'),
+        repo,
+        tag,
+        tag
+    )
 }
 
 /// 최대 max_bytes 까지만 받는다(초과하면 중단·오류).
 pub fn download(url: &str, max_bytes: u64) -> Result<Vec<u8>, FetchError> {
-    let resp = agent().get(url).call().map_err(|e| FetchError::Http(e.to_string()))?;
+    let resp = agent()
+        .get(url)
+        .call()
+        .map_err(|e| FetchError::Http(e.to_string()))?;
     let mut buf = Vec::new();
-    resp.into_reader().take(max_bytes + 1).read_to_end(&mut buf).map_err(|e| FetchError::Http(e.to_string()))?;
-    if buf.len() as u64 > max_bytes { return Err(FetchError::TooLarge(max_bytes)); }
+    resp.into_reader()
+        .take(max_bytes + 1)
+        .read_to_end(&mut buf)
+        .map_err(|e| FetchError::Http(e.to_string()))?;
+    if buf.len() as u64 > max_bytes {
+        return Err(FetchError::TooLarge(max_bytes));
+    }
     Ok(buf)
 }
 
@@ -71,16 +91,28 @@ impl std::fmt::Display for UpdateError {
         }
     }
 }
-impl From<FetchError> for UpdateError { fn from(e: FetchError) -> Self { Self::Fetch(e) } }
+impl From<FetchError> for UpdateError {
+    fn from(e: FetchError) -> Self {
+        Self::Fetch(e)
+    }
+}
 
 /// 패키지(`release_<tag>.zip`)와 서명(`.zip.sig`)을 받아 검증까지 마친 바이트를 돌려준다. 설치는 하지 않는다.
-pub fn fetch_verified(base: &str, repo: &str, tag: &str, trusted: &[&str], max_bytes: u64) -> Result<Vec<u8>, UpdateError> {
+pub fn fetch_verified(
+    base: &str,
+    repo: &str,
+    tag: &str,
+    trusted: &[&str],
+    max_bytes: u64,
+) -> Result<Vec<u8>, UpdateError> {
     let url = package_url(base, repo, tag);
     let pkg = download(&url, max_bytes)?;
     let sig = download(&format!("{url}.sig"), 4096)?;
     let sig = String::from_utf8(sig).map_err(|_| UpdateError::BadSignatureFile)?;
     let sig = sig.trim();
-    if sig.is_empty() || !sig.bytes().all(|b| b.is_ascii_hexdigit()) { return Err(UpdateError::BadSignatureFile); }
+    if sig.is_empty() || !sig.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(UpdateError::BadSignatureFile);
+    }
     crate::update::verify_package(&pkg, "", sig, trusted).map_err(UpdateError::Verify)?;
     Ok(pkg)
 }
@@ -99,16 +131,23 @@ mod tests {
             for _ in 0..n {
                 let (mut s, _) = l.accept().unwrap();
                 let mut line = String::new();
-                BufReader::new(s.try_clone().unwrap()).read_line(&mut line).unwrap();
+                BufReader::new(s.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
                 let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
                 let resp = if path.ends_with("/releases/latest") {
                     "HTTP/1.1 302 Found\r\nLocation: /o/Kova/releases/tag/v9.9.9\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
                 } else if path.contains("/releases/tag/") {
-                    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".to_string()
+                    "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+                        .to_string()
                 } else if path == "/big" {
-                    format!("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{}", "x".repeat(100))
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{}",
+                        "x".repeat(100)
+                    )
                 } else {
-                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string()
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                        .to_string()
                 };
                 let _ = s.write_all(resp.as_bytes());
             }
@@ -120,9 +159,15 @@ mod tests {
     fn latest_tag_follows_redirect_and_urls_are_built() {
         let base = serve(2);
         assert_eq!(latest_tag(&base, "o/Kova").unwrap(), "v9.9.9");
-        assert_eq!(package_url("https://github.com/", "o/Kova", "v9.9.9"), "https://github.com/o/Kova/releases/download/v9.9.9/release_v9.9.9.zip");
+        assert_eq!(
+            package_url("https://github.com/", "o/Kova", "v9.9.9"),
+            "https://github.com/o/Kova/releases/download/v9.9.9/release_v9.9.9.zip"
+        );
         // 404 면 오류
-        assert!(matches!(latest_tag(&serve(1), "x/y"), Err(FetchError::Http(_))));
+        assert!(matches!(
+            latest_tag(&serve(1), "x/y"),
+            Err(FetchError::Http(_))
+        ));
         let _ = base;
     }
 
@@ -130,6 +175,9 @@ mod tests {
     fn download_respects_size_cap() {
         let base = serve(2);
         assert_eq!(download(&format!("{base}/big"), 100).unwrap().len(), 100);
-        assert!(matches!(download(&format!("{base}/big"), 99), Err(FetchError::TooLarge(99))));
+        assert!(matches!(
+            download(&format!("{base}/big"), 99),
+            Err(FetchError::TooLarge(99))
+        ));
     }
 }

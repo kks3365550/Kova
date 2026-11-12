@@ -26,8 +26,17 @@ pub struct ExcludeFilter {
 }
 
 const VOLATILE_DIRS: [&str; 11] = [
-    "cache", "caches", "gpucache", "shadercache", "code cache", "temp", "tmp", "crashpad",
-    "crashreporting", "logs", "log",
+    "cache",
+    "caches",
+    "gpucache",
+    "shadercache",
+    "code cache",
+    "temp",
+    "tmp",
+    "crashpad",
+    "crashreporting",
+    "logs",
+    "log",
 ];
 
 fn glob_match(p: &[char], s: &[char]) -> bool {
@@ -53,15 +62,15 @@ impl ExcludeFilter {
                 // Path-style patterns are not matched by the Python filter either.
                 continue;
             }
-            if p.starts_with("*.") && !p[2..].contains(|c| c == '*' || c == '?' || c == '[') {
+            if p.starts_with("*.") && !p[2..].contains(['*', '?', '[']) {
                 f.exts.insert(p[1..].to_string());
             } else if p.len() > 2
                 && p.starts_with('*')
                 && p.ends_with('*')
-                && !p[1..p.len() - 1].contains(|c| c == '*' || c == '?' || c == '[')
+                && !p[1..p.len() - 1].contains(['*', '?', '['])
             {
                 f.substrs.push(p[1..p.len() - 1].to_string());
-            } else if p.contains(|c| c == '*' || c == '?' || c == '[') {
+            } else if p.contains(['*', '?', '[']) {
                 f.complex.push(p.chars().collect());
             } else {
                 f.exact.insert(p);
@@ -293,7 +302,9 @@ mod tests {
         let items = scan_directory(&root, &f);
         let rels: Vec<_> = items.iter().map(|i| i.rel_path.clone()).collect();
         assert!(rels.contains(&"src/b.txt".to_string()));
-        assert!(!rels.iter().any(|r| r.contains("node_modules") || r.ends_with(".tmp")));
+        assert!(!rels
+            .iter()
+            .any(|r| r.contains("node_modules") || r.ends_with(".tmp")));
         let single = scan_directory(&root.join("src/b.txt"), &f);
         assert_eq!(single.len(), 1);
         assert_eq!(single[0].rel_path, "b.txt");

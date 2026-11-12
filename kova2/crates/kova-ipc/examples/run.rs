@@ -10,7 +10,10 @@ async fn main() {
         let mut ok = false;
         kova_ipc::stream(PIPE_NAME, &Request::Subscribe, |e| {
             println!("{e:?}");
-            if let Event::JobFinished { ok: o, .. } = &e { ok = *o; return false; }
+            if let Event::JobFinished { ok: o, .. } = &e {
+                ok = *o;
+                return false;
+            }
             true
         })
         .await
@@ -18,7 +21,18 @@ async fn main() {
         ok
     });
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    println!("{:?}", kova_ipc::request(PIPE_NAME, &Request::RunNow { profile_id: id, kind }).await.unwrap());
+    println!(
+        "{:?}",
+        kova_ipc::request(
+            PIPE_NAME,
+            &Request::RunNow {
+                profile_id: id,
+                kind
+            }
+        )
+        .await
+        .unwrap()
+    );
     let ok = sub.await.unwrap();
     std::process::exit(if ok { 0 } else { 1 });
 }

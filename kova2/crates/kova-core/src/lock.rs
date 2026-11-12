@@ -34,7 +34,13 @@ impl RepoLock {
     pub fn try_acquire(repo: &Path) -> Result<RepoLock, LockError> {
         std::fs::create_dir_all(repo).map_err(LockError::Io)?;
         let path = repo.join(LOCK_FILE_NAME);
-        let file = OpenOptions::new().create(true).read(true).write(true).open(&path).map_err(LockError::Io)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(LockError::Io)?;
         match file.try_lock() {
             Ok(()) => {}
             Err(TryLockError::WouldBlock) => return Err(LockError::Busy),
@@ -62,7 +68,10 @@ mod tests {
     fn second_lock_is_busy_until_first_is_dropped() {
         let d = tempfile::tempdir().unwrap();
         let a = RepoLock::try_acquire(d.path()).unwrap();
-        assert!(matches!(RepoLock::try_acquire(d.path()), Err(LockError::Busy)));
+        assert!(matches!(
+            RepoLock::try_acquire(d.path()),
+            Err(LockError::Busy)
+        ));
         drop(a);
         assert!(RepoLock::try_acquire(d.path()).is_ok());
     }

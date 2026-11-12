@@ -30,7 +30,6 @@ where
     }
 }
 
-
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileChunkInfo {
     #[serde(default)]
@@ -101,7 +100,10 @@ pub struct SnapshotManifest {
 
 impl SnapshotManifest {
     pub fn session_id(&self) -> String {
-        self.session_id.clone().or_else(|| self.id.clone()).unwrap_or_default()
+        self.session_id
+            .clone()
+            .or_else(|| self.id.clone())
+            .unwrap_or_default()
     }
 
     pub fn source_root(&self) -> String {
@@ -145,7 +147,10 @@ impl CasStorage {
 
     pub fn blob_path(&self, hash: &str) -> PathBuf {
         let prefix = if hash.len() >= 2 { &hash[0..2] } else { "misc" };
-        self.repo_root.join("blobs").join(prefix).join(format!("{}.blob", hash))
+        self.repo_root
+            .join("blobs")
+            .join(prefix)
+            .join(format!("{}.blob", hash))
     }
 
     pub fn has_blob(&self, hash: &str) -> bool {
@@ -179,7 +184,7 @@ impl CasStorage {
                 if let Ok(rd) = fs::read_dir(dir) {
                     for entry in rd.flatten() {
                         let p = entry.path();
-                        if p.extension().map_or(false, |ext| ext == "blob") {
+                        if p.extension().is_some_and(|ext| ext == "blob") {
                             if let Some(stem) = p.file_stem() {
                                 dir_hashes.push(stem.to_string_lossy().to_string());
                             }
@@ -238,7 +243,10 @@ impl CasStorage {
     }
 
     pub fn load_manifest(&self, session_id: &str) -> io::Result<SnapshotManifest> {
-        let target_path = self.repo_root.join("snapshots").join(format!("{}.json", session_id));
+        let target_path = self
+            .repo_root
+            .join("snapshots")
+            .join(format!("{}.json", session_id));
         let file = File::open(target_path)?;
         let reader = BufReader::new(file);
         let manifest: SnapshotManifest = serde_json::from_reader(reader)
@@ -256,7 +264,7 @@ impl CasStorage {
         if let Ok(dir_entries) = fs::read_dir(snapshots_dir) {
             for entry in dir_entries.flatten() {
                 let path = entry.path();
-                if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+                if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                     if let Ok(meta) = entry.metadata() {
                         if let Ok(mtime) = meta.modified() {
                             entries.push((mtime, path));
@@ -266,7 +274,7 @@ impl CasStorage {
             }
         }
 
-        entries.sort_by(|a, b| b.0.cmp(&a.0));
+        entries.sort_by_key(|e| std::cmp::Reverse(e.0));
 
         // Parse candidate manifests in parallel batches (newest first, order preserved).
         use rayon::prelude::*;
@@ -276,19 +284,33 @@ impl CasStorage {
             let parsed: Vec<Option<SnapshotManifest>> = batch
                 .par_iter()
                 .map(|path| match File::open(path) {
-                    Ok(file) => match serde_json::from_reader::<_, SnapshotManifest>(BufReader::new(file)) {
-                        Ok(m) => {
-                            let count = m.files.as_ref().map_or(0, |f| f.len())
-                                + m.entries.as_ref().map_or(0, |e| e.len());
-                            if count > 0 { Some(m) } else { None }
+                    Ok(file) => {
+                        match serde_json::from_reader::<_, SnapshotManifest>(BufReader::new(file)) {
+                            Ok(m) => {
+                                let count = m.files.as_ref().map_or(0, |f| f.len())
+                                    + m.entries.as_ref().map_or(0, |e| e.len());
+                                if count > 0 {
+                                    Some(m)
+                                } else {
+                                    None
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "[KOVA-FAST-DEBUG] Failed to parse manifest {}: {}",
+                                    path.display(),
+                                    e
+                                );
+                                None
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("[KOVA-FAST-DEBUG] Failed to parse manifest {}: {}", path.display(), e);
-                            None
-                        }
-                    },
+                    }
                     Err(e) => {
-                        eprintln!("[KOVA-FAST-DEBUG] Failed to open manifest file {}: {}", path.display(), e);
+                        eprintln!(
+                            "[KOVA-FAST-DEBUG] Failed to open manifest file {}: {}",
+                            path.display(),
+                            e
+                        );
                         None
                     }
                 })
@@ -311,4 +333,3 @@ impl CasStorage {
         self.get_recent_manifests(1).into_iter().next()
     }
 }
-

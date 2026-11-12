@@ -24,7 +24,10 @@ pub fn generate_key_pair() -> Result<(String, String), SignError> {
     getrandom_fill(&mut seed)?;
     let sk = SigningKey::from_bytes(&seed);
     let priv_pem = sk.to_pkcs8_pem(LineEnding::LF).map_err(err)?.to_string();
-    let pub_pem = sk.verifying_key().to_public_key_pem(LineEnding::LF).map_err(err)?;
+    let pub_pem = sk
+        .verifying_key()
+        .to_public_key_pem(LineEnding::LF)
+        .map_err(err)?;
     Ok((priv_pem, pub_pem))
 }
 
@@ -54,7 +57,9 @@ pub fn verify_bytes(data: &[u8], signature_hex: &str, public_pem: &str) -> bool 
 
 /// 후보 공개키 중 하나라도 맞으면 true (키 교체 기간 용도).
 pub fn verify_bytes_any(data: &[u8], signature_hex: &str, public_pems: &[&str]) -> bool {
-    public_pems.iter().any(|p| verify_bytes(data, signature_hex, p))
+    public_pems
+        .iter()
+        .any(|p| verify_bytes(data, signature_hex, p))
 }
 
 fn hex_encode(b: &[u8]) -> String {
@@ -62,10 +67,13 @@ fn hex_encode(b: &[u8]) -> String {
 }
 
 fn hex_decode(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 || !s.is_ascii() {
+    if !s.len().is_multiple_of(2) || !s.is_ascii() {
         return None;
     }
-    (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok()).collect()
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
 }
 
 #[cfg(test)]

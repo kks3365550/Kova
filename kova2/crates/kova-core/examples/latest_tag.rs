@@ -3,7 +3,13 @@ fn main() {
     let (base, repo) = ("https://github.com", "kks3365550/Kova");
     let tag = kova_core::fetch::latest_tag(base, repo).unwrap();
     println!("latest={tag}");
-    match kova_core::fetch::fetch_verified(base, repo, &tag, kova_core::fetch::TRUSTED_KEYS, 200 << 20) {
+    match kova_core::fetch::fetch_verified(
+        base,
+        repo,
+        &tag,
+        kova_core::fetch::TRUSTED_KEYS,
+        200 << 20,
+    ) {
         Ok(b) => println!("VERIFIED {} bytes", b.len()),
         Err(e) => println!("FAIL {e}"),
     }

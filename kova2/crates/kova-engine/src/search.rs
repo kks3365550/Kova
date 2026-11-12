@@ -4,18 +4,18 @@
 // Optimized with Lightweight Manifest Deserialization (Zero-Chunk Overhead)
 // =========================================================================
 
-use std::collections::HashMap;
-use std::fs::File;
-use std::io;
-use std::path::{Path, PathBuf};
 use chrono::{DateTime, Local};
 use memmap2::Mmap;
 use rayon::prelude::*;
 use serde::{Deserialize, Deserializer, Serialize};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io;
+use std::path::{Path, PathBuf};
 
 const CHOSUNG_LIST: [char; 19] = [
-    'ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ',
-    'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ', 'ㅌ', 'ㅍ', 'ㅎ',
+    'ㄱ', 'ㄲ', 'ㄴ', 'ㄷ', 'ㄸ', 'ㄹ', 'ㅁ', 'ㅂ', 'ㅃ', 'ㅅ', 'ㅆ', 'ㅇ', 'ㅈ', 'ㅉ', 'ㅊ', 'ㅋ',
+    'ㅌ', 'ㅍ', 'ㅎ',
 ];
 
 /// Extracts Korean Chosung (initial consonants) from a string.
@@ -141,7 +141,10 @@ pub struct SearchManifest {
 
 impl SearchManifest {
     pub fn session_id(&self) -> String {
-        self.session_id.clone().or_else(|| self.id.clone()).unwrap_or_default()
+        self.session_id
+            .clone()
+            .or_else(|| self.id.clone())
+            .unwrap_or_default()
     }
 
     pub fn source_root(&self) -> String {
@@ -166,7 +169,10 @@ impl SearchManifest {
     }
 
     pub fn take_files(&mut self) -> Vec<SearchFileEntry> {
-        self.files.take().or_else(|| self.entries.take()).unwrap_or_default()
+        self.files
+            .take()
+            .or_else(|| self.entries.take())
+            .unwrap_or_default()
     }
 }
 
@@ -242,9 +248,14 @@ pub fn search_snapshots(
     }
 
     let q_lower = q_clean.to_lowercase();
+    #[allow(clippy::if_same_then_else)]
     let query_chosung = if enable_chosung && is_chosung_query(q_clean) {
         Some(q_clean)
-    } else if enable_chosung && q_clean.chars().any(|c| (0xAC00..=0xD7A3).contains(&(c as u32))) {
+    } else if enable_chosung
+        && q_clean
+            .chars()
+            .any(|c| (0xAC00..=0xD7A3).contains(&(c as u32)))
+    {
         Some(q_clean)
     } else {
         None
@@ -260,7 +271,7 @@ pub fn search_snapshots(
     if let Ok(dir_entries) = std::fs::read_dir(&snapshots_dir) {
         for entry in dir_entries.flatten() {
             let path = entry.path();
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "json") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
                 if let Ok(meta) = entry.metadata() {
                     if let Ok(mtime) = meta.modified() {
                         entries.push((mtime, path));
@@ -270,7 +281,7 @@ pub fn search_snapshots(
         }
     }
 
-    entries.sort_by(|a, b| b.0.cmp(&a.0));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.0));
     let target_paths: Vec<PathBuf> = entries
         .into_iter()
         .take(max_snapshots)
@@ -364,7 +375,11 @@ pub fn search_snapshots(
             let full_path = if s_root.is_empty() || s_root.contains(';') {
                 rel_path.clone()
             } else {
-                format!("{}\\{}", s_root.trim_end_matches('\\'), rel_path.trim_start_matches('\\'))
+                format!(
+                    "{}\\{}",
+                    s_root.trim_end_matches('\\'),
+                    rel_path.trim_start_matches('\\')
+                )
             };
 
             let canonical_key = full_path.replace('\\', "/").to_lowercase();
@@ -416,7 +431,8 @@ pub fn search_snapshots(
 
     // Sort versions inside each item (newest snapshot first) and update latest stats
     for item in &mut results {
-        item.versions.sort_by(|a, b| b.snapshot_time.cmp(&a.snapshot_time));
+        item.versions
+            .sort_by(|a, b| b.snapshot_time.cmp(&a.snapshot_time));
         item.version_count = item.versions.len();
         if let Some(first) = item.versions.first() {
             item.latest_snapshot_id = first.snapshot_id.clone();
@@ -470,7 +486,8 @@ mod tests {
         let score_prefix = calculate_score("spec_2026.xlsx", "doc/spec_2026.xlsx", "spec", None);
         assert_eq!(score_prefix, 80);
 
-        let score_chosung = calculate_score("규격서.xlsx", "doc/규격서.xlsx", "ㄱㄱㅅ", Some("ㄱㄱㅅ"));
+        let score_chosung =
+            calculate_score("규격서.xlsx", "doc/규격서.xlsx", "ㄱㄱㅅ", Some("ㄱㄱㅅ"));
         assert_eq!(score_chosung, 75);
 
         let score_substr = calculate_score("2026_spec_final.xlsx", "doc/file.xlsx", "spec", None);

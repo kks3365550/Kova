@@ -33,24 +33,41 @@ pub struct JobQueue {
 }
 
 impl JobQueue {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     pub fn enqueue(&mut self, profile_id: &str, kind: Kind) -> Enqueue {
-        if let Some(j) = self.waiting.iter().find(|j| j.profile_id == profile_id && j.kind == kind) {
+        if let Some(j) = self
+            .waiting
+            .iter()
+            .find(|j| j.profile_id == profile_id && j.kind == kind)
+        {
             return Enqueue::Merged(j.id);
         }
         // 이미 실행 중인 같은 작업은 정상적으로 뒤에 한 번 더 대기시킨다(실행 중 바뀐 파일을 다음 회차가 잡는다)
         self.next_id += 1;
         let id = self.next_id;
-        self.waiting.push_back(Job { id, profile_id: profile_id.into(), kind });
+        self.waiting.push_back(Job {
+            id,
+            profile_id: profile_id.into(),
+            kind,
+        });
         Enqueue::Queued(id)
     }
 
     /// 지금 시작할 수 있는 다음 작업을 꺼낸다 (같은 프로파일이 실행 중이면 건너뛰고 뒤의 것을 본다).
     /// 반환되는 플래그는 취소 요청용이며 작업 쪽에서 주기적으로 확인한다.
     pub fn start_next(&mut self, max_concurrent: usize) -> Option<(Job, Arc<AtomicBool>)> {
-        if self.running.len() >= max_concurrent { return None; }
-        let pos = self.waiting.iter().position(|w| !self.running.iter().any(|(r, _)| r.profile_id == w.profile_id))?;
+        if self.running.len() >= max_concurrent {
+            return None;
+        }
+        let pos = self.waiting.iter().position(|w| {
+            !self
+                .running
+                .iter()
+                .any(|(r, _)| r.profile_id == w.profile_id)
+        })?;
         let job = self.waiting.remove(pos)?;
         let flag = Arc::new(AtomicBool::new(false));
         self.running.push((job.clone(), flag.clone()));
@@ -81,7 +98,9 @@ impl JobQueue {
             || self.waiting.iter().any(|j| j.profile_id == profile_id)
     }
 
-    pub fn counts(&self) -> (usize, usize) { (self.waiting.len(), self.running.len()) }
+    pub fn counts(&self) -> (usize, usize) {
+        (self.waiting.len(), self.running.len())
+    }
 }
 
 #[cfg(test)]
@@ -92,7 +111,13 @@ mod tests {
     fn duplicate_waiting_jobs_merge() {
         let mut q = JobQueue::new();
         let a = q.enqueue("p1", Kind::Backup);
-        assert_eq!(q.enqueue("p1", Kind::Backup), Enqueue::Merged(match a { Enqueue::Queued(i) => i, _ => 0 }));
+        assert_eq!(
+            q.enqueue("p1", Kind::Backup),
+            Enqueue::Merged(match a {
+                Enqueue::Queued(i) => i,
+                _ => 0,
+            })
+        );
         assert!(matches!(q.enqueue("p1", Kind::Verify), Enqueue::Queued(_)));
         assert_eq!(q.counts(), (2, 0));
     }
@@ -127,8 +152,12 @@ mod tests {
     #[test]
     fn cancel_waiting_removes_and_cancel_running_sets_flag() {
         let mut q = JobQueue::new();
-        let Enqueue::Queued(w) = q.enqueue("a", Kind::Backup) else { panic!() };
-        let Enqueue::Queued(w2) = q.enqueue("b", Kind::Backup) else { panic!() };
+        let Enqueue::Queued(w) = q.enqueue("a", Kind::Backup) else {
+            panic!()
+        };
+        let Enqueue::Queued(w2) = q.enqueue("b", Kind::Backup) else {
+            panic!()
+        };
         let (j, flag) = q.start_next(1).unwrap();
         assert_eq!(j.id, w);
         assert!(q.cancel(w2) && q.counts() == (0, 1));

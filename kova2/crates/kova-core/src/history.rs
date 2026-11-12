@@ -58,11 +58,16 @@ CREATE TABLE IF NOT EXISTS blobs_summary (
 );";
 
 fn is_healthy(path: &Path) -> bool {
-    match Connection::open(path).and_then(|c| c.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0))) {
+    match Connection::open(path)
+        .and_then(|c| c.query_row("PRAGMA integrity_check", [], |r| r.get::<_, String>(0)))
+    {
         Ok(s) => s.eq_ignore_ascii_case("ok"),
         Err(rusqlite::Error::SqliteFailure(e, _)) => {
             // 잠금·바쁨은 손상이 아니다 (정상 DB를 격리하지 않는다)
-            !matches!(e.code, rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt)
+            !matches!(
+                e.code,
+                rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt
+            )
         }
         Err(_) => false,
     }
@@ -72,9 +77,15 @@ fn ts_of(v: &Value) -> f64 {
     match v {
         Value::Number(n) => n.as_f64().unwrap_or(0.0),
         Value::String(s) => {
-            if let Ok(f) = s.parse::<f64>() { return f; }
-            chrono::DateTime::parse_from_rfc3339(s).map(|d| d.timestamp() as f64)
-                .or_else(|_| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f").map(|d| d.and_utc().timestamp() as f64))
+            if let Ok(f) = s.parse::<f64>() {
+                return f;
+            }
+            chrono::DateTime::parse_from_rfc3339(s)
+                .map(|d| d.timestamp() as f64)
+                .or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f")
+                        .map(|d| d.and_utc().timestamp() as f64)
+                })
                 .unwrap_or(0.0)
         }
         _ => 0.0,
@@ -87,7 +98,10 @@ impl History {
         let _ = fs::create_dir_all(repo);
         let db = repo.join("metadata.db");
         if db.exists() && !is_healthy(&db) {
-            let ms = std::time::SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
+            let ms = std::time::SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
             for ext in ["-wal", "-shm"] {
                 let _ = fs::remove_file(repo.join(format!("metadata.db{ext}")));
             }
@@ -97,22 +111,34 @@ impl History {
         conn.busy_timeout(std::time::Duration::from_secs(30))?;
         let _ = conn.query_row("PRAGMA journal_mode=WAL", [], |_| Ok(()));
         conn.execute_batch(SCHEMA)?;
-        Ok(Self { repo: repo.to_path_buf(), conn })
+        Ok(Self {
+            repo: repo.to_path_buf(),
+            conn,
+        })
     }
 
     fn row_from_manifest(id: &str, v: &Value, mtime: f64) -> SnapshotRow {
         let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
         let n = |k: &str| v.get(k).and_then(Value::as_i64).unwrap_or(0);
-        let entries = v.get("files").or_else(|| v.get("entries")).and_then(Value::as_array);
+        let entries = v
+            .get("files")
+            .or_else(|| v.get("entries"))
+            .and_then(Value::as_array);
         SnapshotRow {
             id: id.to_string(),
             created_at: v.get("created_at").map(ts_of).unwrap_or(mtime),
             profile_id: s("profile_id"),
             profile_name: s("profile_name"),
-            total_files: v.get("total_files").and_then(Value::as_i64).unwrap_or(entries.map_or(0, |e| e.len() as i64)),
+            total_files: v
+                .get("total_files")
+                .and_then(Value::as_i64)
+                .unwrap_or(entries.map_or(0, |e| e.len() as i64)),
             total_bytes: n("total_bytes"),
             dedup_saved_bytes: n("dedup_bytes").max(n("dedup_saved_bytes")),
-            sources_json: v.get("sources").map(|x| x.to_string()).unwrap_or_else(|| "[]".into()),
+            sources_json: v
+                .get("sources")
+                .map(|x| x.to_string())
+                .unwrap_or_else(|| "[]".into()),
             file_mtime: mtime,
             is_verified: false,
             verify_timestamp: 0.0,
@@ -130,15 +156,34 @@ impl History {
         if let Ok(rd) = fs::read_dir(&dir) {
             for e in rd.flatten() {
                 let p = e.path();
-                if p.extension().map_or(true, |x| x != "json") { continue; }
+                if p.extension().is_none_or(|x| x != "json") {
+                    continue;
+                }
                 let id = p.file_stem().unwrap().to_string_lossy().to_string();
                 seen.push(id.clone());
-                let mtime = e.metadata().and_then(|m| m.modified()).ok()
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0.0, |d| d.as_secs_f64());
-                let old: Option<f64> = tx.query_row("SELECT file_mtime FROM snapshots_meta WHERE id=?1", [&id], |r| r.get(0)).optional()?;
-                if old.map_or(false, |o| (o - mtime).abs() < 1e-6) { continue; }
-                let parsed = fs::read(&p).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok());
-                let Some(v) = parsed else { rep.unreadable += 1; continue; };
+                let mtime = e
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map_or(0.0, |d| d.as_secs_f64());
+                let old: Option<f64> = tx
+                    .query_row(
+                        "SELECT file_mtime FROM snapshots_meta WHERE id=?1",
+                        [&id],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if old.is_some_and(|o| (o - mtime).abs() < 1e-6) {
+                    continue;
+                }
+                let parsed = fs::read(&p)
+                    .ok()
+                    .and_then(|b| serde_json::from_slice::<Value>(&b).ok());
+                let Some(v) = parsed else {
+                    rep.unreadable += 1;
+                    continue;
+                };
                 let r = Self::row_from_manifest(&id, &v, mtime);
                 // 검증 상태는 매니페스트가 바뀌면 무효(다시 검증해야 함)
                 tx.execute(
@@ -166,9 +211,17 @@ impl History {
 
     fn map(r: &rusqlite::Row) -> rusqlite::Result<SnapshotRow> {
         Ok(SnapshotRow {
-            id: r.get(0)?, created_at: r.get(1)?, profile_id: r.get(2)?, profile_name: r.get(3)?,
-            total_files: r.get(4)?, total_bytes: r.get(5)?, dedup_saved_bytes: r.get(6)?, sources_json: r.get(7)?,
-            file_mtime: r.get(8)?, is_verified: r.get::<_, i64>(9)? != 0, verify_timestamp: r.get(10)?,
+            id: r.get(0)?,
+            created_at: r.get(1)?,
+            profile_id: r.get(2)?,
+            profile_name: r.get(3)?,
+            total_files: r.get(4)?,
+            total_bytes: r.get(5)?,
+            dedup_saved_bytes: r.get(6)?,
+            sources_json: r.get(7)?,
+            file_mtime: r.get(8)?,
+            is_verified: r.get::<_, i64>(9)? != 0,
+            verify_timestamp: r.get(10)?,
             verify_error_count: r.get(11)?,
         })
     }
@@ -176,16 +229,31 @@ impl History {
 
     /// 최신순 목록.
     pub fn list_snapshots(&self) -> rusqlite::Result<Vec<SnapshotRow>> {
-        let mut st = self.conn.prepare(&format!("SELECT {} FROM snapshots_meta ORDER BY created_at DESC, id DESC", Self::COLS))?;
+        let mut st = self.conn.prepare(&format!(
+            "SELECT {} FROM snapshots_meta ORDER BY created_at DESC, id DESC",
+            Self::COLS
+        ))?;
         let v = st.query_map([], Self::map)?.collect();
         v
     }
 
     pub fn get_snapshot(&self, id: &str) -> rusqlite::Result<Option<SnapshotRow>> {
-        self.conn.query_row(&format!("SELECT {} FROM snapshots_meta WHERE id=?1", Self::COLS), [id], Self::map).optional()
+        self.conn
+            .query_row(
+                &format!("SELECT {} FROM snapshots_meta WHERE id=?1", Self::COLS),
+                [id],
+                Self::map,
+            )
+            .optional()
     }
 
-    pub fn set_verification(&self, id: &str, ok: bool, errors: i64, now: f64) -> rusqlite::Result<bool> {
+    pub fn set_verification(
+        &self,
+        id: &str,
+        ok: bool,
+        errors: i64,
+        now: f64,
+    ) -> rusqlite::Result<bool> {
         Ok(self.conn.execute(
             "UPDATE snapshots_meta SET is_verified=?2, verify_timestamp=?3, verify_error_count=?4 WHERE id=?1",
             params![id, ok as i64, now, errors],
@@ -193,7 +261,10 @@ impl History {
     }
 
     pub fn delete_snapshot_record(&self, id: &str) -> rusqlite::Result<bool> {
-        Ok(self.conn.execute("DELETE FROM snapshots_meta WHERE id=?1", [id])? > 0)
+        Ok(self
+            .conn
+            .execute("DELETE FROM snapshots_meta WHERE id=?1", [id])?
+            > 0)
     }
 
     /// blobs 폴더를 훑어 요약(개수·저장 바이트)을 다시 계산해 저장한다.
@@ -204,8 +275,9 @@ impl History {
             if let Ok(rd) = fs::read_dir(&d) {
                 for e in rd.flatten() {
                     let p = e.path();
-                    if p.is_dir() { stack.push(p); }
-                    else if p.extension().map_or(false, |x| x == "blob") {
+                    if p.is_dir() {
+                        stack.push(p);
+                    } else if p.extension().is_some_and(|x| x == "blob") {
                         n += 1;
                         bytes += e.metadata().map_or(0, |m| m.len() as i64);
                     }
@@ -221,12 +293,22 @@ impl History {
     }
 
     pub fn blobs_summary(&self) -> rusqlite::Result<Option<(i64, i64)>> {
-        self.conn.query_row("SELECT total_blobs,stored_bytes FROM blobs_summary WHERE id=1", [], |r| Ok((r.get(0)?, r.get(1)?))).optional()
+        self.conn
+            .query_row(
+                "SELECT total_blobs,stored_bytes FROM blobs_summary WHERE id=1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
     }
 
     /// WAL 을 본 파일에 합친다.
     pub fn checkpoint(&self) -> bool {
-        self.conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get::<_, i64>(0)).map_or(false, |busy| busy == 0)
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| {
+                r.get::<_, i64>(0)
+            })
+            == Ok(0)
     }
 }
 
@@ -242,10 +324,25 @@ mod tests {
     #[test]
     fn sync_list_update_and_remove() {
         let d = tempfile::tempdir().unwrap();
-        manifest(d.path(), "s1", r#"{"created_at":1000.5,"total_files":2,"total_bytes":50,"profile_name":"메인","sources":["C:\\a"]}"#);
-        manifest(d.path(), "s2", r#"{"created_at":"2026-11-01T10:00:00","files":[{"path":"a"},{"path":"b"},{"path":"c"}],"dedup_bytes":7}"#);
+        manifest(
+            d.path(),
+            "s1",
+            r#"{"created_at":1000.5,"total_files":2,"total_bytes":50,"profile_name":"메인","sources":["C:\\a"]}"#,
+        );
+        manifest(
+            d.path(),
+            "s2",
+            r#"{"created_at":"2026-11-01T10:00:00","files":[{"path":"a"},{"path":"b"},{"path":"c"}],"dedup_bytes":7}"#,
+        );
         let mut h = History::open(d.path()).unwrap();
-        assert_eq!(h.sync_snapshots().unwrap(), SyncReport { added_or_updated: 2, removed: 0, unreadable: 0 });
+        assert_eq!(
+            h.sync_snapshots().unwrap(),
+            SyncReport {
+                added_or_updated: 2,
+                removed: 0,
+                unreadable: 0
+            }
+        );
         let l = h.list_snapshots().unwrap();
         assert_eq!(l[0].id, "s2");
         assert_eq!((l[0].total_files, l[0].dedup_saved_bytes), (3, 7));
@@ -294,7 +391,10 @@ mod tests {
         fs::write(d.path().join("metadata.db"), vec![0x41u8; 4096]).unwrap();
         let mut h = History::open(d.path()).unwrap();
         assert_eq!(h.sync_snapshots().unwrap().added_or_updated, 1);
-        let q = fs::read_dir(d.path()).unwrap().flatten().any(|e| e.file_name().to_string_lossy().contains(".corrupt_"));
+        let q = fs::read_dir(d.path())
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().contains(".corrupt_"));
         assert!(q, "손상 DB 는 격리되어야 함");
     }
 

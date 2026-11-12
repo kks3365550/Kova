@@ -6,7 +6,11 @@ fn main() {
     let r = kova_core::verify::verify_repo(&repo, deep).expect("verify failed");
     println!(
         "snapshots={} files={} unique_chunks={} problems={} deep={}",
-        r.snapshots, r.files, r.unique_chunks, r.problems.len(), deep
+        r.snapshots,
+        r.files,
+        r.unique_chunks,
+        r.problems.len(),
+        deep
     );
     for p in &r.problems {
         println!("{:?}", p);
