@@ -3,7 +3,7 @@
 //! - 취소되면 매니페스트를 쓰지 않는다(반쪽짜리 스냅샷이 생기지 않는다).
 //! - 복원은 청크마다 BLAKE3 해시를 다시 확인한다(변조·손상된 데이터를 조용히 복원하지 않는다).
 use crate::storage::{CasStorage, FileChunkInfo, FileEntry, SnapshotManifest};
-use crate::{chunker, compressor, hasher, scanner};
+use crate::{chunker, hasher, scanner};
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fmt;
@@ -79,6 +79,8 @@ pub struct BackupOptions {
     pub exclude: Vec<String>,
     /// 매니페스트에 기록할 프로파일 ID(없으면 기록 안 함)
     pub profile_id: Option<String>,
+    /// Some: `sources` 와 같은 순서로, 실제로 읽을 경로(VSS 섀도 복사본 안의 같은 경로). 매니페스트에는 `sources` 가 기록된다
+    pub scan_from: Option<Vec<PathBuf>>,
 }
 
 #[derive(Debug, Clone)]
@@ -154,7 +156,12 @@ pub fn run_backup(
     });
     let scan_start = Instant::now();
     let exclude_filter = scanner::ExcludeFilter::new(&opts.exclude);
-    let items: Vec<scanner::ScannedItem> = sources
+    let scan_roots = match &opts.scan_from {
+        Some(v) if v.len() == sources.len() => v,
+        Some(_) => return Err(msg("scan_from 길이가 sources 와 다릅니다")),
+        None => sources,
+    };
+    let items: Vec<scanner::ScannedItem> = scan_roots
         .par_iter()
         .enumerate()
         .map(|(idx, src)| {
@@ -327,7 +334,7 @@ pub fn run_backup(
                         compressed_length: 0,
                     });
                 } else {
-                    let compressed = match compressor::compress(&c.data, opts.zstd_level) {
+                    let compressed = match cas.encode_blob(&c.data, &c.hash, opts.zstd_level) {
                         Ok(d) => d,
                         Err(e) => return skip(format!("compress: {}", e)),
                     };
@@ -771,7 +778,8 @@ fn restore_one(cas: &CasStorage, base: &RestoreBase, entry: &FileEntry) -> Resul
         let comp = cas
             .read_blob(&c.hash)
             .map_err(|e| format!("Missing blob {}: {}", c.hash, e))?;
-        let raw = compressor::decompress(&comp)
+        let raw = cas
+            .decode_blob(&comp, &c.hash)
             .map_err(|e| format!("Decompress failed for {}: {}", c.hash, e))?;
         if hasher::hash_bytes(&raw) != c.hash {
             return Err(format!(
@@ -792,6 +800,7 @@ fn restore_one(cas: &CasStorage, base: &RestoreBase, entry: &FileEntry) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compressor;
     use std::collections::BTreeMap;
 
     fn no_events(_: Event) {}
@@ -841,6 +850,7 @@ mod tests {
                 zstd_level: 3,
                 exclude: vec![],
                 profile_id: None,
+                scan_from: None,
             },
             &no_events,
             &AtomicBool::new(false),
@@ -939,6 +949,7 @@ mod tests {
                 zstd_level: 3,
                 exclude: vec![],
                 profile_id: None,
+                scan_from: None,
             },
             &no_events,
             &AtomicBool::new(false),
@@ -1065,6 +1076,7 @@ mod tests {
                 zstd_level: 3,
                 exclude: vec![],
                 profile_id: None,
+                scan_from: None,
             },
             &no_events,
             &AtomicBool::new(true),
@@ -1136,6 +1148,7 @@ mod tests {
                 zstd_level: 3,
                 exclude: vec![],
                 profile_id: None,
+                scan_from: None,
             },
             &no_events,
             &AtomicBool::new(false),
@@ -1161,6 +1174,7 @@ mod tests {
                 zstd_level: 3,
                 exclude: vec![],
                 profile_id: None,
+                scan_from: None,
             },
             &no_events,
             &AtomicBool::new(false),

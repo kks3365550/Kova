@@ -180,9 +180,10 @@ export component MainWindow inherits Window {
     callback check-update();
     in property <[RunRow]> running;
     callback cancel-job(int);
-    callback save-settings(string, bool);
+    callback save-settings(string, bool, bool);
     in-out property <string> form-min-free: "5";
     in-out property <bool> form-ransom: true;
+    in-out property <bool> form-encrypt: false;
     in property <string> settings-text;
     callback verify-image(string);
     callback restore-image(string, string);
@@ -614,9 +615,17 @@ export component MainWindow inherits Window {
                                 Btn { text: root.form-ransom ? "켜짐" : "꺼짐"; kind: root.form-ransom ? 1 : 0; clicked => { root.form-ransom = !root.form-ransom; } }
                                 Rectangle { horizontal-stretch: 1; }
                             }
+                            Hint { text: "켜면 백업으로 생긴 파일을 읽기 전용으로 잠가 덮어쓰기·실수로 지우는 것을 막습니다. 관리자 권한의 의도적인 삭제까지 막지는 못합니다."; }
                             HorizontalLayout {
                                 spacing: 8px;
-                                Btn { text: "설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom); } }
+                                Text { text: "백업 암호화"; color: Theme.text; font-size: 13px; width: 150px; vertical-alignment: center; }
+                                Btn { text: root.form-encrypt ? "켜짐" : "꺼짐"; kind: root.form-encrypt ? 1 : 0; clicked => { root.form-encrypt = !root.form-encrypt; } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            Hint { text: "켜고 저장하면 각 프로파일 저장소가 암호화되고, 그 뒤 새로 저장되는 데이터가 암호화됩니다(이미 있던 백업은 그대로). 저장 직후 한 번만 보이는 복구 코드를 반드시 따로 보관하세요. 코드가 없으면 이 PC가 고장 났을 때 백업을 열 수 없습니다."; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Btn { text: "설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt); } }
                                 if root.settings-text != "": Text { text: root.settings-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                                 if root.settings-text == "": Rectangle { horizontal-stretch: 1; }
                             }

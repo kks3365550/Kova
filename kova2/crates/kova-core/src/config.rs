@@ -87,6 +87,12 @@ pub struct Settings {
     pub min_free_disk_gb: u32,
     #[serde(default = "d_true")]
     pub enable_ransomware_protection: bool,
+    /// 저장소 암호화(켠 뒤 만들어지는 블롭부터 AES-256-GCM). 키는 설정 화면에서 켤 때 저장소별로 만든다
+    #[serde(default)]
+    pub encrypt_backups: bool,
+    /// 백업 때 원본 드라이브를 VSS 로 스냅샷해 잠긴 파일도 읽는다(못 만들면 직접 읽기로 되돌아감)
+    #[serde(default = "d_true")]
+    pub use_vss: bool,
     #[serde(default)]
     pub offsite_enabled: bool,
     #[serde(default = "d_prov")]

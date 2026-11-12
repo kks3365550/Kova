@@ -170,6 +170,7 @@ fn apply_settings(
     store: &kova_core::config::ConfigStore,
     min_free_gb: &str,
     ransomware: bool,
+    encrypt: bool,
 ) -> Result<String, String> {
     let gb: u32 = min_free_gb
         .trim()
@@ -178,13 +179,40 @@ fn apply_settings(
     if gb > 100_000 {
         return Err("최소 여유 공간이 너무 큽니다 (최대 100000GB)".into());
     }
+    // 암호화를 켜면 프로파일별 저장소에 키를 만든다. 하나라도 실패하면 설정을 저장하지 않는다(다시 눌러도 안전: 이미 켠 저장소는 건너뜀)
+    let mut codes = Vec::new();
+    if encrypt {
+        let mut done = std::collections::HashSet::new();
+        for p in store.profiles() {
+            if p.repo_dir.is_empty() || !done.insert(p.repo_dir.clone()) {
+                continue;
+            }
+            match kova_core::repocrypto::enable(std::path::Path::new(&p.repo_dir)) {
+                Ok(Some(code)) => codes.push(format!("{} 복구 코드: {}", p.name, code)),
+                Ok(None) => {}
+                Err(e) => return Err(format!("{} 저장소 암호화 실패: {}", p.name, e)),
+            }
+        }
+    }
     let mut s = store.settings();
     s.min_free_disk_gb = gb;
     s.enable_ransomware_protection = ransomware;
+    s.encrypt_backups = encrypt;
     store
         .save_settings(&s)
         .map_err(|e| format!("저장 실패: {e}"))?;
-    Ok("저장했습니다".into())
+    if codes.is_empty() {
+        Ok("저장했습니다".into())
+    } else {
+        Ok(format!(
+            "저장했습니다. 아래 복구 코드는 지금만 보입니다. 안전한 곳에 적어 두세요.
+{}",
+            codes.join(
+                "
+"
+            )
+        ))
+    }
 }
 
 fn setting_lines() -> Vec<slint::SharedString> {
@@ -1071,7 +1099,8 @@ fn restore_snapshot_job(
 }
 
 fn main() -> Result<(), slint::PlatformError> {
-    // 관리자 권한으로 다시 실행된 업데이트 설치 도우미: 설치하고 결과를 파일에 적은 뒤 끝낸다
+    kova_core::repocrypto::install_provider(); // 암호화된 저장소의 탐색·복원에 필요
+                                               // 관리자 권한으로 다시 실행된 업데이트 설치 도우미: 설치하고 결과를 파일에 적은 뒤 끝낸다
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--install-update") {
         let (text, installed) =
@@ -1092,12 +1121,13 @@ fn main() -> Result<(), slint::PlatformError> {
         let s = store.settings();
         w.set_form_min_free(s.min_free_disk_gb.to_string().into());
         w.set_form_ransom(s.enable_ransomware_protection);
+        w.set_form_encrypt(s.encrypt_backups);
     }
     {
         let weak = w.as_weak();
-        w.on_save_settings(move |gb, ransom| {
+        w.on_save_settings(move |gb, ransom, enc| {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let msg = match apply_settings(&store, &gb, ransom) {
+            let msg = match apply_settings(&store, &gb, ransom, enc) {
                 Ok(m) | Err(m) => m,
             };
             if let Some(w) = weak.upgrade() {
@@ -1386,12 +1416,12 @@ mod tests {
         s.extra.insert("unknown_key".into(), 7.into());
         store.save_settings(&s).unwrap();
 
-        assert!(apply_settings(&store, "abc", true).is_err());
-        assert!(apply_settings(&store, "-1", true).is_err());
-        assert!(apply_settings(&store, "999999", true).is_err());
+        assert!(apply_settings(&store, "abc", true, false).is_err());
+        assert!(apply_settings(&store, "-1", true, false).is_err());
+        assert!(apply_settings(&store, "999999", true, false).is_err());
         assert_eq!(store.settings().offsite_remote_path, "keep"); // 실패 시 변경 없음
 
-        assert!(apply_settings(&store, " 25 ", false).is_ok());
+        assert!(apply_settings(&store, " 25 ", false, false).is_ok());
         let after = store.settings();
         assert_eq!(after.min_free_disk_gb, 25);
         assert!(!after.enable_ransomware_protection);

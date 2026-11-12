@@ -47,6 +47,7 @@ pub struct Supervisor(Arc<Shared>);
 impl Supervisor {
     pub fn new(config_dir: impl Into<PathBuf>, max_concurrent: usize) -> Self {
         let config_dir: PathBuf = config_dir.into();
+        kova_core::repocrypto::install_provider(); // 암호화된 저장소를 열 때 쓸 키 제공자
         Self(Arc::new(Shared {
             queue: Mutex::new(JobQueue::new()),
             subs: Mutex::new(vec![]),
@@ -164,6 +165,7 @@ impl Supervisor {
             zstd_level: prof.compression_level,
             exclude: prof.exclude_patterns.clone(),
             profile_id: Some(prof.id.clone()),
+            scan_from: None,
         };
         // 원본이 없으면(드라이브 분리 등) 엔진은 빈 백업을 "성공"으로 끝내므로 여기서 실패로 막는다
         let missing: Vec<String> = opts
@@ -192,7 +194,40 @@ impl Supervisor {
                 }
             }
         };
-        let res = if missing.is_empty() || partial_missing {
+        // 저장소 드라이브 여유 공간이 설정의 최소 기준보다 적으면 시작하지 않는다(디스크가 가득 차 백업이 중간에 깨지는 것을 막는다)
+        let space_check = kova_core::diskspace::check_min_free(
+            kova_core::diskspace::free_bytes(&opts.repo),
+            self.0.store.settings().min_free_disk_gb,
+        );
+        // 암호화가 켜져 있는데 이 저장소가 아직 암호화되지 않았으면 평문으로 쓰지 않고 멈춘다(복구 코드는 설정 화면에서 켤 때만 보여 준다)
+        let encrypt_missing = self.0.store.settings().encrypt_backups
+            && !kova_core::repocrypto::is_enabled(&opts.repo);
+        // VSS: 원본 드라이브를 스냅샷해 잠긴 파일도 같은 시점으로 읽는다. 못 만들면(권한·파일시스템) 직접 읽고 메시지에 남긴다
+        let mut vss_note = String::new();
+        let shadows = if self.0.store.settings().use_vss && space_check.is_ok() && !encrypt_missing
+        {
+            match kova_core::vss::ShadowSet::create_for(&opts.sources) {
+                Ok(set) => {
+                    opts.scan_from = Some(opts.sources.iter().map(|p| set.map(p)).collect());
+                    vss_note = format!(", VSS 스냅샷 {}개 사용", set.count());
+                    Some(set)
+                }
+                Err(e) => {
+                    vss_note = format!(", VSS 사용 못 해 직접 읽음({e})");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        let res = if let Err(why) = space_check {
+            Err(EngineError::Msg(why))
+        } else if encrypt_missing {
+            Err(EngineError::Msg(
+                "백업 암호화가 켜져 있지만 이 저장소는 아직 암호화되지 않았습니다. 설정에서 저장을 눌러 암호화를 시작하세요"
+                    .into(),
+            ))
+        } else if missing.is_empty() || partial_missing {
             run_backup(&opts, &on_event, cancel)
         } else {
             Err(EngineError::Msg(format!(
@@ -200,6 +235,7 @@ impl Supervisor {
                 missing.join(", ")
             )))
         };
+        drop(shadows); // 백업이 끝났으니 섀도 복사본 삭제
         let now = Local::now().timestamp() as f64;
         // 결과 반영은 최신 파일을 다시 읽어 이 프로파일만 갱신한다 (실행 중 화면에서 바꾼 설정을 덮어쓰지 않음)
         let mut prof = self.0.store.get(&job.profile_id).unwrap_or(prof);
@@ -217,6 +253,14 @@ impl Supervisor {
                 if let Ok(mut h) = History::open(&opts.repo) {
                     let _ = h.sync_snapshots();
                 }
+                // 랜섬웨어 보호: 이번 백업으로 생긴 매니페스트·블롭을 읽기 전용(+매니페스트는 삭제 거부 ACL)으로 잠근다.
+                // 삭제는 보존 정책·정리가 승인 경로(worm::remove_protected)로만 한다
+                let protected = if self.0.store.settings().enable_ransomware_protection {
+                    let st = kova_core::worm::protect_new_files(&opts.repo);
+                    Some(st.blobs + st.snapshots)
+                } else {
+                    None
+                };
                 let mut msg = if s.skipped_files.is_empty() {
                     format!("완료: {}개 항목, {}바이트", s.total_files, s.total_bytes)
                 } else {
@@ -244,6 +288,10 @@ impl Supervisor {
                         )),
                         Err(e) => msg.push_str(&format!(", 오프사이트 복제 실패: {e}")),
                     }
+                }
+                msg.push_str(&vss_note);
+                if let Some(n) = protected.filter(|n| *n > 0) {
+                    msg.push_str(&format!(", 랜섬웨어 보호 {n}개 잠금"));
                 }
                 if partial_missing {
                     msg.push_str(&format!(
@@ -559,7 +607,12 @@ mod tests {
         p.repo_dir = d.path().join("repo").to_string_lossy().into();
         p.auto_backup_enabled = true;
         let cfg = d.path().join("cfg");
-        ConfigStore::new(&cfg).upsert(p).unwrap();
+        let store = ConfigStore::new(&cfg);
+        store.upsert(p).unwrap();
+        // 시험은 섀도 복사본을 만들지 않는다(실제 VSS 시험은 따로 --ignored 로 돌린다)
+        let mut st = store.settings();
+        st.use_vss = false;
+        store.save_settings(&st).unwrap();
         (d, Supervisor::new(cfg, 2))
     }
 
@@ -597,6 +650,169 @@ mod tests {
         assert!(rx
             .try_iter()
             .any(|e| matches!(e, SvcEvent::JobFinished { ok: false, .. })));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn backup_is_refused_when_free_space_is_below_the_minimum() {
+        let (d, s) = setup(true);
+        let store = ConfigStore::new(d.path().join("cfg"));
+        let mut st = store.settings();
+        st.min_free_disk_gb = 100_000_000; // 어떤 디스크에도 없는 크기
+        store.save_settings(&st).unwrap();
+        let rx = s.subscribe();
+        s.tick(Local::now());
+        wait_idle(&s);
+        let evs: Vec<SvcEvent> = rx.try_iter().collect();
+        let msg = evs.iter().find_map(|e| match e {
+            SvcEvent::JobFinished {
+                ok: false, message, ..
+            } => Some(message.clone()),
+            _ => None,
+        });
+        assert!(
+            msg.is_some_and(|m| m.contains("여유 공간이 부족")),
+            "{evs:?}"
+        );
+        // 백업이 시작되지 않았으니 스냅샷이 없다
+        assert_eq!(store.get("p1").unwrap().last_status, "failed");
+        assert!(store.get("p1").unwrap().last_snapshot_id.is_none());
+        // 기준을 0(검사 끔)으로 낮추면 같은 프로파일이 정상 백업된다
+        st.min_free_disk_gb = 0;
+        store.save_settings(&st).unwrap();
+        let mut p = store.get("p1").unwrap();
+        p.last_run = None;
+        p.extra.insert("retry_count".into(), 0.into());
+        store.upsert(p).unwrap();
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        assert_eq!(store.get("p1").unwrap().last_status, "success");
+    }
+
+    /// 실제 VSS 로 백업한다(관리자 권한 필요): `cargo test -p kova-service vss -- --ignored`
+    #[test]
+    #[ignore]
+    #[cfg(windows)]
+    fn vss_backup_reads_from_shadow_and_records_original_paths() {
+        let (d, s) = setup(true);
+        let store = ConfigStore::new(d.path().join("cfg"));
+        let mut st = store.settings();
+        st.use_vss = true;
+        st.min_free_disk_gb = 0;
+        st.enable_ransomware_protection = false;
+        store.save_settings(&st).unwrap();
+        let rx = s.subscribe();
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        let evs: Vec<SvcEvent> = rx.try_iter().collect();
+        let msg = evs.iter().find_map(|e| match e {
+            SvcEvent::JobFinished {
+                ok: true, message, ..
+            } => Some(message.clone()),
+            _ => None,
+        });
+        assert!(
+            msg.as_ref()
+                .is_some_and(|m| m.contains("VSS 스냅샷 1개 사용")),
+            "{evs:?}"
+        );
+        // 매니페스트에는 섀도 경로가 아니라 원래 원본 경로가 기록되고, 복원하면 내용이 같다
+        let sid = store.get("p1").unwrap().last_snapshot_id.unwrap();
+        let manifest = fs::read_to_string(
+            d.path()
+                .join("repo")
+                .join("snapshots")
+                .join(format!("{sid}.json")),
+        )
+        .unwrap();
+        assert!(!manifest.contains("GLOBALROOT"), "{manifest}");
+        let out = d.path().join("out");
+        let ro = kova_engine::ops::RestoreOptions {
+            repo: d.path().join("repo"),
+            session_id: sid,
+            target: Some(out.clone()),
+            only: None,
+        };
+        kova_engine::ops::run_restore(&ro, &|_| {}, &AtomicBool::new(false)).unwrap();
+        let found = fs::read_dir(&out)
+            .unwrap()
+            .flatten()
+            .any(|e| e.path().join("a.txt").is_file() || e.file_name() == "a.txt");
+        assert!(found);
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn encryption_refuses_plain_backup_then_writes_only_ciphertext() {
+        let keys = tempfile::tempdir().unwrap();
+        std::env::set_var("KOVA2_KEY_DIR", keys.path());
+        let (d, s) = setup(true);
+        let store = ConfigStore::new(d.path().join("cfg"));
+        let mut st = store.settings();
+        st.min_free_disk_gb = 0;
+        st.enable_ransomware_protection = false;
+        st.encrypt_backups = true;
+        store.save_settings(&st).unwrap();
+        let repo = d.path().join("repo");
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        let p = store.get("p1").unwrap();
+        assert_eq!(p.last_status, "failed");
+        assert!(!repo.join("blobs").exists() || kova_core::repocrypto::is_enabled(&repo));
+        kova_core::repocrypto::enable(&repo).unwrap();
+        let mut p = store.get("p1").unwrap();
+        p.last_run = None;
+        p.extra.insert("retry_count".into(), 0.into());
+        store.upsert(p).unwrap();
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        assert_eq!(store.get("p1").unwrap().last_status, "success");
+        let blob = fs::read_dir(repo.join("blobs"))
+            .unwrap()
+            .flatten()
+            .flat_map(|d| fs::read_dir(d.path()).unwrap().flatten())
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|x| x == "blob"))
+            .unwrap();
+        assert_eq!(&fs::read(&blob).unwrap()[..4], b"ENC");
+    }
+
+    #[test]
+    fn ransomware_protection_locks_new_files_and_retention_still_deletes() {
+        let (d, s) = setup(true);
+        let store = ConfigStore::new(d.path().join("cfg"));
+        let mut st = store.settings();
+        st.enable_ransomware_protection = true;
+        st.min_free_disk_gb = 0;
+        store.save_settings(&st).unwrap();
+        let repo = d.path().join("repo");
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        assert_eq!(store.get("p1").unwrap().last_status, "success");
+        let first = store.get("p1").unwrap().last_snapshot_id.unwrap();
+        let manifest = repo.join("snapshots").join(format!("{first}.json"));
+        let ro = |p: &std::path::Path| fs::metadata(p).unwrap().permissions().readonly();
+        assert!(ro(&manifest), "매니페스트가 잠겨야 함");
+        let blob = fs::read_dir(repo.join("blobs"))
+            .unwrap()
+            .flatten()
+            .flat_map(|d| fs::read_dir(d.path()).unwrap().flatten())
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|x| x == "blob"))
+            .unwrap();
+        assert!(ro(&blob) && fs::write(&blob, b"x").is_err());
+        // 보존 개수를 1로 줄이고 새 백업을 만들면 잠긴 옛 스냅샷도 서비스가 승인 경로로 지운다
+        let mut p = store.get("p1").unwrap();
+        p.retention_count = 1;
+        p.last_run = None;
+        store.upsert(p).unwrap();
+        fs::write(d.path().join("원본").join("b.txt"), "새 파일").unwrap();
+        std::thread::sleep(Duration::from_millis(1200)); // 스냅샷 ID·시각이 초 단위라 겹치지 않게
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        assert!(!manifest.exists(), "옛 스냅샷이 정리되어야 함");
+        // 임시 폴더를 지울 수 있도록 잠금 해제
+        let _ = kova_core::worm::unprotect_directory(&repo, true);
     }
 
     #[test]

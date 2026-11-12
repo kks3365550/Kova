@@ -135,6 +135,7 @@ impl SnapshotManifest {
 
 pub struct CasStorage {
     repo_root: PathBuf,
+    codec: Option<std::sync::Arc<dyn crate::codec::BlobCodec>>,
 }
 
 impl CasStorage {
@@ -142,7 +143,27 @@ impl CasStorage {
         let root = repo_root.as_ref().to_path_buf();
         fs::create_dir_all(root.join("blobs"))?;
         fs::create_dir_all(root.join("snapshots"))?;
-        Ok(Self { repo_root: root })
+        let codec = crate::codec::resolve(&root).map_err(io::Error::other)?;
+        Ok(Self {
+            repo_root: root,
+            codec,
+        })
+    }
+
+    /// 평문 청크를 저장 형식으로(암호화 저장소면 암호화, 아니면 zstd).
+    pub fn encode_blob(&self, plain: &[u8], hash: &str, level: i32) -> Result<Vec<u8>, String> {
+        match &self.codec {
+            Some(c) => c.encode(plain, hash, level),
+            None => crate::compressor::compress(plain, level).map_err(|e| e.to_string()),
+        }
+    }
+
+    /// 저장 형식 → 평문. 호출자가 해시를 다시 검증한다.
+    pub fn decode_blob(&self, blob: &[u8], hash: &str) -> Result<Vec<u8>, String> {
+        match &self.codec {
+            Some(c) => c.decode(blob, hash),
+            None => crate::compressor::decompress(blob).map_err(|e| e.to_string()),
+        }
     }
 
     pub fn blob_path(&self, hash: &str) -> PathBuf {

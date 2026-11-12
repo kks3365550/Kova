@@ -221,7 +221,9 @@ fn apply_inner(repo: &Path, policy: Policy, only: Option<&str>) -> RetentionResu
         if id.is_empty() || id.contains(['/', '\\']) || id == "." || id == ".." {
             continue;
         }
-        if fs::remove_file(repo.join("snapshots").join(format!("{}.json", id))).is_ok() {
+        if crate::worm::remove_protected(&repo.join("snapshots").join(format!("{}.json", id)))
+            .is_ok()
+        {
             res.deleted_snapshots.push(id);
         }
     }

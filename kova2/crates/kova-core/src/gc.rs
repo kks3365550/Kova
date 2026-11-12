@@ -87,7 +87,7 @@ pub fn prune_orphans(repo: &Path, min_age_secs: u64) -> io::Result<GcResult> {
                 continue;
             }
             let len = meta.len();
-            if fs::remove_file(&p).is_ok() {
+            if crate::worm::remove_protected(&p).is_ok() {
                 res.deleted_blobs += 1;
                 res.freed_bytes += len;
             }

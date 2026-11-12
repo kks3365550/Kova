@@ -173,6 +173,7 @@ fn run_backup(
         zstd_level,
         exclude: exclude.to_vec(),
         profile_id: None,
+        scan_from: None,
     };
     let on_event = move |ev: ops::Event| match ev {
         ops::Event::Phase { phase, message } => {

@@ -50,6 +50,8 @@ fn copy_atomic(src: &Path, dst: &Path) -> io::Result<u64> {
         fs::create_dir_all(p)?;
     }
     let tmp = dst.with_extension("part");
+    // 원본이 읽기 전용(랜섬웨어 보호)이면 복사본도 읽기 전용이 된다. 중단된 이전 시도의 .part 가 남아 있으면 덮어쓸 수 없으므로 먼저 치운다
+    let _ = crate::worm::remove_protected(&tmp);
     let n = fs::copy(src, &tmp)?;
     fs::rename(&tmp, dst)?;
     Ok(n)
@@ -139,6 +141,7 @@ mod tests {
             zstd_level: 3,
             exclude: vec![],
             profile_id: None,
+            scan_from: None,
         };
         run_backup(&opts, &|_| {}, &AtomicBool::new(false)).unwrap();
         repo

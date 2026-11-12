@@ -1,7 +1,7 @@
 //! 저장소 검증: 매니페스트가 가리키는 모든 청크가 존재하고(빠른 검사),
 //! 필요하면 압축을 풀어 BLAKE3 해시와 길이가 일치하는지(전체 검사) 확인한다.
 use kova_engine::{
-    compressor, hasher,
+    hasher,
     storage::{CasStorage, SnapshotManifest},
 };
 use rayon::prelude::*;
@@ -90,7 +90,7 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
                     Ok(c) => c,
                     Err(_) => return None, // 없는 청크는 위에서 이미 MissingBlob 으로 보고됨
                 };
-                let raw = match compressor::decompress(&comp) {
+                let raw = match cas.decode_blob(&comp, hash) {
                     Ok(r) => r,
                     Err(e) => {
                         return Some(Problem::CorruptBlob {
@@ -122,6 +122,7 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kova_engine::compressor;
 
     /// 청크 하나짜리 저장소를 엔진 라이브러리로 직접 만든다.
     fn make_repo(data: &[u8]) -> (tempfile::TempDir, String) {

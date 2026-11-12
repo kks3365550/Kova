@@ -135,8 +135,21 @@ impl CryptoEngine {
         Ok(out)
     }
 
-    /// v0(평문 zstd)·v1(암호화) 모두 복호화하고 해시를 재검증한다.
+    /// v0(평문 zstd)·v1(암호화) 모두 복호화하고 SHA-256 해시를 재검증한다.
     pub fn decrypt_blob(&self, blob: &[u8], expected_hash: &str) -> Result<Vec<u8>, CryptoError> {
+        let plain = self.decrypt_unchecked(blob, expected_hash)?;
+        let actual = hex(&Sha256::digest(&plain));
+        if !actual.eq_ignore_ascii_case(expected_hash) {
+            return Err(CryptoError::HashMismatch {
+                expected: expected_hash.into(),
+                actual,
+            });
+        }
+        Ok(plain)
+    }
+
+    /// 복호화·압축 해제만 한다. 키 이름(`hash`)은 AAD 에 묶이며, 평문 해시 검증은 호출자 몫이다(엔진은 BLAKE3 사용).
+    pub fn decrypt_unchecked(&self, blob: &[u8], hash: &str) -> Result<Vec<u8>, CryptoError> {
         if blob.len() < 4 {
             return Err(CryptoError::Corrupt("길이가 너무 짧음".into()));
         }
@@ -144,7 +157,7 @@ impl CryptoEngine {
             if blob.len() < 4 + 12 + 16 {
                 return Err(CryptoError::Corrupt("헤더/태그 길이 부족".into()));
             }
-            let aad = blob_aad(expected_hash);
+            let aad = blob_aad(hash);
             self.cipher
                 .decrypt(
                     Nonce::from_slice(&blob[4..16]),
@@ -160,15 +173,7 @@ impl CryptoEngine {
             }
             blob.to_vec()
         };
-        let plain = zstd::decode_all(&comp[..]).map_err(|e| CryptoError::Corrupt(e.to_string()))?;
-        let actual = hex(&Sha256::digest(&plain));
-        if !actual.eq_ignore_ascii_case(expected_hash) {
-            return Err(CryptoError::HashMismatch {
-                expected: expected_hash.into(),
-                actual,
-            });
-        }
-        Ok(plain)
+        zstd::decode_all(&comp[..]).map_err(|e| CryptoError::Corrupt(e.to_string()))
     }
 
     /// CAS 원자적 저장. 이미 있으면 (경로, false). 임시 파일 → fsync → 읽기 전용 → rename.

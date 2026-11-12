@@ -15,6 +15,7 @@ fn main() {
                 zstd_level: 3,
                 exclude: vec![],
                 profile_id: Some("rt".into()),
+                scan_from: None,
             };
             let s = run_backup(&o, &|_| {}, &cancel).unwrap();
             println!(
