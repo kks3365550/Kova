@@ -341,7 +341,7 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         Heading { text: root.form-id == "" ? "새 프로파일 추가" : "프로파일 수정 중"; }
                         Field { text <=> root.form-name; placeholder: "이름"; }
-                        PathField { text <=> root.form-sources; placeholder: "백업할 폴더 전체 경로 (여러 개는 ; 로 구분)"; append: true; pick(k) => { root.browse(k) } }
+                        PathField { text <=> root.form-sources; placeholder: "백업할 폴더 전체 경로 (여러 개는 ; 로 구분)"; kind: "folders"; append: true; pick(k) => { root.browse(k) } }
                         PathField { text <=> root.form-repo; placeholder: "백업 저장 폴더 전체 경로"; pick(k) => { root.browse(k) } }
                         HorizontalLayout {
                             spacing: 8px;

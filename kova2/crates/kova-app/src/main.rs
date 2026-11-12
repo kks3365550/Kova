@@ -294,8 +294,12 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
 /// Windows 폴더/파일 선택 창(PowerShell + WinForms, 창 없이 실행). 취소하면 빈 문자열.
 fn pick_path(kind: &str) -> String {
     use std::os::windows::process::CommandExt;
+    // 폴더 선택은 탐색기와 같은 최신 선택 창(IFileOpenDialog). "folders" 는 여러 폴더를 한 번에 고른다.
     let body = match kind {
-        "folder" => "$d=New-Object Windows.Forms.FolderBrowserDialog;$d.Description='폴더를 선택하세요';if($d.ShowDialog($f)-eq'OK'){$d.SelectedPath}".to_string(),
+        "folder" | "folders" => format!(
+            "Add-Type -TypeDefinition @'\n{FOLDER_PICKER_CS}\n'@;[FP]::Pick(${}) | ForEach-Object {{ $_ }}",
+            if kind == "folders" { "true" } else { "false" }
+        ),
         k => {
             let (cls, filter, ext) = match k {
                 "qblk-open" => ("OpenFileDialog", "Kova 이미지 (*.qblk)|*.qblk|모든 파일|*.*", ""),
@@ -337,9 +341,84 @@ fn pick_path(kind: &str) -> String {
         ])
         .creation_flags(0x0800_0000)
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .map(|o| {
+            // 여러 줄(여러 폴더)은 ';' 로 이어 한 칸에 넣는다
+            String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .collect::<Vec<_>>()
+                .join(";")
+        })
         .unwrap_or_default()
 }
+
+const FOLDER_PICKER_CS: &str = r#"using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+public class FP {
+  [ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")] class FOD {}
+  [ComImport, Guid("42f85136-db7e-439c-85f1-e4075d135fc8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IFileOpenDialog {
+    [PreserveSig] int Show(IntPtr h);
+    void SetFileTypes(uint c, IntPtr f);
+    void SetFileTypeIndex(uint i);
+    void GetFileTypeIndex(out uint i);
+    void Advise(IntPtr p, out uint c);
+    void Unadvise(uint c);
+    void SetOptions(uint o);
+    void GetOptions(out uint o);
+    void SetDefaultFolder(IShellItem s);
+    void SetFolder(IShellItem s);
+    void GetFolder(out IShellItem s);
+    void GetCurrentSelection(out IShellItem s);
+    void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string n);
+    void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string n);
+    void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string t);
+    void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string t);
+    void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string t);
+    void GetResult(out IShellItem s);
+    void AddPlace(IShellItem s, int f);
+    void SetDefaultExtension([MarshalAs(UnmanagedType.LPWStr)] string e);
+    void Close(int hr);
+    void SetClientGuid(ref Guid g);
+    void ClearClientData();
+    void SetFilter(IntPtr f);
+    void GetResults(out IShellItemArray a);
+    void GetSelectedItems(out IShellItemArray a);
+  }
+  [ComImport, Guid("43826d1e-e718-42ee-bc55-a1e261c37bfe"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IShellItem {
+    void BindToHandler(IntPtr p, ref Guid b, ref Guid r, out IntPtr o);
+    void GetParent(out IShellItem s);
+    void GetDisplayName(uint n, [MarshalAs(UnmanagedType.LPWStr)] out string s);
+    void GetAttributes(uint m, out uint a);
+    void Compare(IShellItem s, uint h, out int o);
+  }
+  [ComImport, Guid("b63ea76d-1f85-456f-a19c-48159efa858b"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+  interface IShellItemArray {
+    void BindToHandler(IntPtr p, ref Guid b, ref Guid r, out IntPtr o);
+    void GetPropertyStore(int f, ref Guid r, out IntPtr o);
+    void GetPropertyDescriptionList(IntPtr k, ref Guid r, out IntPtr o);
+    void GetAttributes(int f, uint m, out uint a);
+    void GetCount(out uint c);
+    void GetItemAt(uint i, out IShellItem s);
+    void EnumItems(out IntPtr e);
+  }
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  public static string[] Pick(bool multi) {
+    var d = (IFileOpenDialog)new FOD();
+    uint o; d.GetOptions(out o);
+    d.SetOptions(o | 0x20u | 0x40u | (multi ? 0x200u : 0u));
+    d.SetTitle(multi ? "폴더 선택 (여러 개 선택 가능)" : "폴더 선택");
+    if (d.Show(GetForegroundWindow()) != 0) return new string[0];
+    IShellItemArray a; d.GetResults(out a);
+    uint c; a.GetCount(out c);
+    var l = new List<string>();
+    for (uint i = 0; i < c; i++) { IShellItem s; a.GetItemAt(i, out s); string p; s.GetDisplayName(0x80058000u, out p); l.Add(p); }
+    return l.ToArray();
+  }
+}"#;
 
 fn send(kind: impl Into<String>, id: String) {
     let kind: String = kind.into();
@@ -412,7 +491,7 @@ fn do_install() -> Result<String, String> {
     std::thread::sleep(std::time::Duration::from_secs(3));
     svc("start");
     Ok(format!(
-        "{tag} 설치 완료({}개 파일, 서비스 재시작). 앱을 다시 시작하세요",
+        "{tag} 설치 완료({}개 파일, 서비스 재시작). 앱을 다시 시작합니다",
         r.files
     ))
 }
@@ -421,6 +500,7 @@ fn do_install() -> Result<String, String> {
 /// 자기 자신을 관리자 권한(UAC 승인)으로 `--install-update <결과파일>` 모드로 다시 실행해 결과를 받는다.
 /// 패키지에 kova-app.exe 가 없으면(예: 파이썬판 릴리즈) 설치하지 않는다.
 fn install_update(weak: slint::Weak<MainWindow>) {
+    let exe_path = std::env::current_exe().unwrap_or_default();
     std::thread::spawn(move || {
         let run = || -> Result<String, String> {
             use std::os::windows::process::CommandExt;
@@ -447,9 +527,21 @@ fn install_update(weak: slint::Weak<MainWindow>) {
             }
         };
         let text = run().unwrap_or_else(|e| format!("설치하지 않음: {e}"));
+        let installed = text.contains("설치 완료");
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(w) = weak.upgrade() {
                 w.set_update_text(text.into());
+            }
+            // 설치가 끝났으면 새 앱을 띄우고 이 앱은 닫는다(설치 전에 알아 둔 경로 사용: 교체 후 current_exe 는 옛 파일을 가리킬 수 있다)
+            if installed {
+                use std::os::windows::process::CommandExt;
+                if std::process::Command::new(&exe_path)
+                    .creation_flags(0x0800_0000)
+                    .spawn()
+                    .is_ok()
+                {
+                    let _ = slint::quit_event_loop();
+                }
             }
         });
     });
