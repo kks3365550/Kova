@@ -121,7 +121,7 @@ impl Supervisor {
         let Some(prof) = self.0.store.get(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
         };
-        let opts = BackupOptions {
+        let mut opts = BackupOptions {
             sources: prof.sources.iter().map(PathBuf::from).collect(),
             repo: PathBuf::from(&prof.repo_dir),
             session_id: None,
@@ -131,6 +131,9 @@ impl Supervisor {
         };
         // 원본이 없으면(드라이브 분리 등) 엔진은 빈 백업을 "성공"으로 끝내므로 여기서 실패로 막는다
         let missing: Vec<String> = opts.sources.iter().filter(|s| !s.exists()).map(|s| s.display().to_string()).collect();
+        // 일부만 없으면(임시 폴더·바로가기 등) 있는 것만 백업하고 메시지에 남긴다. 전부 없으면 실패로 막는다
+        let partial_missing = !missing.is_empty() && missing.len() < opts.sources.len();
+        if partial_missing { opts.sources.retain(|s| s.exists()); }
         let last_pct = Mutex::new(u64::MAX);
         let id = job.id;
         let on_event = |e: EngineEvent| {
@@ -142,7 +145,7 @@ impl Supervisor {
                 }
             }
         };
-        let res = if missing.is_empty() {
+        let res = if missing.is_empty() || partial_missing {
             run_backup(&opts, &on_event, cancel)
         } else {
             Err(EngineError::Msg(format!("원본 경로를 찾을 수 없음: {}", missing.join(", "))))
@@ -175,6 +178,9 @@ impl Supervisor {
                         Ok(r) => msg.push_str(&format!(", 오프사이트 복제 {}개 스냅샷/{}개 블롭", r.snapshots_copied, r.blobs_copied)),
                         Err(e) => msg.push_str(&format!(", 오프사이트 복제 실패: {e}")),
                     }
+                }
+                if partial_missing {
+                    msg.push_str(&format!(", 원본 {}개 없어 제외: {}", missing.len(), missing.join(", ")));
                 }
                 if !ret.deleted_snapshots.is_empty() {
                     msg.push_str(&format!(", 보존 정책으로 옛 스냅샷 {}개 정리", ret.deleted_snapshots.len()));
@@ -380,6 +386,21 @@ mod tests {
         assert_eq!(p.last_status, "failed");
         assert_eq!(kova_core::schedule::retry_count(&p), 1);
         assert!(rx.try_iter().any(|e| matches!(e, SvcEvent::JobFinished { ok: false, .. })));
+    }
+
+    #[test]
+    fn partially_missing_sources_are_skipped_with_a_note() {
+        let (d, s) = setup(true);
+        let mut p = ConfigStore::new(d.path().join("cfg")).get("p1").unwrap();
+        let gone = d.path().join("없는폴더").to_string_lossy().to_string();
+        p.sources.push(gone.clone());
+        ConfigStore::new(d.path().join("cfg")).upsert(p).unwrap();
+        let rx = s.subscribe();
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        let done = rx.try_iter().find_map(|e| match e { SvcEvent::JobFinished { ok, message, .. } => Some((ok, message)), _ => None }).unwrap();
+        assert!(done.0, "{}", done.1);
+        assert!(done.1.contains("원본 1개 없어 제외") && done.1.contains(&gone), "{}", done.1);
     }
 
     #[test]
