@@ -26,6 +26,7 @@ fn main() {
             let o = RestoreOptions {
                 repo: a[1].clone().into(),
                 session_id: a[2].clone(),
+                only: None,
                 target: a.get(3).map(PathBuf::from),
             };
             match run_restore(&o, &|_| {}, &cancel) {

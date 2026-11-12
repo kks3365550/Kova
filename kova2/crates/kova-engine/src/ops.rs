@@ -447,6 +447,129 @@ pub struct RestoreOptions {
     pub session_id: String,
     /// Some: 해당 폴더 아래로 복원. None: 백업 당시 원래 위치로 복원(format_version 2 스냅샷만)
     pub target: Option<PathBuf>,
+    /// Some: 이 가상 경로(`browse_snapshot` 이 돌려주는 경로)의 파일·폴더만 복원한다. 폴더는 하위 전체. None: 전체.
+    pub only: Option<Vec<String>>,
+}
+
+/// 스냅샷 탐색 결과 한 줄.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BrowseItem {
+    pub name: String,
+    /// 복원 폴더 안에서의 상대 경로(`/` 구분). 원본이 여러 곳이면 "001_폴더명/..." 로 시작한다.
+    pub path: String,
+    pub is_dir: bool,
+    pub size: u64,
+    /// 폴더면 하위 파일 수, 파일이면 1
+    pub files: usize,
+}
+
+fn virtual_path(base: &RestoreBase, e: &FileEntry) -> Option<String> {
+    let p = resolve_restore_path(base, e).ok()?;
+    Some(
+        p.components()
+            .filter_map(|c| match c {
+                Component::Normal(s) => Some(s.to_string_lossy().to_string()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
+}
+
+fn browse_base(m: &SnapshotManifest) -> RestoreBase {
+    let sources: Vec<String> = match &m.sources {
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    RestoreBase {
+        target: Some(PathBuf::new()),
+        sources,
+        kinds: m.source_kinds.clone().unwrap_or_default(),
+    }
+}
+
+fn is_under(path: &str, prefix: &str) -> bool {
+    prefix.is_empty() || path == prefix || path.starts_with(&format!("{prefix}/"))
+}
+
+/// 스냅샷 안을 한 폴더씩 보여준다. `query` 가 있으면 폴더 구분 없이 파일 이름으로 찾고 `limit` 건까지만 돌려준다.
+/// 폴더가 먼저, 이름순.
+pub fn browse_snapshot(
+    repo: &Path,
+    session_id: &str,
+    dir: &str,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<BrowseItem>, EngineError> {
+    if session_id.is_empty() || session_id.contains(['/', '\\', ':']) {
+        return Err(msg(format!("invalid session id: {session_id}")));
+    }
+    let cas = CasStorage::new(repo)?;
+    let manifest = cas.load_manifest(session_id)?;
+    let base = browse_base(&manifest);
+    let dir = dir.trim_matches('/');
+    let q = query.trim().to_lowercase();
+    let mut dirs: std::collections::BTreeMap<String, BrowseItem> = Default::default();
+    let mut files: Vec<BrowseItem> = vec![];
+    for e in manifest.files().iter().filter(|e| !e.is_dir) {
+        let Some(vp) = virtual_path(&base, e) else {
+            continue;
+        };
+        if !q.is_empty() {
+            let name = vp.rsplit('/').next().unwrap_or(&vp);
+            if name.to_lowercase().contains(&q) {
+                files.push(BrowseItem {
+                    name: vp.clone(),
+                    path: vp,
+                    is_dir: false,
+                    size: e.size,
+                    files: 1,
+                });
+            }
+            continue;
+        }
+        if !dir.is_empty() && !vp.starts_with(&format!("{dir}/")) {
+            continue;
+        }
+        let rest = if dir.is_empty() {
+            vp.as_str()
+        } else {
+            &vp[dir.len() + 1..]
+        };
+        match rest.split_once('/') {
+            Some((first, _)) => {
+                let it = dirs.entry(first.to_string()).or_insert_with(|| BrowseItem {
+                    name: first.to_string(),
+                    path: if dir.is_empty() {
+                        first.to_string()
+                    } else {
+                        format!("{dir}/{first}")
+                    },
+                    is_dir: true,
+                    size: 0,
+                    files: 0,
+                });
+                it.size += e.size;
+                it.files += 1;
+            }
+            None => files.push(BrowseItem {
+                name: rest.to_string(),
+                path: vp.clone(),
+                is_dir: false,
+                size: e.size,
+                files: 1,
+            }),
+        }
+    }
+    files.sort_by_key(|a| a.name.to_lowercase());
+    let mut out: Vec<BrowseItem> = dirs.into_values().collect();
+    out.sort_by_key(|a| a.name.to_lowercase());
+    out.extend(files);
+    out.truncate(limit);
+    Ok(out)
 }
 
 #[derive(Debug, Clone)]
@@ -565,7 +688,22 @@ pub fn run_restore(
         }
     };
 
-    let entries = manifest.files();
+    let mut entries = manifest.files();
+    if let Some(only) = &opts.only {
+        let vbase = RestoreBase {
+            target: Some(PathBuf::new()),
+            sources: base.sources.clone(),
+            kinds: base.kinds.clone(),
+        };
+        let only: Vec<&str> = only
+            .iter()
+            .map(|s| s.trim_matches('/'))
+            .filter(|s| !s.is_empty())
+            .collect();
+        entries.retain(|e| {
+            virtual_path(&vbase, e).is_some_and(|vp| only.iter().any(|p| is_under(&vp, p)))
+        });
+    }
     for e in entries.iter().filter(|e| e.is_dir) {
         fs::create_dir_all(resolve_restore_path(&base, e).map_err(msg)?)?;
     }
@@ -710,6 +848,114 @@ mod tests {
         .unwrap()
     }
 
+    fn restore_only(repo: &Path, out: &Path, only: Option<Vec<&str>>) {
+        run_restore(
+            &RestoreOptions {
+                repo: repo.to_path_buf(),
+                session_id: "t1".into(),
+                target: Some(out.to_path_buf()),
+                only: only.map(|v| v.into_iter().map(String::from).collect()),
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn browse_lists_folders_first_and_searches_by_name() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        make_tree(&src);
+        let repo = d.path().join("repo");
+        backup(&src, &repo, "t1");
+
+        let root = browse_snapshot(&repo, "t1", "", "", 100).unwrap();
+        let names: Vec<(&str, bool)> = root.iter().map(|i| (i.name.as_str(), i.is_dir)).collect();
+        assert_eq!(
+            names,
+            vec![
+                ("하위 폴더", true),
+                ("empty.txt", false),
+                ("가나다.txt", false)
+            ]
+        );
+        assert_eq!(root[0].files, 1);
+        assert_eq!(root[0].size, 3_000_000);
+
+        let sub = browse_snapshot(&repo, "t1", "하위 폴더", "", 100).unwrap();
+        assert_eq!(sub.len(), 1);
+        assert_eq!(sub[0].path, "하위 폴더/big.bin");
+
+        let found = browse_snapshot(&repo, "t1", "", "BIG", 100).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].path, "하위 폴더/big.bin");
+        assert_eq!(browse_snapshot(&repo, "t1", "", "", 2).unwrap().len(), 2);
+        assert!(browse_snapshot(&repo, "../x", "", "", 5).is_err());
+    }
+
+    #[test]
+    fn restore_only_selected_files_and_folders() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        make_tree(&src);
+        let repo = d.path().join("repo");
+        backup(&src, &repo, "t1");
+
+        let one = d.path().join("one");
+        restore_only(&repo, &one, Some(vec!["가나다.txt"]));
+        assert!(one.join("가나다.txt").is_file());
+        assert!(!one.join("하위 폴더").exists() && !one.join("empty.txt").exists());
+
+        let dirsel = d.path().join("dirsel");
+        restore_only(&repo, &dirsel, Some(vec!["하위 폴더/"]));
+        assert!(dirsel.join("하위 폴더").join("big.bin").is_file());
+        assert!(!dirsel.join("가나다.txt").exists());
+
+        // 이름이 비슷해도 폴더 경계를 지킨다("하위" 는 "하위 폴더" 를 고르지 않음), 빈 선택은 아무것도 복원하지 않는다
+        let none = d.path().join("none");
+        restore_only(&repo, &none, Some(vec!["하위", ""]));
+        assert!(!none.join("하위 폴더").exists() && !none.join("가나다.txt").exists());
+
+        let all = d.path().join("all");
+        restore_only(&repo, &all, None);
+        assert_eq!(tree_hashes(&src), tree_hashes(&all));
+    }
+
+    #[test]
+    fn browse_and_restore_use_source_labels_for_multiple_sources() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("A"), d.path().join("B"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        fs::write(a.join("same.txt"), "from A").unwrap();
+        fs::write(b.join("same.txt"), "from B").unwrap();
+        let repo = d.path().join("repo");
+        run_backup(
+            &BackupOptions {
+                sources: vec![a, b],
+                repo: repo.clone(),
+                session_id: Some("t1".into()),
+                zstd_level: 3,
+                exclude: vec![],
+                profile_id: None,
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let root = browse_snapshot(&repo, "t1", "", "", 10).unwrap();
+        let names: Vec<&str> = root.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, vec!["001_A", "002_B"]);
+        let out = d.path().join("out");
+        restore_only(&repo, &out, Some(vec!["002_B/same.txt"]));
+        assert_eq!(
+            fs::read_to_string(out.join("002_B").join("same.txt")).unwrap(),
+            "from B"
+        );
+        assert!(!out.join("001_A").exists());
+    }
+
     #[test]
     fn backup_then_restore_to_folder_is_identical() {
         let d = tempfile::tempdir().unwrap();
@@ -723,6 +969,7 @@ mod tests {
             &RestoreOptions {
                 repo: repo.clone(),
                 session_id: "t1".into(),
+                only: None,
                 target: Some(out.clone()),
             },
             &no_events,
@@ -752,6 +999,7 @@ mod tests {
             &RestoreOptions {
                 repo,
                 session_id: "t1".into(),
+                only: None,
                 target: Some(out.clone()),
             },
             &no_events,
@@ -793,6 +1041,7 @@ mod tests {
             &RestoreOptions {
                 repo,
                 session_id: "t1".into(),
+                only: None,
                 target: None,
             },
             &no_events,
@@ -845,6 +1094,7 @@ mod tests {
             &RestoreOptions {
                 repo,
                 session_id: "t1".into(),
+                only: None,
                 target: Some(d.path().join("out")),
             },
             &no_events,
@@ -921,6 +1171,7 @@ mod tests {
             &RestoreOptions {
                 repo,
                 session_id: "t1".into(),
+                only: None,
                 target: Some(out.clone()),
             },
             &no_events,

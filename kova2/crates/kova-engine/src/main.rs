@@ -254,6 +254,7 @@ fn run_restore(
     let opts = ops::RestoreOptions {
         repo: repo.to_path_buf(),
         session_id: session_id.to_string(),
+        only: None,
         target: if in_place {
             None
         } else {

@@ -4,6 +4,8 @@ export struct ProfileRow { id: string, name: string, last: string, detail: strin
 export struct SnapRow { id: string, repo: string, when: string, name: string, summary: string, verified: string }
 export struct OffsiteRow { id: string, name: string, dir: string }
 export struct AlertRow { when: string, level: string, message: string, full: string, ack: bool }
+export struct BrowseRow { name: string, path: string, is-dir: bool, info: string, selected: bool }
+export struct RunRow { id: int, name: string, pct: int, current: string, cancellable: bool }
 
 global Theme {
     in-out property <bool> dark: true;
@@ -176,11 +178,29 @@ export component MainWindow inherits Window {
     callback run-gc(string);
     callback ack-alerts();
     callback check-update();
+    in property <[RunRow]> running;
+    callback cancel-job(int);
+    callback save-settings(string, bool);
+    in-out property <string> form-min-free: "5";
+    in-out property <bool> form-ransom: true;
+    in property <string> settings-text;
     callback verify-image(string);
     callback restore-image(string, string);
     callback capture-image(string, string);
     callback capture-volume(string);
     callback restore-snapshot(string, string, string);
+    callback open-browse(string, string, string);
+    callback browse-go(string);
+    callback browse-up();
+    callback browse-search(string);
+    callback browse-toggle(string);
+    callback browse-restore(string);
+    in-out property <bool> browse-open: false;
+    in property <string> browse-title;
+    in property <string> browse-dir;
+    in property <string> browse-status;
+    in property <int> browse-selected;
+    in property <[BrowseRow]> browse-items;
     in property <string> restore-text;
     callback browse(string) -> string;
     callback make-diag();
@@ -287,6 +307,37 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+                if root.running.length > 0: Card {
+                    height: min(root.running.length, 3) * 52px + 8px;
+                    ListView {
+                        for r in root.running: Rectangle {
+                            height: 52px;
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                spacing: 12px;
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    spacing: 4px;
+                                    HorizontalLayout {
+                                        spacing: 8px;
+                                        Text { text: r.name; color: Theme.text; font-size: 14px; font-weight: 600; }
+                                        Text { text: r.pct + "%"; color: Theme.accent; font-size: 13px; font-weight: 600; }
+                                        Text { text: r.current; color: Theme.muted; font-size: 12px; overflow: elide; horizontal-stretch: 1; }
+                                    }
+                                    Rectangle {
+                                        height: 6px;
+                                        border-radius: 3px;
+                                        background: Theme.line;
+                                        Rectangle { x: 0px; width: parent.width * r.pct / 100; height: parent.height; border-radius: 3px; background: Theme.accent; }
+                                    }
+                                }
+                                if r.cancellable: Btn { text: "취소"; kind: 2; y: 10px; clicked => { root.cancel-job(r.id); } }
+                            }
+                        }
+                    }
+                }
                 Heading { text: "진행 상황"; }
                 Card {
                     vertical-stretch: 1;
@@ -378,7 +429,56 @@ export component MainWindow inherits Window {
                         Hint { text: "스냅샷을 새 폴더(또는 빈 폴더)로 복원합니다. 원래 위치를 덮어쓰지 않습니다."; }
                     }
                 }
-                Card {
+                if root.browse-open: VerticalLayout {
+                    spacing: 8px;
+                    vertical-stretch: 1;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Btn { text: "← 목록"; clicked => { root.browse-open = false; } }
+                        Btn { text: "상위 폴더"; clicked => { root.browse-up(); } }
+                        Text { text: root.browse-title + "  " + root.browse-dir; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                        bq := Field { placeholder: "파일 이름 검색"; width: 180px; }
+                        Btn { text: "검색"; clicked => { root.browse-search(bq.text); } }
+                    }
+                    Card {
+                        vertical-stretch: 1;
+                        ListView {
+                            for it in root.browse-items: Rectangle {
+                                height: 36px;
+                                HorizontalLayout {
+                                    padding-left: 14px;
+                                    padding-right: 14px;
+                                    spacing: 10px;
+                                    Rectangle {
+                                        width: 18px;
+                                        height: 18px;
+                                        y: 9px;
+                                        border-radius: 4px;
+                                        border-width: 1px;
+                                        border-color: it.selected ? Theme.accent : Theme.line;
+                                        background: it.selected ? Theme.accent : transparent;
+                                        Text { text: it.selected ? "✓" : ""; color: #ffffff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                                        TouchArea { clicked => { root.browse-toggle(it.path); } }
+                                    }
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                        Text { text: it.name; color: it.is-dir ? Theme.accent : Theme.text; font-size: 13px; font-weight: it.is-dir ? 600 : 400; vertical-alignment: center; overflow: elide; width: parent.width; }
+                                        TouchArea { clicked => { if (it.is-dir) { root.browse-go(it.path); } else { root.browse-toggle(it.path); } } }
+                                    }
+                                    Text { text: it.info; color: Theme.muted; font-size: 12px; width: 150px; horizontal-alignment: right; vertical-alignment: center; }
+                                }
+                                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: root.browse-status != "" ? root.browse-status : "폴더를 누르면 안으로 들어가고, 체크한 항목만 복원합니다"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                        Text { text: root.browse-selected + "개 선택"; color: Theme.text; font-size: 13px; vertical-alignment: center; }
+                        Btn { text: "선택 항목 복원"; kind: 1; clicked => { root.browse-restore(rt.text); } }
+                    }
+                }
+                if !root.browse-open: Card {
                     vertical-stretch: 1;
                     ListView {
                         for s in root.snapshots: Rectangle {
@@ -391,7 +491,8 @@ export component MainWindow inherits Window {
                                 Text { text: s.name; color: Theme.text; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
                                 Text { text: s.summary; color: Theme.muted; font-size: 13px; width: 150px; vertical-alignment: center; overflow: elide; }
                                 Text { text: s.verified; color: s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok; font-size: 12px; width: 70px; vertical-alignment: center; }
-                                Btn { text: "복원"; kind: 0; y: 6px; clicked => { root.restore-snapshot(s.repo, s.id, rt.text); } }
+                                Btn { text: "파일 보기"; y: 6px; clicked => { root.browse-open = true; root.open-browse(s.repo, s.id, s.when); } }
+                                Btn { text: "전체 복원"; kind: 0; y: 6px; clicked => { root.restore-snapshot(s.repo, s.id, rt.text); } }
                             }
                             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
                         }
@@ -493,6 +594,32 @@ export component MainWindow inherits Window {
                             spacing: 6px;
                             Heading { text: "현재 설정"; }
                             for l in root.setting-lines: Text { text: l; color: l == "프로파일" ? Theme.text : Theme.muted; font-size: 13px; font-weight: l == "프로파일" ? 700 : 400; wrap: word-wrap; }
+                        }
+                    }
+                    Card {
+                        VerticalLayout {
+                            alignment: start;
+                            padding: 16px;
+                            spacing: 10px;
+                            Heading { text: "설정 변경"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: "최소 여유 공간(GB)"; color: Theme.text; font-size: 13px; width: 150px; vertical-alignment: center; }
+                                Field { text <=> root.form-min-free; width: 80px; }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: "랜섬웨어 보호"; color: Theme.text; font-size: 13px; width: 150px; vertical-alignment: center; }
+                                Btn { text: root.form-ransom ? "켜짐" : "꺼짐"; kind: root.form-ransom ? 1 : 0; clicked => { root.form-ransom = !root.form-ransom; } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Btn { text: "설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom); } }
+                                if root.settings-text != "": Text { text: root.settings-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                                if root.settings-text == "": Rectangle { horizontal-stretch: 1; }
+                            }
                         }
                     }
                     Card {

@@ -104,6 +104,89 @@ fn save_offsite(id: &str, dir: &str) {
     }
 }
 
+/// 홈 화면의 "진행 중" 목록 한 줄(서비스 이벤트로 갱신).
+struct RunInfo {
+    id: u64,
+    name: String,
+    pct: u64,
+    current: String,
+    cancellable: bool,
+}
+
+fn profile_name(id: &str) -> String {
+    kova_core::config::ConfigStore::new(kova_service::default_config_dir())
+        .get(id)
+        .map(|p| p.name)
+        .unwrap_or_else(|| id.to_string())
+}
+
+/// 이벤트 하나를 진행 중 목록에 반영한다. 검증·정리는 서비스가 취소 신호를 보지 않으므로 취소 버튼을 주지 않는다.
+fn update_running(rows: &mut Vec<RunInfo>, e: &kova_ipc::Event, name_of: &dyn Fn(&str) -> String) {
+    match e {
+        kova_ipc::Event::JobStarted {
+            job_id,
+            profile_id,
+            kind,
+        } => {
+            rows.retain(|r| r.id != *job_id);
+            rows.push(RunInfo {
+                id: *job_id,
+                name: name_of(profile_id),
+                pct: 0,
+                current: String::new(),
+                cancellable: kind == "backup" || kind.starts_with("image"),
+            });
+        }
+        kova_ipc::Event::Progress {
+            job_id,
+            percent,
+            current,
+        } => {
+            if let Some(r) = rows.iter_mut().find(|r| r.id == *job_id) {
+                r.pct = (*percent).min(100);
+                r.current = current.clone();
+            }
+        }
+        kova_ipc::Event::JobFinished { job_id, .. } => rows.retain(|r| r.id != *job_id),
+        _ => {}
+    }
+}
+
+fn cancel_job(id: i32) {
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _ = rt.block_on(kova_ipc::request(
+            kova_ipc::PIPE_NAME,
+            &kova_ipc::Request::Cancel { job_id: id as u64 },
+        ));
+    });
+}
+
+/// 화면에서 고친 전역 설정을 저장한다. 최신 파일을 다시 읽어 바꾼 칸만 덮어쓰므로 나머지 값(알 수 없는 키 포함)은 보존된다.
+fn apply_settings(
+    store: &kova_core::config::ConfigStore,
+    min_free_gb: &str,
+    ransomware: bool,
+) -> Result<String, String> {
+    let gb: u32 = min_free_gb
+        .trim()
+        .parse()
+        .map_err(|_| "최소 여유 공간은 0 이상의 정수(GB)로 입력하세요".to_string())?;
+    if gb > 100_000 {
+        return Err("최소 여유 공간이 너무 큽니다 (최대 100000GB)".into());
+    }
+    let mut s = store.settings();
+    s.min_free_disk_gb = gb;
+    s.enable_ransomware_protection = ransomware;
+    store
+        .save_settings(&s)
+        .map_err(|e| format!("저장 실패: {e}"))?;
+    Ok("저장했습니다".into())
+}
+
 fn setting_lines() -> Vec<slint::SharedString> {
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
     let s = store.settings();
@@ -267,9 +350,31 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
     });
     std::thread::spawn(move || {
         rt.block_on(async move {
+            let running: std::sync::Mutex<Vec<RunInfo>> = std::sync::Mutex::new(vec![]);
             loop {
                 let w = weak.clone();
                 let _ = kova_ipc::stream(kova_ipc::PIPE_NAME, &kova_ipc::Request::Subscribe, |e| {
+                    let rows: Vec<RunRow> = {
+                        let mut r = running.lock().unwrap();
+                        update_running(&mut r, &e, &profile_name);
+                        r.iter()
+                            .map(|x| RunRow {
+                                id: x.id as i32,
+                                name: x.name.clone().into(),
+                                pct: x.pct as i32,
+                                current: x.current.clone().into(),
+                                cancellable: x.cancellable,
+                            })
+                            .collect()
+                    };
+                    {
+                        let w = w.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w.upgrade() {
+                                w.set_running(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+                            }
+                        });
+                    }
                     let line = match e {
                         kova_ipc::Event::JobStarted {
                             profile_id, kind, ..
@@ -306,6 +411,16 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                     true
                 })
                 .await;
+                // 연결이 끊기면 진행 중 표시를 비운다(서비스가 죽었는데 취소 버튼이 남지 않도록)
+                running.lock().unwrap().clear();
+                let w = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = w.upgrade() {
+                        w.set_running(
+                            std::rc::Rc::new(slint::VecModel::<RunRow>::default()).into(),
+                        );
+                    }
+                });
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await; // 서비스가 꺼졌다 켜져도 다시 붙는다
             }
         });
@@ -785,7 +900,121 @@ fn capture_job(weak: slint::Weak<MainWindow>, source: String, out: String) {
 }
 
 /// 스냅샷 복원: 새 폴더(또는 빈 폴더)로만 푼다. 대상은 먼저 검사하고, 복원은 별도 스레드에서 진행률을 흘린다.
-fn restore_snapshot_job(weak: slint::Weak<MainWindow>, repo: String, sid: String, target: String) {
+/// 스냅샷 파일 탐색 패널의 상태. 목록은 백그라운드에서 읽고, 선택은 경로(복원 폴더 기준 상대 경로) 집합으로 들고 있다.
+#[derive(Default)]
+struct BrowseState {
+    repo: String,
+    sid: String,
+    dir: String,
+    query: String,
+    items: Vec<kova_engine::ops::BrowseItem>,
+    sel: std::collections::BTreeSet<String>,
+    seq: u64,
+}
+type Browse = std::sync::Arc<std::sync::Mutex<BrowseState>>;
+
+const BROWSE_LIMIT: usize = 500;
+
+fn browse_info(it: &kova_engine::ops::BrowseItem) -> String {
+    if it.is_dir {
+        format!("파일 {}개 · {}", it.files, human_mb(it.size))
+    } else {
+        human_mb(it.size)
+    }
+}
+
+fn browse_render(weak: &slint::Weak<MainWindow>, st: &Browse, status: String) {
+    let (rows, dir, n) = {
+        let s = st.lock().unwrap();
+        let rows: Vec<BrowseRow> = s
+            .items
+            .iter()
+            .map(|it| BrowseRow {
+                name: if it.is_dir {
+                    format!("▸ {}", it.name)
+                } else {
+                    it.name.clone()
+                }
+                .into(),
+                path: it.path.clone().into(),
+                is_dir: it.is_dir,
+                info: browse_info(it).into(),
+                selected: s.sel.contains(&it.path),
+            })
+            .collect();
+        let dir = if s.query.is_empty() {
+            format!("/{}", s.dir)
+        } else {
+            format!("검색: {}", s.query)
+        };
+        (rows, dir, s.sel.len() as i32)
+    };
+    let w = weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(w) = w.upgrade() {
+            w.set_browse_items(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+            w.set_browse_dir(dir.into());
+            w.set_browse_selected(n);
+            w.set_browse_status(status.into());
+        }
+    });
+}
+
+/// 폴더(또는 검색어)를 읽어 목록을 갱신한다. 큰 스냅샷은 시간이 걸리므로 별도 스레드에서 한다.
+fn browse_load(weak: slint::Weak<MainWindow>, st: Browse, dir: String, query: String) {
+    let (repo, sid, seq) = {
+        let mut s = st.lock().unwrap();
+        s.seq += 1;
+        (s.repo.clone(), s.sid.clone(), s.seq)
+    };
+    browse_render(&weak, &st, "읽는 중…".into());
+    std::thread::spawn(move || {
+        let res = kova_engine::ops::browse_snapshot(
+            std::path::Path::new(&repo),
+            &sid,
+            &dir,
+            &query,
+            BROWSE_LIMIT,
+        );
+        let status = {
+            let mut s = st.lock().unwrap();
+            if s.seq != seq {
+                return; // 그 사이 다른 폴더를 열었다
+            }
+            match res {
+                Ok(items) => {
+                    let status = if items.is_empty() {
+                        "항목이 없습니다".to_string()
+                    } else if items.len() >= BROWSE_LIMIT {
+                        format!("처음 {BROWSE_LIMIT}개만 표시합니다. 검색으로 좁혀 보세요")
+                    } else {
+                        String::new()
+                    };
+                    s.dir = dir;
+                    s.query = query;
+                    s.items = items;
+                    status
+                }
+                Err(e) => format!("목록을 읽지 못했습니다: {e}"),
+            }
+        };
+        browse_render(&weak, &st, status);
+    });
+}
+
+fn parent_dir(dir: &str) -> String {
+    dir.rsplit_once('/')
+        .map(|(a, _)| a.to_string())
+        .unwrap_or_default()
+}
+
+fn restore_snapshot_job(
+    weak: slint::Weak<MainWindow>,
+    repo: String,
+    sid: String,
+    target: String,
+    only: Option<Vec<String>>,
+) {
     let show = |w: &slint::Weak<MainWindow>, t: String| {
         let w = w.clone();
         let _ = slint::invoke_from_event_loop(move || {
@@ -824,6 +1053,7 @@ fn restore_snapshot_job(weak: slint::Weak<MainWindow>, repo: String, sid: String
         let opts = kova_engine::ops::RestoreOptions {
             repo: repo_path,
             session_id: sid,
+            only,
             target: Some(target.clone()),
         };
         let cancel = std::sync::atomic::AtomicBool::new(false);
@@ -856,6 +1086,25 @@ fn main() -> Result<(), slint::PlatformError> {
     w.on_run_backup(|id| send("backup", id.to_string()));
     w.on_run_verify(|id| send("verify", id.to_string()));
     w.on_save_offsite(|id, dir| save_offsite(&id, &dir));
+    w.on_cancel_job(cancel_job);
+    {
+        let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+        let s = store.settings();
+        w.set_form_min_free(s.min_free_disk_gb.to_string().into());
+        w.set_form_ransom(s.enable_ransomware_protection);
+    }
+    {
+        let weak = w.as_weak();
+        w.on_save_settings(move |gb, ransom| {
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let msg = match apply_settings(&store, &gb, ransom) {
+                Ok(m) | Err(m) => m,
+            };
+            if let Some(w) = weak.upgrade() {
+                w.set_settings_text(msg.into());
+            }
+        });
+    }
     {
         let weak = w.as_weak();
         w.on_make_diag(move || {
@@ -998,6 +1247,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 repo.to_string(),
                 sid.to_string(),
                 t.to_string(),
+                None,
             )
         });
     }
@@ -1012,6 +1262,69 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_pick_error(err.into());
             }
             path.into()
+        });
+    }
+    {
+        let st: Browse = Default::default();
+        let weak = w.as_weak();
+        let s2 = st.clone();
+        w.on_open_browse(move |repo, sid, title| {
+            {
+                let mut s = s2.lock().unwrap();
+                let seq = s.seq;
+                *s = BrowseState {
+                    repo: repo.to_string(),
+                    sid: sid.to_string(),
+                    seq,
+                    ..Default::default()
+                };
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_browse_title(title);
+            }
+            browse_load(weak.clone(), s2.clone(), String::new(), String::new());
+        });
+        let (weak, s2) = (w.as_weak(), st.clone());
+        w.on_browse_go(move |d| {
+            browse_load(weak.clone(), s2.clone(), d.to_string(), String::new())
+        });
+        let (weak, s2) = (w.as_weak(), st.clone());
+        w.on_browse_up(move || {
+            let d = parent_dir(&s2.lock().unwrap().dir);
+            browse_load(weak.clone(), s2.clone(), d, String::new());
+        });
+        let (weak, s2) = (w.as_weak(), st.clone());
+        w.on_browse_search(move |q| {
+            let dir = s2.lock().unwrap().dir.clone();
+            browse_load(weak.clone(), s2.clone(), dir, q.trim().to_string());
+        });
+        let (weak, s2) = (w.as_weak(), st.clone());
+        w.on_browse_toggle(move |p| {
+            {
+                let mut s = s2.lock().unwrap();
+                if !s.sel.remove(p.as_str()) {
+                    s.sel.insert(p.to_string());
+                }
+            }
+            browse_render(&weak, &s2, String::new());
+        });
+        let (weak, s2) = (w.as_weak(), st);
+        w.on_browse_restore(move |t| {
+            let (repo, sid, sel) = {
+                let s = s2.lock().unwrap();
+                (
+                    s.repo.clone(),
+                    s.sid.clone(),
+                    s.sel.iter().cloned().collect::<Vec<_>>(),
+                )
+            };
+            if sel.is_empty() {
+                if let Some(w) = weak.upgrade() {
+                    w.set_restore_text("복원할 파일이나 폴더를 먼저 선택하세요".into());
+                }
+                return;
+            }
+            restore_snapshot_job(weak.clone(), repo, sid, t.to_string(), Some(sel));
         });
     }
     w.on_run_gc(|id| send("gc", id.to_string()));
@@ -1062,6 +1375,73 @@ fn main() -> Result<(), slint::PlatformError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn apply_settings_validates_and_preserves_other_fields() {
+        let dir = std::env::temp_dir().join(format!("kova_set_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = kova_core::config::ConfigStore::new(&dir);
+        let mut s = store.settings();
+        s.offsite_remote_path = "keep".into();
+        s.extra.insert("unknown_key".into(), 7.into());
+        store.save_settings(&s).unwrap();
+
+        assert!(apply_settings(&store, "abc", true).is_err());
+        assert!(apply_settings(&store, "-1", true).is_err());
+        assert!(apply_settings(&store, "999999", true).is_err());
+        assert_eq!(store.settings().offsite_remote_path, "keep"); // 실패 시 변경 없음
+
+        assert!(apply_settings(&store, " 25 ", false).is_ok());
+        let after = store.settings();
+        assert_eq!(after.min_free_disk_gb, 25);
+        assert!(!after.enable_ransomware_protection);
+        assert_eq!(after.offsite_remote_path, "keep");
+        assert_eq!(after.extra.get("unknown_key"), Some(&7.into()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn running_list_tracks_events() {
+        use kova_ipc::Event as E;
+        let name = |id: &str| format!("P-{id}");
+        let mut rows: Vec<RunInfo> = vec![];
+        let start = |job_id, kind: &str| E::JobStarted {
+            job_id,
+            profile_id: "a".into(),
+            kind: kind.into(),
+        };
+        update_running(&mut rows, &start(1, "backup"), &name);
+        update_running(&mut rows, &start(2, "verify"), &name);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].cancellable && !rows[1].cancellable);
+        assert_eq!(rows[0].name, "P-a");
+        update_running(
+            &mut rows,
+            &E::Progress {
+                job_id: 1,
+                percent: 250,
+                current: "f.txt".into(),
+            },
+            &name,
+        );
+        assert_eq!((rows[0].pct, rows[0].current.as_str()), (100, "f.txt"));
+        update_running(
+            &mut rows,
+            &E::JobFinished {
+                job_id: 1,
+                profile_id: "a".into(),
+                ok: true,
+                message: String::new(),
+                snapshot_id: None,
+            },
+            &name,
+        );
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, 2);
+        update_running(&mut rows, &start(3, "image:C"), &name);
+        assert!(rows[1].cancellable);
+    }
+
     #[test]
     fn alert_and_size_formatting() {
         assert_eq!(shorten_alert("짧은 알림"), "짧은 알림");
