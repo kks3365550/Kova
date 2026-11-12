@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 slint::include_modules!();
 
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
@@ -383,34 +384,71 @@ fn check_update(weak: slint::Weak<MainWindow>) {
     });
 }
 
-/// 사용자가 "업데이트 설치"를 눌렀을 때만 실행: 최신 조회 → 서명 검증된 패키지 → 설치 폴더에 적용(실패 시 롤백).
-/// 패키지에 kova-app.exe 가 없으면(예: 파이썬판 릴리즈) 설치하지 않는다. 설치 후 재시작은 사용자가 한다.
+/// 최신 조회 → 서명 검증된 패키지 → 설치 폴더에 적용(실패 시 롤백). 설치 폴더(Program Files)에 쓰려면 관리자 권한이 필요하다.
+fn do_install() -> Result<String, String> {
+    let current = env!("CARGO_PKG_VERSION");
+    let tag = kova_core::fetch::latest_tag(UPDATE_BASE, UPDATE_REPO).map_err(|e| e.to_string())?;
+    if !kova_core::update::is_newer(&tag, current) {
+        return Ok(format!("이미 최신입니다 ({current})"));
+    }
+    let pkg = kova_core::fetch::fetch_verified(
+        UPDATE_BASE,
+        UPDATE_REPO,
+        &tag,
+        kova_core::fetch::TRUSTED_KEYS,
+        500 << 20,
+    )
+    .map_err(|e| e.to_string())?;
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = exe.parent().ok_or("설치 폴더를 알 수 없음")?.to_path_buf();
+    let backup = dir.join("update_backup");
+    let r = kova_core::install::apply(&pkg, &dir, &backup, &["kova-app.exe"])
+        .map_err(|e| e.to_string())?;
+    // 서비스는 옛 파일로 계속 돌고 있으므로 새 파일로 다시 시작한다(실패해도 설치는 끝난 상태)
+    let svc = |a: &str| {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("sc.exe")
+            .args([a, "KovaSvc"])
+            .creation_flags(0x0800_0000)
+            .output();
+    };
+    svc("stop");
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    svc("start");
+    Ok(format!(
+        "{tag} 설치 완료({}개 파일, 서비스 재시작). 앱을 다시 시작하세요",
+        r.files
+    ))
+}
+
+/// 사용자가 "업데이트 설치"를 눌렀을 때만 실행. 설치 폴더 쓰기에 관리자 권한이 필요하므로
+/// 자기 자신을 관리자 권한(UAC 승인)으로 `--install-update <결과파일>` 모드로 다시 실행해 결과를 받는다.
+/// 패키지에 kova-app.exe 가 없으면(예: 파이썬판 릴리즈) 설치하지 않는다.
 fn install_update(weak: slint::Weak<MainWindow>) {
     std::thread::spawn(move || {
-        let current = env!("CARGO_PKG_VERSION");
         let run = || -> Result<String, String> {
-            let tag = kova_core::fetch::latest_tag(UPDATE_BASE, UPDATE_REPO)
-                .map_err(|e| e.to_string())?;
-            if !kova_core::update::is_newer(&tag, current) {
-                return Ok(format!("이미 최신입니다 ({current})"));
-            }
-            let pkg = kova_core::fetch::fetch_verified(
-                UPDATE_BASE,
-                UPDATE_REPO,
-                &tag,
-                kova_core::fetch::TRUSTED_KEYS,
-                500 << 20,
-            )
-            .map_err(|e| e.to_string())?;
+            use std::os::windows::process::CommandExt;
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-            let dir = exe.parent().ok_or("설치 폴더를 알 수 없음")?.to_path_buf();
-            let backup = dir.join("update_backup");
-            let r = kova_core::install::apply(&pkg, &dir, &backup, &["kova-app.exe"])
+            let res = std::env::temp_dir().join(format!("kova_update_{}.txt", std::process::id()));
+            let _ = std::fs::remove_file(&res);
+            let q = |p: &std::path::Path| p.to_string_lossy().replace('\'', "''");
+            let cmd = format!(
+                "Start-Process -FilePath '{}' -ArgumentList '--install-update','\"{}\"' -Verb RunAs -Wait",
+                q(&exe),
+                q(&res)
+            );
+            let st = std::process::Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &cmd])
+                .creation_flags(0x0800_0000)
+                .output()
                 .map_err(|e| e.to_string())?;
-            Ok(format!(
-                "{tag} 설치 완료({}개 파일). 앱을 다시 시작하세요",
-                r.files
-            ))
+            let text = std::fs::read_to_string(&res).ok();
+            let _ = std::fs::remove_file(&res);
+            match text {
+                Some(t) => Ok(t),
+                None if !st.status.success() => Err("관리자 권한 승인이 취소되었습니다".into()),
+                None => Err("설치 결과를 받지 못했습니다".into()),
+            }
         };
         let text = run().unwrap_or_else(|e| format!("설치하지 않음: {e}"));
         let _ = slint::invoke_from_event_loop(move || {
@@ -608,6 +646,16 @@ fn restore_snapshot_job(weak: slint::Weak<MainWindow>, repo: String, sid: String
 }
 
 fn main() -> Result<(), slint::PlatformError> {
+    // 관리자 권한으로 다시 실행된 업데이트 설치 도우미: 설치하고 결과를 파일에 적은 뒤 끝낸다
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(i) = args.iter().position(|a| a == "--install-update") {
+        let text = do_install().unwrap_or_else(|e| format!("설치하지 않음: {e}"));
+        if let Some(f) = args.get(i + 1) {
+            let _ = std::fs::write(f, text);
+        }
+        return Ok(());
+    }
+
     let w = MainWindow::new()?;
     w.on_run_backup(|id| send("backup", id.to_string()));
     w.on_run_verify(|id| send("verify", id.to_string()));
