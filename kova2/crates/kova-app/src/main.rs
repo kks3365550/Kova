@@ -148,17 +148,29 @@ fn program_of(path: &str) -> Option<(String, String)> {
 /// 백업 대상 경로를 화면 줄로 바꾼다: 0=구분 제목, 1=폴더/파일, 2=프로그램.
 /// 반환: (종류, 제목, 보조 설명, 빼기 키). 같은 프로그램의 경로들은 프로그램 이름 한 줄로 묶는다.
 fn source_rows(joined: &str) -> Vec<(i32, String, String, String)> {
+    source_rows_with(joined, |p| std::path::Path::new(p).exists())
+}
+
+/// `source_rows`와 같되, 경로가 실제로 있는지 보는 방법을 받는다(시험용). 없는 경로는 '찾을 수 없음'으로 표시한다.
+fn source_rows_with(
+    joined: &str,
+    exists: impl Fn(&str) -> bool,
+) -> Vec<(i32, String, String, String)> {
     let mut folders = vec![];
-    let mut programs: Vec<(String, String, usize)> = vec![];
+    let mut programs: Vec<(String, String, usize, usize)> = vec![];
     let mut seen: std::collections::HashSet<String> = Default::default();
     for p in joined.split(';').map(str::trim).filter(|s| !s.is_empty()) {
         if !seen.insert(p.to_lowercase()) {
             continue;
         }
         if let Some((key, name)) = program_of(p) {
+            let gone = usize::from(!exists(p));
             match programs.iter_mut().find(|x| x.0 == key) {
-                Some(x) => x.2 += 1,
-                None => programs.push((key, name, 1)),
+                Some(x) => {
+                    x.2 += 1;
+                    x.3 += gone;
+                }
+                None => programs.push((key, name, 1, gone)),
             }
         } else {
             let name = p
@@ -167,7 +179,12 @@ fn source_rows(joined: &str) -> Vec<(i32, String, String, String)> {
                 .next()
                 .unwrap_or(p)
                 .to_string();
-            folders.push((1, name, p.to_string(), p.to_string()));
+            let sub = if exists(p) {
+                p.to_string()
+            } else {
+                format!("찾을 수 없음 · {p}")
+            };
+            folders.push((1, name, sub, p.to_string()));
         }
     }
     let mut out = vec![];
@@ -187,8 +204,13 @@ fn source_rows(joined: &str) -> Vec<(i32, String, String, String)> {
             String::new(),
             String::new(),
         ));
-        for (key, name, n) in programs {
-            out.push((2, name, format!("{n}개 항목"), format!("prog:{key}")));
+        for (key, name, n, gone) in programs {
+            let sub = if gone > 0 {
+                format!("{n}개 항목 · 찾을 수 없는 항목 {gone}개")
+            } else {
+                format!("{n}개 항목")
+            };
+            out.push((2, name, sub, format!("prog:{key}")));
         }
     }
     out
@@ -1582,6 +1604,23 @@ fn main() -> Result<(), slint::PlatformError> {
                 })
                 .collect();
             w.set_form_list(std::rc::Rc::new(slint::VecModel::from(list)).into());
+            let missing = s
+                .split(';')
+                .map(str::trim)
+                .filter(|x| !x.is_empty() && !std::path::Path::new(x).exists())
+                .count();
+            w.set_form_missing(missing as i32);
+        });
+        let weak = w.as_weak();
+        w.on_form_clean(move || {
+            let Some(w) = weak.upgrade() else { return };
+            let keep: Vec<String> = w
+                .get_form_sources()
+                .split(';')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty() && std::path::Path::new(s).exists())
+                .collect();
+            w.set_form_sources(keep.join(";").into());
         });
         let weak = w.as_weak();
         w.on_form_add(move |paths| {
@@ -2249,7 +2288,7 @@ mod tests {
                  C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Tailscale.lnk;\
                  C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Git\\Git Bash.lnk;\
                  C:\\Users\\a\\AppData\\Local\\antigravity-updater;C:\\Users\\a\\AppData\\Local\\Programs\\antigravity;c:\\users\\a\\desktop";
-        let r = super::source_rows(s);
+        let r = super::source_rows_with(s, |p| !p.contains("keep"));
         let titles: Vec<(i32, &str)> = r.iter().map(|x| (x.0, x.1.as_str())).collect();
         assert_eq!(
             titles,
@@ -2263,6 +2302,10 @@ mod tests {
                 (2, "Git"),
                 (2, "antigravity-updater"),
             ]
+        );
+        assert_eq!(
+            r[3].2,
+            "찾을 수 없음 · C:\\Users\\a\\AppData\\Local\\Temp\\keep"
         );
         assert_eq!(r[5].2, "4개 항목");
         assert_eq!(r[7].2, "2개 항목");

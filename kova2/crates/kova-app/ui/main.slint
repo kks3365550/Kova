@@ -233,6 +233,8 @@ export component MainWindow inherits Window {
     callback sync-form-list(string);
     callback form-add(string);
     callback form-remove(string);
+    in property <int> form-missing;
+    callback form-clean();
     in-out property <bool> prog-shown: false;
     in property <[ProgPick]> prog-list;
     in property <int> prog-count;
@@ -555,6 +557,7 @@ export component MainWindow inherits Window {
                             spacing: 8px;
                             Btn { text: "+ 폴더 추가"; kind: 1; clicked => { root.form-add(root.browse("folders")); } }
                             Btn { text: "+ 프로그램 추가"; kind: 1; clicked => { root.prog-open(); } }
+                            if root.form-missing > 0: Btn { text: "없는 항목 " + root.form-missing + "개 지우기"; kind: 2; clicked => { root.form-clean(); } }
                         }
                         if root.prog-shown: Rectangle {
                             border-radius: 8px;
