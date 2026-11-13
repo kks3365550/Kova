@@ -67,6 +67,7 @@ component Btn inherits Rectangle {
 component Field inherits Rectangle {
     in-out property <string> text <=> ti.text;
     in property <string> placeholder;
+    in property <bool> secret: false;
     height: 34px;
     border-radius: 6px;
     border-width: 1px;
@@ -88,6 +89,7 @@ component Field inherits Rectangle {
         color: Theme.text;
         vertical-alignment: center;
         single-line: true;
+        input-type: root.secret ? InputType.password : InputType.text;
     }
 }
 
@@ -188,6 +190,11 @@ export component MainWindow inherits Window {
     in-out property <bool> form-pack: false;
     in-out property <string> form-recovery: "";
     callback restore-key(string);
+    in-out property <string> form-lock-cur: "";
+    in-out property <string> form-lock-new: "";
+    in property <string> lock-text;
+    callback unlock-app(string);
+    callback set-master(string, string);
     in property <string> settings-text;
     callback verify-image(string);
     callback restore-image(string, string);
@@ -709,6 +716,19 @@ export component MainWindow inherits Window {
                                 Btn { text: "복원"; clicked => { root.restore-key(root.form-recovery); } }
                             }
                             Hint { text: "PC를 바꾸거나 키 파일을 잃었을 때, 암호화를 켤 때 받은 복구 코드를 붙여 넣고 누릅니다."; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: "마스터 비밀번호"; color: Theme.text; font-size: 13px; width: 150px; vertical-alignment: center; }
+                                Field { text <=> root.form-lock-cur; placeholder: "현재 비밀번호"; secret: true; horizontal-stretch: 1; }
+                                Btn { text: "잠금 해제"; clicked => { root.unlock-app(root.form-lock-cur); } }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Rectangle { width: 150px; }
+                                Field { text <=> root.form-lock-new; placeholder: "새 비밀번호(비우면 해제)"; secret: true; horizontal-stretch: 1; }
+                                Btn { text: "설정·변경"; clicked => { root.set-master(root.form-lock-cur, root.form-lock-new); } }
+                            }
+                            Hint { text: root.lock-text != "" ? root.lock-text : "설정하면 설정 저장·키 복원·프로파일 삭제·스냅샷 삭제·원래 위치로 복원이 비밀번호로 잠깁니다(백업 실행·새 위치 복원·검증은 그대로). 바꾸거나 해제할 때는 위 칸에 현재 비밀번호를 넣습니다. 잊으면 이 PC에서 풀 수 없습니다."; }
                             HorizontalLayout {
                                 spacing: 8px;
                                 Btn { text: "설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt, root.form-vss, root.form-pack); } }

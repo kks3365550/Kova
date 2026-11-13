@@ -166,6 +166,26 @@ fn cancel_job(id: i32) {
     });
 }
 
+/// 이번 실행에서 마스터 비밀번호로 잠금을 푼 상태인가.
+static UNLOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+const LOCKED_MSG: &str = "마스터 비밀번호로 잠겨 있습니다. 설정 화면에서 잠금을 먼저 해제하세요";
+
+/// 마스터 비밀번호가 설정돼 있고 아직 풀지 않았으면 true.
+fn app_locked() -> bool {
+    kova_core::applock::is_set(&kova_service::default_config_dir())
+        && !UNLOCKED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+fn lock_status() -> String {
+    if !kova_core::applock::is_set(&kova_service::default_config_dir()) {
+        String::new()
+    } else if app_locked() {
+        "잠김: 마스터 비밀번호를 넣고 [잠금 해제]를 누르세요".into()
+    } else {
+        "해제됨: 이번 실행 동안 잠긴 동작을 할 수 있습니다".into()
+    }
+}
+
 /// 화면에서 고친 전역 설정을 저장한다. 최신 파일을 다시 읽어 바꾼 칸만 덮어쓰므로 나머지 값(알 수 없는 키 포함)은 보존된다.
 fn apply_settings(
     store: &kova_core::config::ConfigStore,
@@ -1214,13 +1234,18 @@ fn main() -> Result<(), slint::PlatformError> {
         w.set_form_encrypt(s.encrypt_backups);
         w.set_form_vss(s.use_vss);
         w.set_form_pack(s.pack_blobs);
+        w.set_lock_text(lock_status().into());
     }
     {
         let weak = w.as_weak();
         w.on_save_settings(move |gb, ransom, enc, vss, pack| {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let msg = match apply_settings(&store, &gb, ransom, enc, vss, pack) {
-                Ok(m) | Err(m) => m,
+            let msg = if app_locked() {
+                LOCKED_MSG.to_string()
+            } else {
+                match apply_settings(&store, &gb, ransom, enc, vss, pack) {
+                    Ok(m) | Err(m) => m,
+                }
             };
             if let Some(w) = weak.upgrade() {
                 w.set_settings_text(msg.into());
@@ -1290,12 +1315,53 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = w.as_weak();
         w.on_restore_key(move |code| {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let msg = match restore_keys(&store, &code) {
-                Ok(m) | Err(m) => m,
+            let msg = if app_locked() {
+                LOCKED_MSG.to_string()
+            } else {
+                match restore_keys(&store, &code) {
+                    Ok(m) | Err(m) => m,
+                }
             };
             if let Some(w) = weak.upgrade() {
                 w.set_settings_text(msg.into());
                 w.set_form_recovery("".into());
+            }
+        });
+        let weak = w.as_weak();
+        w.on_unlock_app(move |pw| {
+            let ok = kova_core::applock::verify(&kova_service::default_config_dir(), &pw);
+            if ok {
+                UNLOCKED.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_form_lock_cur("".into());
+                w.set_lock_text(
+                    if ok {
+                        lock_status()
+                    } else {
+                        "마스터 비밀번호가 맞지 않습니다".to_string()
+                    }
+                    .into(),
+                );
+            }
+        });
+        let weak = w.as_weak();
+        w.on_set_master(move |cur, new| {
+            let r = kova_core::applock::change(&kova_service::default_config_dir(), &cur, &new);
+            // 새로 정했으면 방금 정한 사람이 쓰는 중이므로 이번 실행은 풀린 상태로 둔다
+            let ok = r.is_ok();
+            if ok {
+                UNLOCKED.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            if let Some(w) = weak.upgrade() {
+                if ok {
+                    w.set_form_lock_cur("".into());
+                    w.set_form_lock_new("".into());
+                }
+                let msg = match r {
+                    Ok(m) | Err(m) => m,
+                };
+                w.set_lock_text(msg.into());
             }
         });
     }
@@ -1435,13 +1501,19 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = w.as_weak();
         w.on_delete_profile(move |id| {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let msg = match store.delete(&id) {
+            let locked = app_locked();
+            let msg = match if locked {
+                Err(())
+            } else {
+                store.delete(&id).map_err(|_| ())
+            } {
+                Err(()) if locked => LOCKED_MSG,
                 Ok(true) => "프로파일 설정을 삭제했습니다 (저장소의 백업 파일은 그대로입니다)",
                 Ok(false) => "이미 없는 프로파일입니다",
                 Err(_) => "삭제하지 못했습니다",
             };
             if let Some(w) = weak.upgrade() {
-                if w.get_form_id() == id {
+                if !locked && w.get_form_id() == id {
                     w.set_form_id("".into());
                 }
                 w.set_form_text(msg.into());
@@ -1572,10 +1644,22 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = w.as_weak();
         w.on_restore_inplace(move |repo, sid| {
+            if app_locked() {
+                if let Some(w) = weak.upgrade() {
+                    w.set_restore_text(LOCKED_MSG.into());
+                }
+                return;
+            }
             restore_inplace_job(weak.clone(), repo.to_string(), sid.to_string())
         });
         let weak = w.as_weak();
         w.on_delete_snapshot(move |repo, sid| {
+            if app_locked() {
+                if let Some(w) = weak.upgrade() {
+                    w.set_restore_text(LOCKED_MSG.into());
+                }
+                return;
+            }
             let (repo, sid) = (repo.to_string(), sid.to_string());
             let weak = weak.clone();
             std::thread::spawn(move || {
