@@ -246,6 +246,20 @@ export component MainWindow inherits Window {
     callback export-sysinfo();
     in property <[OffsiteRow]> offsite-rows;
     in-out property <int> page: 0;
+    // 고급 메뉴(프로파일·디스크 이미지·설정 등)는 기본으로 접어 둔다
+    in-out property <bool> advanced: false;
+    callback known-folder(string) -> string;
+    callback quick-start(string, string);
+    in-out property <string> wz-src: "";
+    in property <[string]> wz-list;
+    callback wz-add(string);
+    callback wz-remove(int);
+    in-out property <string> wz-repo: "";
+    in-out property <string> default-restore: "";
+    in property <string> wz-text;
+    out property <color> hero-tone: !service-ok ? Theme.danger : profiles.length == 0 ? Theme.accent : alert-text != "" ? Theme.warn : Theme.ok;
+    out property <string> hero-title: !service-ok ? "백업 프로그램이 꺼져 있습니다" : profiles.length == 0 ? "아직 백업이 설정되지 않았습니다" : alert-text != "" ? "확인이 필요한 문제가 있습니다" : "내 파일이 안전하게 보호되고 있습니다";
+    out property <string> hero-sub: !service-ok ? "컴퓨터를 다시 시작해 보세요. 계속되면 Kova를 다시 설치하세요." : profiles.length == 0 ? "아래 세 단계만 따라 하면 끝납니다." : alert-text != "" ? "왼쪽의 '알림'을 눌러 내용을 확인하세요." : "마지막 백업: " + (snapshots.length > 0 ? snapshots[0].when : "아직 없음");
 
     HorizontalLayout {
         // 사이드바
@@ -256,16 +270,18 @@ export component MainWindow inherits Window {
                 padding: 14px;
                 spacing: 4px;
                 Text { text: "Kova"; color: Theme.text; font-size: 24px; font-weight: 800; }
-                Text { text: "백업 · 복원 · 무결성"; color: Theme.muted; font-size: 12px; }
+                Text { text: "내 파일 지킴이"; color: Theme.muted; font-size: 12px; }
                 Rectangle { height: 16px; }
                 NavItem { text: "홈"; active: root.page == 0; clicked => { root.page = 0; } }
-                NavItem { text: "프로파일"; active: root.page == 1; clicked => { root.page = 1; } }
-                NavItem { text: "이력 · 복원"; active: root.page == 2; clicked => { root.page = 2; } }
-                NavItem { text: "알림"; active: root.page == 3; clicked => { root.page = 3; } }
-                NavItem { text: "디스크 이미지"; active: root.page == 4; clicked => { root.page = 4; } }
-                NavItem { text: "설정"; active: root.page == 5; clicked => { root.page = 5; } }
+                NavItem { text: "파일 되돌리기"; active: root.page == 2; clicked => { root.page = 2; } }
+                NavItem { text: root.alert-text != "" ? "알림 ●" : "알림"; active: root.page == 3; clicked => { root.page = 3; } }
+                if root.advanced: Text { text: "고급"; color: Theme.muted; font-size: 11px; }
+                if root.advanced: NavItem { text: "백업 설정"; active: root.page == 1; clicked => { root.page = 1; } }
+                if root.advanced: NavItem { text: "디스크 통째 백업"; active: root.page == 4; clicked => { root.page = 4; } }
+                if root.advanced: NavItem { text: "환경 설정"; active: root.page == 5; clicked => { root.page = 5; } }
                 Rectangle { vertical-stretch: 1; }
-                Btn { text: Theme.dark ? "밝은 테마" : "어두운 테마"; clicked => { Theme.dark = !Theme.dark; } }
+                Btn { text: root.advanced ? "고급 메뉴 숨기기" : "고급 메뉴 보기"; clicked => { root.advanced = !root.advanced; if (!root.advanced && (root.page == 1 || root.page == 4 || root.page == 5)) { root.page = 0; } } }
+                Btn { text: Theme.dark ? "밝은 화면" : "어두운 화면"; clicked => { Theme.dark = !Theme.dark; } }
             }
         }
 
@@ -279,7 +295,7 @@ export component MainWindow inherits Window {
                 spacing: 8px;
                 height: 28px;
                 Text {
-                    text: root.page == 0 ? "홈" : root.page == 1 ? "프로파일" : root.page == 2 ? "이력 · 복원" : root.page == 3 ? "알림" : root.page == 4 ? "디스크 이미지" : "설정";
+                    text: root.page == 0 ? "홈" : root.page == 1 ? "백업 설정" : root.page == 2 ? "파일 되돌리기" : root.page == 3 ? "알림" : root.page == 4 ? "디스크 통째 백업" : "환경 설정";
                     color: Theme.text;
                     font-size: 20px;
                     font-weight: 700;
@@ -287,31 +303,100 @@ export component MainWindow inherits Window {
                 }
                 Rectangle { horizontal-stretch: 1; }
                 if root.pick-error != "": Badge { text: root.pick-error; tone: Theme.danger; }
-                if root.page != 0: Badge { text: root.service-status; tone: root.service-ok ? Theme.accent : Theme.danger; }
+                if !root.service-ok: Badge { text: "백업 프로그램이 꺼져 있음"; tone: Theme.danger; }
                 if root.alert-text != "": Badge { text: root.alert-text; tone: Theme.danger; }
             }
 
             // 홈
             if root.page == 0: VerticalLayout {
                 spacing: 12px;
-                HorizontalLayout {
-                    spacing: 12px;
-                    Stat { label: "서비스"; value: root.service-status; tone: root.service-ok ? Theme.text : Theme.danger; horizontal-stretch: 2; }
-                    Stat { label: "프로파일"; value: root.profiles.length + "개"; horizontal-stretch: 1; }
-                    Stat { label: "최근 스냅샷"; value: root.snapshots.length > 0 ? root.snapshots[0].when : "없음"; horizontal-stretch: 1; }
-                }
-                Card {
-                    height: 190px;
-                    if root.profiles.length == 0: Text {
-                        text: "등록된 프로파일이 없습니다. '프로파일' 메뉴에서 추가하세요.";
-                        color: Theme.muted;
-                        font-size: 13px;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+                Rectangle {
+                    height: 96px;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: root.hero-tone;
+                    background: root.hero-tone.with-alpha(0.14);
+                    VerticalLayout {
+                        padding: 18px;
+                        spacing: 6px;
+                        alignment: center;
+                        Text { text: root.hero-title; color: Theme.text; font-size: 22px; font-weight: 800; wrap: word-wrap; }
+                        Text { text: root.hero-sub; color: Theme.muted; font-size: 14px; wrap: word-wrap; }
                     }
+                }
+
+                // 처음 시작하기: 설정이 하나도 없을 때만
+                if root.profiles.length == 0: ScrollView {
+                    vertical-stretch: 1;
+                    viewport-width: self.visible-width;
+                    VerticalLayout {
+                        spacing: 12px;
+                        alignment: start;
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 8px;
+                                Heading { text: "1. 무엇을 지킬까요?"; }
+                                Hint { text: "버튼을 눌러 폴더를 추가하세요. 여러 개를 눌러도 됩니다."; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    Btn { text: "+ 문서"; clicked => { root.wz-add(root.known-folder("documents")); } }
+                                    Btn { text: "+ 사진"; clicked => { root.wz-add(root.known-folder("pictures")); } }
+                                    Btn { text: "+ 바탕화면"; clicked => { root.wz-add(root.known-folder("desktop")); } }
+                                    Btn { text: "+ 다운로드"; clicked => { root.wz-add(root.known-folder("downloads")); } }
+                                }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Btn { text: "다른 폴더 찾아보기"; clicked => { root.wz-add(root.browse("folders")); } }
+                                }
+                                if root.wz-list.length == 0: Text { text: "아직 고른 폴더가 없습니다."; color: Theme.muted; font-size: 13px; }
+                                for f[i] in root.wz-list: Rectangle {
+                                    height: 34px;
+                                    border-radius: 6px;
+                                    border-width: 1px;
+                                    border-color: Theme.line;
+                                    background: Theme.bg;
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 4px;
+                                        spacing: 8px;
+                                        Text { text: f; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                        Btn { text: "✕ 빼기"; y: 1px; clicked => { root.wz-remove(i); } }
+                                    }
+                                }
+                            }
+                        }
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 8px;
+                                Heading { text: "2. 어디에 저장할까요?"; }
+                                Hint { text: "다른 드라이브나 외장 하드를 고르는 것이 좋습니다. 같은 디스크에 저장하면 디스크가 고장 났을 때 함께 사라집니다."; }
+                                PathField { text <=> root.wz-repo; placeholder: "백업을 저장할 폴더"; pick(k) => { root.browse(k) } }
+                            }
+                        }
+                        Card {
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 8px;
+                                Heading { text: "3. 시작하기"; }
+                                Hint { text: "누르면 지금 한 번 백업하고, 그 뒤로는 매일 새벽 2시에 자동으로 백업합니다. 컴퓨터가 켜져 있어야 합니다."; }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    Btn { text: "백업 시작하기"; kind: 1; height: 44px; min-width: 200px; clicked => { root.quick-start(root.wz-src, root.wz-repo); } }
+                                }
+                                Text { text: root.wz-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
+                            }
+                        }
+                    }
+                }
+
+                if root.profiles.length > 0: Card {
+                    height: min(root.profiles.length, 3) * 64px + 8px;
                     ListView {
                         for p in root.profiles: Rectangle {
-                            height: 48px;
+                            height: 64px;
                             HorizontalLayout {
                                 padding-left: 14px;
                                 padding-right: 14px;
@@ -320,12 +405,12 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     horizontal-stretch: 1;
                                     alignment: center;
-                                    Text { text: p.name; color: Theme.text; font-size: 14px; font-weight: 600; overflow: elide; }
-                                    Text { text: p.last; color: Theme.muted; font-size: 12px; overflow: elide; }
+                                    Text { text: p.name; color: Theme.text; font-size: 15px; font-weight: 700; overflow: elide; }
+                                    Text { text: "최근 결과: " + p.last; color: Theme.muted; font-size: 12px; overflow: elide; }
                                 }
-                                Btn { text: "지금 백업"; kind: 1; y: 8px; clicked => { root.run-backup(p.id); } }
-                                Btn { text: "검증"; y: 8px; clicked => { root.run-verify(p.id); } }
-                                Btn { text: "정리"; y: 8px; clicked => { root.run-gc(p.id); } }
+                                Btn { text: "지금 백업하기"; kind: 1; height: 40px; y: 12px; clicked => { root.run-backup(p.id); } }
+                                if root.advanced: Btn { text: "검증"; y: 16px; clicked => { root.run-verify(p.id); } }
+                                if root.advanced: Btn { text: "정리"; y: 16px; clicked => { root.run-gc(p.id); } }
                             }
                             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
                         }
@@ -357,16 +442,16 @@ export component MainWindow inherits Window {
                                         Rectangle { x: 0px; width: parent.width * r.pct / 100; height: parent.height; border-radius: 3px; background: Theme.accent; }
                                     }
                                 }
-                                if r.cancellable: Btn { text: "취소"; kind: 2; y: 10px; clicked => { root.cancel-job(r.id); } }
+                                if r.cancellable: Btn { text: "중단"; kind: 2; y: 10px; clicked => { root.cancel-job(r.id); } }
                             }
                         }
                     }
                 }
-                Heading { text: "진행 상황"; }
-                Card {
+                if root.profiles.length > 0: Heading { text: "작업 기록"; }
+                if root.profiles.length > 0: Card {
                     vertical-stretch: 1;
                     if root.log-text == "": Text {
-                        text: "아직 실행한 작업이 없습니다. 위 목록의 '지금 백업'으로 시작하세요.";
+                        text: "아직 한 일이 없습니다. 위의 '지금 백업하기'를 눌러 보세요.";
                         color: Theme.muted;
                         font-size: 13px;
                         horizontal-alignment: center;
@@ -466,9 +551,9 @@ export component MainWindow inherits Window {
                     VerticalLayout {
                         padding: 16px;
                         spacing: 8px;
-                        Heading { text: "복원 위치"; }
-                        rt := PathField { placeholder: "복원할 새 폴더 전체 경로 (예: D 드라이브의 새 폴더)"; pick(k) => { root.browse(k) } }
-                        Hint { text: "전체 복원은 새 폴더(또는 빈 폴더)로 복원해 원래 위치를 덮어쓰지 않습니다. \"원래 위치로\"는 두 번 눌러야 하며 같은 이름의 파일을 덮어씁니다. 삭제도 두 번 눌러야 하고 되돌릴 수 없습니다."; }
+                        Heading { text: "어디에 되돌릴까요?"; }
+                        rt := PathField { text: root.default-restore; placeholder: "되돌린 파일을 넣을 새 폴더"; pick(k) => { root.browse(k) } }
+                        Hint { text: "아래 목록에서 되돌리고 싶은 날짜를 골라 버튼을 누르세요. 지금 있는 파일은 건드리지 않고, 위 폴더에 따로 꺼내 드립니다."; }
                     }
                 }
                 if root.browse-open: VerticalLayout {
@@ -515,13 +600,20 @@ export component MainWindow inherits Window {
                     }
                     HorizontalLayout {
                         spacing: 8px;
-                        Text { text: root.browse-status != "" ? root.browse-status : "폴더를 누르면 안으로 들어가고, 체크한 항목만 복원합니다"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                        Text { text: root.browse-status != "" ? root.browse-status : "폴더를 누르면 안으로 들어가고, 네모 칸을 눌러 되돌릴 파일을 체크하세요"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
                         Text { text: root.browse-selected + "개 선택"; color: Theme.text; font-size: 13px; vertical-alignment: center; }
-                        Btn { text: "선택 항목 복원"; kind: 1; clicked => { root.browse-restore(rt.text); } }
+                        Btn { text: "체크한 파일 되돌리기"; kind: 1; clicked => { root.browse-restore(rt.text); } }
                     }
                 }
                 if !root.browse-open: Card {
                     vertical-stretch: 1;
+                    if root.snapshots.length == 0: Text {
+                        text: "아직 백업이 없습니다. 홈에서 먼저 백업하세요.";
+                        color: Theme.muted;
+                        font-size: 13px;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                     ListView {
                         for s in root.snapshots: Rectangle {
                             height: 44px;
@@ -537,9 +629,9 @@ export component MainWindow inherits Window {
                                     Text { text: s.summary; color: Theme.muted; font-size: 12px; overflow: elide; }
                                 }
                                 Text { text: s.verified; color: s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok; font-size: 12px; width: 64px; vertical-alignment: center; }
-                                Btn { text: "파일 보기"; y: 6px; clicked => { root.browse-open = true; root.open-browse(s.repo, s.id, s.when); } }
-                                Btn { text: "전체 복원"; kind: 0; y: 6px; clicked => { root.snap-pending = ""; root.restore-snapshot(s.repo, s.id, rt.text); } }
-                                Btn {
+                                Btn { text: "골라서 되돌리기"; y: 6px; clicked => { root.browse-open = true; root.open-browse(s.repo, s.id, s.when); } }
+                                Btn { text: "전부 되돌리기"; kind: 1; y: 6px; clicked => { root.snap-pending = ""; root.restore-snapshot(s.repo, s.id, rt.text); } }
+                                if root.advanced: Btn {
                                     text: root.snap-pending == "R" + s.id ? "정말 덮어쓰기" : "원래 위치로";
                                     kind: 2;
                                     y: 6px;
@@ -552,7 +644,7 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                 }
-                                Btn {
+                                if root.advanced: Btn {
                                     text: root.snap-pending == "D" + s.id ? "정말 삭제" : "삭제";
                                     kind: 2;
                                     y: 6px;

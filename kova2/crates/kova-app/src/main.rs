@@ -9,6 +9,83 @@ fn make_icon() -> Icon {
     Icon::from_rgba(include_bytes!("../assets/kova_32.rgba").to_vec(), 32, 32).unwrap()
 }
 
+/// 시작 마법사용 폴더 위치. 문서·사진 등은 OneDrive로 옮겨져 있으면 그쪽을 쓴다.
+fn known_folder(kind: &str) -> String {
+    let home = std::env::var_os("USERPROFILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_default();
+    let pick = |names: &[&str]| -> String {
+        for n in names {
+            let p = home.join(n);
+            if p.is_dir() {
+                return p.to_string_lossy().into_owned();
+            }
+        }
+        home.join(names[names.len() - 1])
+            .to_string_lossy()
+            .into_owned()
+    };
+    match kind {
+        "documents" => pick(&["OneDrive\\Documents", "OneDrive\\문서", "Documents"]),
+        "pictures" => pick(&["OneDrive\\Pictures", "OneDrive\\사진", "Pictures"]),
+        "desktop" => pick(&["OneDrive\\Desktop", "OneDrive\\바탕 화면", "Desktop"]),
+        "downloads" => pick(&["Downloads"]),
+        // 저장 위치 제안: 다른 드라이브가 있으면 그쪽, 없으면 내 폴더 안
+        "backup" => {
+            for l in 'D'..='Z' {
+                let root = format!("{l}:\\");
+                if std::path::Path::new(&root).exists() {
+                    return format!("{root}Kova백업");
+                }
+            }
+            home.join("Kova백업").to_string_lossy().into_owned()
+        }
+        "restore" => home
+            .join("Desktop")
+            .join("Kova 복원")
+            .to_string_lossy()
+            .into_owned(),
+        _ => String::new(),
+    }
+}
+
+/// 마법사: 이름·보존 기본값으로 프로파일을 만들고 매일 02:00 자동 백업을 켠 뒤 바로 한 번 백업한다.
+fn quick_start(srcs: &str, repo: &str) -> Result<String, String> {
+    let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+    let all = store.profiles();
+    let id = format!(
+        "prof_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
+    );
+    let p = kova_core::profile_form::build(None, &id, "내 백업", srcs, repo, "30", "60", &all)
+        .and_then(|p| kova_core::profile_form::apply_schedule(p, true, true, "02:00", ""))
+        .and_then(|p| kova_core::profile_form::apply_keep(p, "0", "0"))?;
+    store
+        .upsert(p.clone())
+        .map_err(|e| format!("저장 실패: {e}"))?;
+    send("backup", p.id.clone());
+    Ok(p.id)
+}
+
+/// 마법사의 '고른 폴더' 목록을 화면(목록 + 이어 붙인 문자열)에 반영한다.
+fn set_wizard_sources(w: &MainWindow, list: &[String]) {
+    w.set_wz_src(list.join(";").into());
+    let model: Vec<slint::SharedString> = list.iter().map(|s| s.as_str().into()).collect();
+    w.set_wz_list(std::rc::Rc::new(slint::VecModel::from(model)).into());
+}
+
+/// 현재 고른 폴더 목록(이어 붙인 문자열에서 복원).
+fn wizard_sources(w: &MainWindow) -> Vec<String> {
+    w.get_wz_src()
+        .split(';')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 fn rows() -> Vec<ProfileRow> {
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
     store
@@ -1222,6 +1299,45 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let w = MainWindow::new()?;
+    w.set_wz_repo(known_folder("backup").into());
+    w.set_default_restore(known_folder("restore").into());
+    w.on_known_folder(|k| known_folder(&k).into());
+    {
+        let weak = w.as_weak();
+        w.on_wz_add(move |paths| {
+            let Some(w) = weak.upgrade() else { return };
+            let mut list = wizard_sources(&w);
+            for p in paths.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+                if !list.iter().any(|x| x.eq_ignore_ascii_case(p)) {
+                    list.push(p.to_string());
+                }
+            }
+            set_wizard_sources(&w, &list);
+        });
+        let weak = w.as_weak();
+        w.on_wz_remove(move |i| {
+            let Some(w) = weak.upgrade() else { return };
+            let mut list = wizard_sources(&w);
+            if (i as usize) < list.len() {
+                list.remove(i as usize);
+            }
+            set_wizard_sources(&w, &list);
+        });
+    }
+    {
+        let weak = w.as_weak();
+        w.on_quick_start(move |srcs, repo| {
+            let text = match quick_start(srcs.trim(), repo.trim()) {
+                Ok(_) => {
+                    "설정했습니다. 백업을 시작합니다. 진행 상황은 아래에 표시됩니다.".to_string()
+                }
+                Err(e) => format!("시작하지 못했습니다: {e}"),
+            };
+            if let Some(w) = weak.upgrade() {
+                w.set_wz_text(text.into());
+            }
+        });
+    }
     w.on_run_backup(|id| send("backup", id.to_string()));
     w.on_run_verify(|id| send("verify", id.to_string()));
     w.on_save_offsite(|id, dir| save_offsite(&id, &dir));
