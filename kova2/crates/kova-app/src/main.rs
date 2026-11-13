@@ -49,6 +49,10 @@ fn known_folder(kind: &str) -> String {
     }
 }
 
+/// 마법사가 새 백업에 넣는 제외 목록: 임시·캐시·개발 부산물은 백업할 필요가 없다.
+const DEFAULT_EXCLUDES: &str =
+    "*.tmp;*.temp;~$*;Thumbs.db;desktop.ini;$RECYCLE.BIN;node_modules;__pycache__;.venv";
+
 /// 마법사: 이름·보존 기본값으로 프로파일을 만들고 매일 02:00 자동 백업을 켠 뒤 바로 한 번 백업한다.
 fn quick_start(srcs: &str, repo: &str) -> Result<String, String> {
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
@@ -61,7 +65,9 @@ fn quick_start(srcs: &str, repo: &str) -> Result<String, String> {
             .unwrap_or(0)
     );
     let p = kova_core::profile_form::build(None, &id, "내 백업", srcs, repo, "30", "60", &all)
-        .and_then(|p| kova_core::profile_form::apply_schedule(p, true, true, "02:00", ""))
+        .and_then(|p| {
+            kova_core::profile_form::apply_schedule(p, true, true, "02:00", DEFAULT_EXCLUDES)
+        })
         .and_then(|p| kova_core::profile_form::apply_keep(p, "0", "0"))?;
     store
         .upsert(p.clone())
@@ -382,6 +388,10 @@ fn setting_lines() -> Vec<slint::SharedString> {
 fn snaps() -> Vec<SnapRow> {
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
     let mut all: Vec<(f64, SnapRow)> = vec![];
+    // 프로파일 둘이 같은 저장소를 쓰면 같은 스냅샷이 두 번 보이므로 (저장소, 번호)당 한 줄만 둔다
+    let mut seen: std::collections::HashSet<(String, String)> = Default::default();
+    let ids: std::collections::HashSet<String> =
+        store.profiles().into_iter().map(|p| p.id).collect();
     for p in store.profiles() {
         let repo = std::path::PathBuf::from(&p.repo_dir);
         if !repo.join("metadata.db").exists() {
@@ -391,6 +401,12 @@ fn snaps() -> Vec<SnapRow> {
             continue;
         };
         for r in h.list_snapshots().unwrap_or_default() {
+            if !r.profile_id.is_empty() && r.profile_id != p.id && ids.contains(&r.profile_id) {
+                continue; // 이 스냅샷은 다른 프로파일이 만든 것(같은 저장소 공유)
+            }
+            if !seen.insert((p.repo_dir.to_lowercase(), r.id.clone())) {
+                continue;
+            }
             let v = if r.verify_error_count > 0 {
                 "오류 있음"
             } else if r.is_verified {
@@ -557,16 +573,10 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                     let w = w.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(w) = w.upgrade() {
+                            // 최신 기록이 맨 위: 길어져도 아래가 잘려 최신 줄이 안 보이는 일이 없다
                             let old = w.get_log_text().to_string();
-                            let keep: Vec<&str> = old
-                                .lines()
-                                .rev()
-                                .take(11)
-                                .collect::<Vec<_>>()
-                                .into_iter()
-                                .rev()
-                                .collect();
-                            w.set_log_text((keep.join("\n") + "\n" + &line).trim_start().into());
+                            let keep: Vec<&str> = old.lines().take(11).collect();
+                            w.set_log_text((line + "\n" + &keep.join("\n")).trim_end().into());
                         }
                     });
                     true
@@ -1779,11 +1789,35 @@ fn main() -> Result<(), slint::PlatformError> {
             let (repo, sid) = (repo.to_string(), sid.to_string());
             let weak = weak.clone();
             std::thread::spawn(move || {
-                let text = match kova_core::retention::delete_snapshot(
-                    std::path::Path::new(&repo),
-                    &sid,
-                ) {
-                    Ok(m) | Err(m) => m,
+                // 지우기는 서비스(SYSTEM)에 맡긴다: 백업 파일에는 일반 사용자가 풀 수 없는 보호(ACL)가 걸려 있다
+                let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+                let pid = store
+                    .profiles()
+                    .into_iter()
+                    .find(|p| p.repo_dir.eq_ignore_ascii_case(&repo))
+                    .map(|p| p.id);
+                let via_service = pid.and_then(|pid| {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .ok()?;
+                    rt.block_on(kova_ipc::request(
+                        kova_ipc::PIPE_NAME,
+                        &kova_ipc::Request::RunNow {
+                            profile_id: pid,
+                            kind: format!("delsnap:{sid}"),
+                        },
+                    ))
+                    .ok()
+                });
+                let text = if via_service.is_some() {
+                    "삭제를 요청했습니다. 잠시 뒤 목록에서 사라집니다(실패하면 알림에 표시됩니다)"
+                        .to_string()
+                } else {
+                    // 서비스가 꺼져 있으면 이 창에서 직접 시도한다(보호가 걸려 있으면 거부될 수 있다)
+                    match kova_core::retention::delete_snapshot(std::path::Path::new(&repo), &sid) {
+                        Ok(m) | Err(m) => m,
+                    }
                 };
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {

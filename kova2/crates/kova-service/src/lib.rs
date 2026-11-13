@@ -73,7 +73,16 @@ impl Supervisor {
 
     /// 수동 작업 요청 (화면에서 "지금 백업").
     pub fn enqueue(&self, profile_id: &str, kind: Kind) -> Enqueue {
-        let r = self.0.queue.lock().unwrap().enqueue(profile_id, kind);
+        self.enqueue_with(profile_id, kind, "")
+    }
+
+    pub fn enqueue_with(&self, profile_id: &str, kind: Kind, arg: &str) -> Enqueue {
+        let r = self
+            .0
+            .queue
+            .lock()
+            .unwrap()
+            .enqueue_with(profile_id, kind, arg);
         self.pump();
         r
     }
@@ -129,6 +138,7 @@ impl Supervisor {
             Kind::Verify => self.run_verify_job(&job),
             Kind::Gc => self.run_gc_job(&job),
             Kind::Image(d) => self.run_image_job(&job, d, &cancel),
+            Kind::DeleteSnapshot => self.run_delete_snapshot_job(&job),
         };
         // 실패·경고는 알림 기록에 남긴다(화면이 없는 서비스는 기록만, 표시는 앱이 한다). 사용자 취소는 알리지 않는다.
         if message != "취소됨" && (!ok || message.contains("복제 실패")) {
@@ -373,6 +383,18 @@ impl Supervisor {
         out
     }
 
+    /// 스냅샷 삭제: 저장소는 프로파일 설정에서만 찾는다(요청자가 경로를 정하지 못한다).
+    fn run_delete_snapshot_job(&self, job: &Job) -> (bool, String, Option<String>) {
+        let Some(prof) = self.0.store.get(&job.profile_id) else {
+            return (false, format!("프로파일 없음: {}", job.profile_id), None);
+        };
+        match kova_core::retention::delete_snapshot(std::path::Path::new(&prof.repo_dir), &job.arg)
+        {
+            Ok(m) => (true, m, None),
+            Err(m) => (false, m, None),
+        }
+    }
+
     fn run_gc_job(&self, job: &Job) -> (bool, String, Option<String>) {
         let Some(prof) = self.0.store.get(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
@@ -499,6 +521,7 @@ fn to_wire(e: SvcEvent) -> kova_ipc::Event {
             Kind::Verify => "verify",
             Kind::Gc => "gc",
             Kind::Image(d) => return format!("image:{d}"),
+            Kind::DeleteSnapshot => "delsnap",
         }
         .to_string()
     };
@@ -549,8 +572,13 @@ impl kova_ipc::Handler for IpcHandler {
                 Reply::Once(vec![Event::Status { waiting, running }])
             }
             Request::RunNow { profile_id, kind } => {
+                let mut arg = String::new();
                 let k = match kind.as_str() {
                     "backup" => Kind::Backup,
+                    s if s.starts_with("delsnap:") => {
+                        arg = s["delsnap:".len()..].to_string();
+                        Kind::DeleteSnapshot
+                    }
                     "verify" => Kind::Verify,
                     "gc" => Kind::Gc,
                     s if s.len() == 7
@@ -565,7 +593,7 @@ impl kova_ipc::Handler for IpcHandler {
                         }])
                     }
                 };
-                Reply::Once(vec![match self.0.enqueue(&profile_id, k) {
+                Reply::Once(vec![match self.0.enqueue_with(&profile_id, k, &arg) {
                     Enqueue::Queued(job_id) => Event::Queued {
                         job_id,
                         merged: false,

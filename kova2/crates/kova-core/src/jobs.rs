@@ -11,6 +11,8 @@ pub enum Kind {
     Gc,
     /// 볼륨 이미지(.qblk) 만들기. 값은 드라이브 문자(대문자).
     Image(char),
+    /// 스냅샷 하나 지우기. 대상 번호는 `Job::arg`. 보호(ACL)가 걸린 파일은 SYSTEM 권한인 서비스만 지울 수 있다.
+    DeleteSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +20,8 @@ pub struct Job {
     pub id: u64,
     pub profile_id: String,
     pub kind: Kind,
+    /// 작업 인자(스냅샷 삭제의 스냅샷 번호). 없으면 빈 문자열.
+    pub arg: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,10 +44,14 @@ impl JobQueue {
     }
 
     pub fn enqueue(&mut self, profile_id: &str, kind: Kind) -> Enqueue {
+        self.enqueue_with(profile_id, kind, "")
+    }
+
+    pub fn enqueue_with(&mut self, profile_id: &str, kind: Kind, arg: &str) -> Enqueue {
         if let Some(j) = self
             .waiting
             .iter()
-            .find(|j| j.profile_id == profile_id && j.kind == kind)
+            .find(|j| j.profile_id == profile_id && j.kind == kind && j.arg == arg)
         {
             return Enqueue::Merged(j.id);
         }
@@ -54,6 +62,7 @@ impl JobQueue {
             id,
             profile_id: profile_id.into(),
             kind,
+            arg: arg.into(),
         });
         Enqueue::Queued(id)
     }
@@ -108,6 +117,19 @@ impl JobQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_kind_with_different_args_does_not_merge() {
+        let mut q = JobQueue::new();
+        let a = q.enqueue_with("p1", Kind::DeleteSnapshot, "s1");
+        let b = q.enqueue_with("p1", Kind::DeleteSnapshot, "s2");
+        let c = q.enqueue_with("p1", Kind::DeleteSnapshot, "s1");
+        assert!(matches!(a, Enqueue::Queued(_)));
+        assert!(matches!(b, Enqueue::Queued(_)));
+        assert!(matches!(c, Enqueue::Merged(_)));
+        let (j, _) = q.start_next(4).unwrap();
+        assert_eq!((j.kind, j.arg.as_str()), (Kind::DeleteSnapshot, "s1"));
+    }
 
     #[test]
     fn duplicate_waiting_jobs_merge() {

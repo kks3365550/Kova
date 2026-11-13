@@ -632,28 +632,28 @@ export component MainWindow inherits Window {
                                 Btn { text: "골라서 되돌리기"; y: 6px; clicked => { root.browse-open = true; root.open-browse(s.repo, s.id, s.when); } }
                                 Btn { text: "전부 되돌리기"; kind: 1; y: 6px; clicked => { root.snap-pending = ""; root.restore-snapshot(s.repo, s.id, rt.text); } }
                                 if root.advanced: Btn {
-                                    text: root.snap-pending == "R" + s.id ? "정말 덮어쓰기" : "원래 위치로";
+                                    text: root.snap-pending == "R" + s.repo + s.id ? "정말 덮어쓰기" : "원래 위치로";
                                     kind: 2;
                                     y: 6px;
                                     clicked => {
-                                        if (root.snap-pending == "R" + s.id) {
+                                        if (root.snap-pending == "R" + s.repo + s.id) {
                                             root.snap-pending = "";
                                             root.restore-inplace(s.repo, s.id);
                                         } else {
-                                            root.snap-pending = "R" + s.id;
+                                            root.snap-pending = "R" + s.repo + s.id;
                                         }
                                     }
                                 }
                                 if root.advanced: Btn {
-                                    text: root.snap-pending == "D" + s.id ? "정말 삭제" : "삭제";
+                                    text: root.snap-pending == "D" + s.repo + s.id ? "정말 삭제" : "삭제";
                                     kind: 2;
                                     y: 6px;
                                     clicked => {
-                                        if (root.snap-pending == "D" + s.id) {
+                                        if (root.snap-pending == "D" + s.repo + s.id) {
                                             root.snap-pending = "";
                                             root.delete-snapshot(s.repo, s.id);
                                         } else {
-                                            root.snap-pending = "D" + s.id;
+                                            root.snap-pending = "D" + s.repo + s.id;
                                         }
                                     }
                                 }
