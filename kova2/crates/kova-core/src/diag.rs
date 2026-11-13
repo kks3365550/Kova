@@ -88,6 +88,32 @@ pub fn report(config_dir: &Path, version: &str, service_line: &str) -> String {
     o
 }
 
+/// 진단 ZIP: 보고서 + 디스크·BitLocker 상태 + 알림 기록. 키·비밀번호·토큰은 담지 않는다.
+pub fn bundle(
+    config_dir: &Path,
+    version: &str,
+    service_line: &str,
+    out: &Path,
+) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut z = zip::ZipWriter::new(std::fs::File::create(out)?);
+    let o = zip::write::SimpleFileOptions::default();
+    let mut put = |name: &str, bytes: &[u8]| -> std::io::Result<()> {
+        z.start_file(name, o).map_err(std::io::Error::other)?;
+        z.write_all(bytes)
+    };
+    put(
+        "report.txt",
+        report(config_dir, version, service_line).as_bytes(),
+    )?;
+    put("health.txt", crate::health::report().as_bytes())?;
+    if let Ok(b) = std::fs::read(config_dir.join("alerts.json")) {
+        put("alerts.json", &b)?;
+    }
+    z.finish().map_err(std::io::Error::other)?;
+    Ok(())
+}
+
 fn now() -> f64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -113,5 +139,14 @@ mod tests {
         assert!(r.contains("프로파일 1개") && r.contains("샘플") && r.contains("[없음]"));
         assert!(r.contains("이력 DB 없음") && r.contains("알림 0건"));
         assert!(r.contains("서비스: 연결됨"));
+    }
+
+    #[test]
+    fn bundle_zip_contains_report_and_health() {
+        let d = tempfile::tempdir().unwrap();
+        let out = d.path().join("diag.zip");
+        bundle(&d.path().join("cfg"), "0.0.1", "연결됨", &out).unwrap();
+        let mut z = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        assert!(z.by_name("report.txt").is_ok() && z.by_name("health.txt").is_ok());
     }
 }

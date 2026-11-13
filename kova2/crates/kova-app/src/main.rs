@@ -18,11 +18,12 @@ fn rows() -> Vec<ProfileRow> {
             id: p.id.clone().into(),
             name: p.name.clone().into(),
             detail: format!(
-                "원본 {} → {} · 보존 {}개/{}일",
+                "원본 {} → {} · 보존 {}개/{}일 · {}",
                 p.sources.join(", "),
                 p.repo_dir,
                 p.retention_count,
-                p.retention_days
+                p.retention_days,
+                kova_core::profile_form::schedule_text(&p)
             )
             .into(),
             last: match (p.last_status.as_str(), p.last_run) {
@@ -171,6 +172,7 @@ fn apply_settings(
     min_free_gb: &str,
     ransomware: bool,
     encrypt: bool,
+    use_vss: bool,
 ) -> Result<String, String> {
     let gb: u32 = min_free_gb
         .trim()
@@ -198,6 +200,7 @@ fn apply_settings(
     s.min_free_disk_gb = gb;
     s.enable_ransomware_protection = ransomware;
     s.encrypt_backups = encrypt;
+    s.use_vss = use_vss;
     store
         .save_settings(&s)
         .map_err(|e| format!("저장 실패: {e}"))?;
@@ -212,6 +215,29 @@ fn apply_settings(
 "
             )
         ))
+    }
+}
+
+/// 복구 코드로 이 PC의 키 파일을 다시 만든다. 암호화된 프로파일 저장소 중 코드가 맞는 곳마다 복원한다.
+fn restore_keys(store: &kova_core::config::ConfigStore, code: &str) -> Result<String, String> {
+    let mut ok = 0;
+    let mut seen = std::collections::HashSet::new();
+    for p in store.profiles() {
+        let repo = std::path::Path::new(&p.repo_dir);
+        if p.repo_dir.is_empty()
+            || !seen.insert(p.repo_dir.clone())
+            || !kova_core::repocrypto::is_enabled(repo)
+        {
+            continue;
+        }
+        if kova_core::repocrypto::restore_key(repo, code).is_ok() {
+            ok += 1;
+        }
+    }
+    if ok == 0 {
+        Err("맞는 암호화 저장소를 찾지 못했습니다. 코드를 다시 확인하고, 저장소 드라이브가 연결돼 있는지 보세요".into())
+    } else {
+        Ok(format!("키를 복원했습니다 (저장소 {ok}곳)"))
     }
 }
 
@@ -415,10 +441,18 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                             ok,
                             message,
                             ..
-                        } => format!(
-                            "{} {profile_id}: {message}",
-                            if ok { "완료" } else { "실패" }
-                        ),
+                        } => {
+                            if !ok && message != "취소됨" {
+                                toast(
+                                    "Kova 백업 실패",
+                                    &format!("{}: {message}", profile_name(&profile_id)),
+                                );
+                            }
+                            format!(
+                                "{} {profile_id}: {message}",
+                                if ok { "완료" } else { "실패" }
+                            )
+                        }
                         _ => return true,
                     };
                     let w = w.clone();
@@ -637,6 +671,30 @@ public class FP {
     return l.ToArray();
   }
 }"#;
+
+/// 윈도우 알림(토스트)을 띄운다. 제목·내용은 환경 변수로 넘겨 스크립트에 끼어들지 못하게 한다. 실패해도 조용히 넘어간다.
+fn toast(title: &str, body: &str) {
+    use std::os::windows::process::CommandExt;
+    const SCRIPT: &str = "$t=$env:KOVA_TOAST_T;$b=$env:KOVA_TOAST_B;\
+[Windows.UI.Notifications.ToastNotificationManager,Windows.UI.Notifications,ContentType=WindowsRuntime]|Out-Null;\
+$x=[Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02);\
+$n=$x.GetElementsByTagName('text');\
+$n.Item(0).AppendChild($x.CreateTextNode($t))|Out-Null;\
+$n.Item(1).AppendChild($x.CreateTextNode($b))|Out-Null;\
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe').Show([Windows.UI.Notifications.ToastNotification]::new($x))";
+    let (t, b) = (
+        title.to_string(),
+        body.chars().take(200).collect::<String>(),
+    );
+    std::thread::spawn(move || {
+        let _ = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+            .env("KOVA_TOAST_T", t)
+            .env("KOVA_TOAST_B", b)
+            .creation_flags(0x0800_0000)
+            .status();
+    });
+}
 
 fn send(kind: impl Into<String>, id: String) {
     let kind: String = kind.into();
@@ -1036,6 +1094,36 @@ fn parent_dir(dir: &str) -> String {
         .unwrap_or_default()
 }
 
+/// 스냅샷을 원래 위치로 되돌린다(같은 이름의 파일은 덮어쓴다). 화면에서 두 번 확인한 뒤에만 호출된다.
+fn restore_inplace_job(weak: slint::Weak<MainWindow>, repo: String, sid: String) {
+    let show = |w: &slint::Weak<MainWindow>, t: String| {
+        let w = w.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = w.upgrade() {
+                w.set_restore_text(t.into());
+            }
+        });
+    };
+    show(&weak, "원래 위치로 복원 중…".into());
+    std::thread::spawn(move || {
+        let opts = kova_engine::ops::RestoreOptions {
+            repo: std::path::PathBuf::from(&repo),
+            session_id: sid,
+            only: None,
+            target: None,
+        };
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let text = match kova_engine::ops::run_restore(&opts, &|_| {}, &cancel) {
+            Ok(s) => format!(
+                "원래 위치로 복원 완료 (항목 {}개, {:.0}초)",
+                s.total_files, s.elapsed_seconds
+            ),
+            Err(e) => format!("복원 실패: {e}"),
+        };
+        show(&weak, text);
+    });
+}
+
 fn restore_snapshot_job(
     weak: slint::Weak<MainWindow>,
     repo: String,
@@ -1122,16 +1210,89 @@ fn main() -> Result<(), slint::PlatformError> {
         w.set_form_min_free(s.min_free_disk_gb.to_string().into());
         w.set_form_ransom(s.enable_ransomware_protection);
         w.set_form_encrypt(s.encrypt_backups);
+        w.set_form_vss(s.use_vss);
     }
     {
         let weak = w.as_weak();
-        w.on_save_settings(move |gb, ransom, enc| {
+        w.on_save_settings(move |gb, ransom, enc, vss| {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let msg = match apply_settings(&store, &gb, ransom, enc) {
+            let msg = match apply_settings(&store, &gb, ransom, enc, vss) {
                 Ok(m) | Err(m) => m,
             };
             if let Some(w) = weak.upgrade() {
                 w.set_settings_text(msg.into());
+            }
+        });
+    }
+    {
+        let weak = w.as_weak();
+        w.on_export_sysinfo(move || {
+            let weak = weak.clone();
+            if let Some(w) = weak.upgrade() {
+                w.set_diag_text("설치된 프로그램·드라이버 목록을 모으는 중…".into());
+            }
+            std::thread::spawn(move || {
+                let base = std::env::var_os("USERPROFILE")
+                    .map(|u| std::path::PathBuf::from(u).join("Desktop"))
+                    .filter(|d| d.is_dir())
+                    .unwrap_or_else(std::env::temp_dir);
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let text = match kova_core::sysinfo::export(
+                    &base.join(format!("Kova2_시스템정보_{secs}")),
+                ) {
+                    Ok(m) | Err(m) => m,
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_diag_text(text.into());
+                    }
+                });
+            });
+        });
+    }
+    {
+        let weak = w.as_weak();
+        w.on_run_drill(move || {
+            let weak = weak.clone();
+            if let Some(w) = weak.upgrade() {
+                w.set_diag_text(
+                    "복구 훈련 중… (최근 스냅샷을 임시 폴더에 복원해 확인합니다)".into(),
+                );
+            }
+            std::thread::spawn(move || {
+                let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+                let scratch = std::env::temp_dir();
+                let lines: Vec<String> = store
+                    .profiles()
+                    .iter()
+                    .map(|p| kova_core::drill::run(p, &scratch))
+                    .collect();
+                let text = if lines.is_empty() {
+                    "프로파일이 없습니다".to_string()
+                } else {
+                    lines.join("\n")
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_diag_text(text.into());
+                    }
+                });
+            });
+        });
+    }
+    {
+        let weak = w.as_weak();
+        w.on_restore_key(move |code| {
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let msg = match restore_keys(&store, &code) {
+                Ok(m) | Err(m) => m,
+            };
+            if let Some(w) = weak.upgrade() {
+                w.set_settings_text(msg.into());
+                w.set_form_recovery("".into());
             }
         });
     }
@@ -1151,11 +1312,6 @@ fn main() -> Result<(), slint::PlatformError> {
                     Ok(_) => "연결됨",
                     Err(_) => "연결 안 됨",
                 };
-                let text = kova_core::diag::report(
-                    &kova_service::default_config_dir(),
-                    env!("CARGO_PKG_VERSION"),
-                    svc,
-                );
                 let dir = std::env::var_os("USERPROFILE")
                     .map(|u| std::path::PathBuf::from(u).join("Desktop"))
                     .filter(|d| d.is_dir())
@@ -1164,8 +1320,13 @@ fn main() -> Result<(), slint::PlatformError> {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
-                let path = dir.join(format!("Kova2_진단_{secs}.txt"));
-                let msg = match std::fs::write(&path, text) {
+                let path = dir.join(format!("Kova2_진단_{secs}.zip"));
+                let msg = match kova_core::diag::bundle(
+                    &kova_service::default_config_dir(),
+                    env!("CARGO_PKG_VERSION"),
+                    svc,
+                    &path,
+                ) {
                     Ok(()) => format!("저장했습니다: {}", path.display()),
                     Err(e) => format!("저장 실패: {e}"),
                 };
@@ -1188,39 +1349,86 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_form_repo(p.repo_dir.clone().into());
                 w.set_form_count(p.retention_count.to_string().into());
                 w.set_form_days(p.retention_days.to_string().into());
+                w.set_form_auto(p.auto_backup_enabled);
+                w.set_form_daily(p.schedule_type == "daily");
+                w.set_form_sched(p.schedule_value.clone().into());
+                w.set_form_exclude(p.exclude_patterns.join(";").into());
+                let keep = |k: &str| p.extra.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+                w.set_form_weekly(keep("keep_weekly").to_string().into());
+                w.set_form_monthly(keep("keep_monthly").to_string().into());
                 w.set_form_text("".into());
             }
         });
         let weak = w.as_weak();
-        w.on_save_profile(move |id, name, srcs, repo, count, days| {
+        w.on_estimate_size(move |id| {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let all = store.profiles();
-            let base = all.iter().find(|p| p.id == id.as_str());
-            let new_id = format!(
-                "prof_{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0)
-            );
-            let msg = match kova_core::profile_form::build(
-                base, &new_id, &name, &srcs, &repo, &count, &days, &all,
-            ) {
-                Ok(p) => match store.upsert(p.clone()) {
-                    Ok(()) => {
-                        if let Some(w) = weak.upgrade() {
-                            w.set_form_id(p.id.into());
-                        }
-                        "저장했습니다".to_string()
-                    }
-                    Err(e) => format!("저장 실패: {e}"),
-                },
-                Err(e) => format!("저장하지 않음: {e}"),
+            let Some(p) = store.get(&id) else {
+                if let Some(w) = weak.upgrade() {
+                    w.set_form_text("저장된 프로파일만 예측할 수 있습니다. 목록에서 수정을 누르거나 먼저 저장하세요".into());
+                }
+                return;
             };
             if let Some(w) = weak.upgrade() {
-                w.set_form_text(msg.into());
+                w.set_form_text("원본을 훑는 중입니다…".into());
             }
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let text = kova_core::estimate::describe(&kova_core::estimate::estimate(&p));
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_form_text(text.into());
+                    }
+                });
+            });
         });
+        let weak = w.as_weak();
+        w.on_save_profile(
+            move |id,
+                  name,
+                  srcs,
+                  repo,
+                  count,
+                  days,
+                  auto,
+                  daily,
+                  sched,
+                  exclude,
+                  weekly,
+                  monthly| {
+                let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+                let all = store.profiles();
+                let base = all.iter().find(|p| p.id == id.as_str());
+                let new_id = format!(
+                    "prof_{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+                let built = kova_core::profile_form::build(
+                    base, &new_id, &name, &srcs, &repo, &count, &days, &all,
+                )
+                .and_then(|p| {
+                    kova_core::profile_form::apply_schedule(p, auto, daily, &sched, &exclude)
+                })
+                .and_then(|p| kova_core::profile_form::apply_keep(p, &weekly, &monthly));
+                let msg = match built {
+                    Ok(p) => match store.upsert(p.clone()) {
+                        Ok(()) => {
+                            if let Some(w) = weak.upgrade() {
+                                w.set_form_id(p.id.into());
+                            }
+                            "저장했습니다".to_string()
+                        }
+                        Err(e) => format!("저장 실패: {e}"),
+                    },
+                    Err(e) => format!("저장하지 않음: {e}"),
+                };
+                if let Some(w) = weak.upgrade() {
+                    w.set_form_text(msg.into());
+                }
+            },
+        );
         let weak = w.as_weak();
         w.on_delete_profile(move |id| {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
@@ -1358,6 +1566,30 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     w.on_run_gc(|id| send("gc", id.to_string()));
+    {
+        let weak = w.as_weak();
+        w.on_restore_inplace(move |repo, sid| {
+            restore_inplace_job(weak.clone(), repo.to_string(), sid.to_string())
+        });
+        let weak = w.as_weak();
+        w.on_delete_snapshot(move |repo, sid| {
+            let (repo, sid) = (repo.to_string(), sid.to_string());
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let text = match kova_core::retention::delete_snapshot(
+                    std::path::Path::new(&repo),
+                    &sid,
+                ) {
+                    Ok(m) | Err(m) => m,
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_restore_text(text.into());
+                    }
+                });
+            });
+        });
+    }
     w.on_ack_alerts(|| {
         let _ =
             kova_core::alerts::AlertLog::new(&kova_service::default_config_dir()).acknowledge_all();
@@ -1366,8 +1598,9 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let menu = Menu::new();
     let open = MenuItem::new("열기", true, None);
+    let backup_all = MenuItem::new("지금 백업 (모든 프로파일)", true, None);
     let quit = MenuItem::new("종료", true, None);
-    menu.append_items(&[&open, &quit]).unwrap();
+    menu.append_items(&[&open, &backup_all, &quit]).unwrap();
     let _tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("Kova")
@@ -1377,7 +1610,11 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // 트레이 메뉴 이벤트를 Slint 이벤트 루프에서 주기적으로 처리
     let weak = w.as_weak();
-    let (open_id, quit_id) = (open.id().clone(), quit.id().clone());
+    let (open_id, quit_id, backup_id) = (
+        open.id().clone(),
+        quit.id().clone(),
+        backup_all.id().clone(),
+    );
     let timer = slint::Timer::default();
     timer.start(
         slint::TimerMode::Repeated,
@@ -1387,6 +1624,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 if ev.id == open_id {
                     if let Some(w) = weak.upgrade() {
                         let _ = w.show();
+                    }
+                } else if ev.id == backup_id {
+                    let store =
+                        kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+                    for p in store.profiles() {
+                        send("backup", p.id);
                     }
                 } else if ev.id == quit_id {
                     let _ = slint::quit_event_loop();
@@ -1416,18 +1659,41 @@ mod tests {
         s.extra.insert("unknown_key".into(), 7.into());
         store.save_settings(&s).unwrap();
 
-        assert!(apply_settings(&store, "abc", true, false).is_err());
-        assert!(apply_settings(&store, "-1", true, false).is_err());
-        assert!(apply_settings(&store, "999999", true, false).is_err());
+        assert!(apply_settings(&store, "abc", true, false, true).is_err());
+        assert!(apply_settings(&store, "-1", true, false, true).is_err());
+        assert!(apply_settings(&store, "999999", true, false, true).is_err());
         assert_eq!(store.settings().offsite_remote_path, "keep"); // 실패 시 변경 없음
 
-        assert!(apply_settings(&store, " 25 ", false, false).is_ok());
+        assert!(apply_settings(&store, " 25 ", false, false, false).is_ok());
         let after = store.settings();
         assert_eq!(after.min_free_disk_gb, 25);
         assert!(!after.enable_ransomware_protection);
+        assert!(!after.use_vss);
         assert_eq!(after.offsite_remote_path, "keep");
         assert_eq!(after.extra.get("unknown_key"), Some(&7.into()));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn restore_keys_rebuilds_the_key_file_only_for_the_matching_repo() {
+        let base = std::env::temp_dir().join(format!("kova_rk_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let keys = base.join("keys");
+        std::fs::create_dir_all(&keys).unwrap();
+        std::env::set_var("KOVA2_KEY_DIR", &keys);
+        let repo = base.join("repo");
+        let store = kova_core::config::ConfigStore::new(base.join("cfg"));
+        let mut p = kova_core::config::Profile::new("p1", "시험");
+        p.repo_dir = repo.to_string_lossy().into();
+        store.upsert(p).unwrap();
+        let code = kova_core::repocrypto::enable(&repo).unwrap().unwrap();
+        for f in std::fs::read_dir(&keys).unwrap() {
+            std::fs::remove_file(f.unwrap().path()).unwrap();
+        }
+        assert!(restore_keys(&store, "00000000").is_err());
+        assert!(restore_keys(&store, &code).is_ok());
+        assert_eq!(std::fs::read_dir(&keys).unwrap().count(), 1);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

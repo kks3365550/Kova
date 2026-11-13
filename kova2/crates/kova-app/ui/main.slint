@@ -180,16 +180,22 @@ export component MainWindow inherits Window {
     callback check-update();
     in property <[RunRow]> running;
     callback cancel-job(int);
-    callback save-settings(string, bool, bool);
+    callback save-settings(string, bool, bool, bool);
     in-out property <string> form-min-free: "5";
     in-out property <bool> form-ransom: true;
     in-out property <bool> form-encrypt: false;
+    in-out property <bool> form-vss: true;
+    in-out property <string> form-recovery: "";
+    callback restore-key(string);
     in property <string> settings-text;
     callback verify-image(string);
     callback restore-image(string, string);
     callback capture-image(string, string);
     callback capture-volume(string);
     callback restore-snapshot(string, string, string);
+    callback restore-inplace(string, string);
+    callback delete-snapshot(string, string);
+    in-out property <string> snap-pending;
     callback open-browse(string, string, string);
     callback browse-go(string);
     callback browse-up();
@@ -206,8 +212,9 @@ export component MainWindow inherits Window {
     callback browse(string) -> string;
     callback make-diag();
     in property <string> diag-text;
-    callback save-profile(string, string, string, string, string, string);
+    callback save-profile(string, string, string, string, string, string, bool, bool, string, string, string, string);
     callback edit-profile(string);
+    callback estimate-size(string);
     callback delete-profile(string);
     in-out property <string> form-id;
     in-out property <string> form-name;
@@ -215,12 +222,20 @@ export component MainWindow inherits Window {
     in-out property <string> form-repo;
     in-out property <string> form-count: "30";
     in-out property <string> form-days: "60";
+    in-out property <bool> form-auto: false;
+    in-out property <bool> form-daily: false;
+    in-out property <string> form-sched: "12";
+    in-out property <string> form-exclude: "";
+    in-out property <string> form-weekly: "0";
+    in-out property <string> form-monthly: "0";
     in-out property <string> delete-pending;
     in property <string> form-text;
     in property <string> image-text;
     callback install-update();
     in property <string> update-text;
     callback save-offsite(string, string);
+    callback run-drill();
+    callback export-sysinfo();
     in property <[OffsiteRow]> offsite-rows;
     in-out property <int> page: 0;
 
@@ -402,16 +417,34 @@ export component MainWindow inherits Window {
                         PathField { text <=> root.form-repo; placeholder: "백업 저장 폴더 전체 경로"; pick(k) => { root.browse(k) } }
                         HorizontalLayout {
                             spacing: 8px;
+                            Text { text: "자동 백업"; color: Theme.muted; font-size: 13px; vertical-alignment: center; }
+                            Btn { text: root.form-auto ? "켜짐" : "꺼짐"; kind: root.form-auto ? 1 : 0; clicked => { root.form-auto = !root.form-auto; } }
+                            Btn { text: root.form-daily ? "매일" : "시간 간격"; clicked => { root.form-daily = !root.form-daily; root.form-sched = root.form-daily ? "02:00" : "12"; } }
+                            Field { text <=> root.form-sched; width: 80px; }
+                            Text { text: root.form-daily ? "시:분에 실행" : "시간마다 실행"; color: Theme.muted; font-size: 13px; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        Field { text <=> root.form-exclude; placeholder: "제외할 이름·패턴 (여러 개는 ; 로 구분, 예: *.tmp;node_modules)"; }
+                        HorizontalLayout {
+                            spacing: 8px;
                             Text { text: "보존 개수"; color: Theme.muted; font-size: 13px; vertical-alignment: center; }
                             Field { text <=> root.form-count; width: 80px; }
                             Text { text: "보존 일수"; color: Theme.muted; font-size: 13px; vertical-alignment: center; }
                             Field { text <=> root.form-days; width: 80px; }
+                            Text { text: "주간 보관"; color: Theme.muted; font-size: 13px; vertical-alignment: center; }
+                            Field { text <=> root.form-weekly; width: 60px; }
+                            Text { text: "월간 보관"; color: Theme.muted; font-size: 13px; vertical-alignment: center; }
+                            Field { text <=> root.form-monthly; width: 60px; }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
                             Rectangle { horizontal-stretch: 1; }
-                            Btn { text: "비우기"; clicked => { root.form-id = ""; root.form-name = ""; root.form-sources = ""; root.form-repo = ""; root.form-count = "30"; root.form-days = "60"; root.delete-pending = ""; } }
-                            Btn { text: root.form-id == "" ? "추가" : "저장"; kind: 1; clicked => { root.save-profile(root.form-id, root.form-name, root.form-sources, root.form-repo, root.form-count, root.form-days); } }
+                            Btn { text: "용량 예측"; clicked => { root.estimate-size(root.form-id); } }
+                            Btn { text: "비우기"; clicked => { root.form-id = ""; root.form-name = ""; root.form-sources = ""; root.form-repo = ""; root.form-count = "30"; root.form-days = "60"; root.form-auto = false; root.form-daily = false; root.form-sched = "12"; root.form-exclude = ""; root.form-weekly = "0"; root.form-monthly = "0"; root.delete-pending = ""; } }
+                            Btn { text: root.form-id == "" ? "추가" : "저장"; kind: 1; clicked => { root.save-profile(root.form-id, root.form-name, root.form-sources, root.form-repo, root.form-count, root.form-days, root.form-auto, root.form-daily, root.form-sched, root.form-exclude, root.form-weekly, root.form-monthly); } }
                         }
                         Text { text: root.form-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
-                        Hint { text: "삭제는 프로파일 설정만 지우며 저장소의 백업 파일은 그대로 둡니다. 새 프로파일은 자동 백업이 꺼진 채로 시작합니다."; }
+                        Hint { text: "삭제는 프로파일 설정만 지우며 저장소의 백업 파일은 그대로 둡니다. 새 프로파일은 자동 백업이 꺼진 채로 시작합니다. 자동 백업은 서비스가 켜져 있어야 동작합니다."; }
                         Rectangle { vertical-stretch: 1; }
                     }
                 }
@@ -427,7 +460,7 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         Heading { text: "복원 위치"; }
                         rt := PathField { placeholder: "복원할 새 폴더 전체 경로 (예: D 드라이브의 새 폴더)"; pick(k) => { root.browse(k) } }
-                        Hint { text: "스냅샷을 새 폴더(또는 빈 폴더)로 복원합니다. 원래 위치를 덮어쓰지 않습니다."; }
+                        Hint { text: "전체 복원은 새 폴더(또는 빈 폴더)로 복원해 원래 위치를 덮어쓰지 않습니다. \"원래 위치로\"는 두 번 눌러야 하며 같은 이름의 파일을 덮어씁니다. 삭제도 두 번 눌러야 하고 되돌릴 수 없습니다."; }
                     }
                 }
                 if root.browse-open: VerticalLayout {
@@ -487,13 +520,39 @@ export component MainWindow inherits Window {
                             HorizontalLayout {
                                 padding-left: 14px;
                                 padding-right: 14px;
-                                spacing: 12px;
-                                Text { text: s.when; color: Theme.text; width: 130px; font-size: 13px; vertical-alignment: center; }
+                                spacing: 8px;
+                                Text { text: s.when; color: Theme.text; width: 120px; font-size: 13px; vertical-alignment: center; }
                                 Text { text: s.name; color: Theme.text; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                                Text { text: s.summary; color: Theme.muted; font-size: 13px; width: 150px; vertical-alignment: center; overflow: elide; }
+                                Text { text: s.summary; color: Theme.muted; font-size: 13px; width: 110px; vertical-alignment: center; overflow: elide; }
                                 Text { text: s.verified; color: s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok; font-size: 12px; width: 70px; vertical-alignment: center; }
                                 Btn { text: "파일 보기"; y: 6px; clicked => { root.browse-open = true; root.open-browse(s.repo, s.id, s.when); } }
-                                Btn { text: "전체 복원"; kind: 0; y: 6px; clicked => { root.restore-snapshot(s.repo, s.id, rt.text); } }
+                                Btn { text: "전체 복원"; kind: 0; y: 6px; clicked => { root.snap-pending = ""; root.restore-snapshot(s.repo, s.id, rt.text); } }
+                                Btn {
+                                    text: root.snap-pending == "R" + s.id ? "정말 덮어쓰기" : "원래 위치로";
+                                    kind: 2;
+                                    y: 6px;
+                                    clicked => {
+                                        if (root.snap-pending == "R" + s.id) {
+                                            root.snap-pending = "";
+                                            root.restore-inplace(s.repo, s.id);
+                                        } else {
+                                            root.snap-pending = "R" + s.id;
+                                        }
+                                    }
+                                }
+                                Btn {
+                                    text: root.snap-pending == "D" + s.id ? "정말 삭제" : "삭제";
+                                    kind: 2;
+                                    y: 6px;
+                                    clicked => {
+                                        if (root.snap-pending == "D" + s.id) {
+                                            root.snap-pending = "";
+                                            root.delete-snapshot(s.repo, s.id);
+                                        } else {
+                                            root.snap-pending = "D" + s.id;
+                                        }
+                                    }
+                                }
                             }
                             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
                         }
@@ -585,6 +644,7 @@ export component MainWindow inherits Window {
 
             // 설정
             if root.page == 5: ScrollView {
+                viewport-width: self.visible-width;
                 VerticalLayout {
                     spacing: 12px;
                     alignment: start;
@@ -625,7 +685,21 @@ export component MainWindow inherits Window {
                             Hint { text: "켜고 저장하면 각 프로파일 저장소가 암호화되고, 그 뒤 새로 저장되는 데이터가 암호화됩니다(이미 있던 백업은 그대로). 저장 직후 한 번만 보이는 복구 코드를 반드시 따로 보관하세요. 코드가 없으면 이 PC가 고장 났을 때 백업을 열 수 없습니다."; }
                             HorizontalLayout {
                                 spacing: 8px;
-                                Btn { text: "설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt); } }
+                                Text { text: "잠긴 파일 백업(VSS)"; color: Theme.text; font-size: 13px; width: 150px; vertical-alignment: center; }
+                                Btn { text: root.form-vss ? "켜짐" : "꺼짐"; kind: root.form-vss ? 1 : 0; clicked => { root.form-vss = !root.form-vss; } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            Hint { text: "백업 직전에 원본 드라이브의 스냅샷을 떠서, 다른 프로그램이 열어 둔 파일도 같은 시점으로 백업합니다. 만들 수 없으면 직접 읽습니다."; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: "복구 코드로 키 복원"; color: Theme.text; font-size: 13px; width: 150px; vertical-alignment: center; }
+                                Field { text <=> root.form-recovery; horizontal-stretch: 1; }
+                                Btn { text: "복원"; clicked => { root.restore-key(root.form-recovery); } }
+                            }
+                            Hint { text: "PC를 바꾸거나 키 파일을 잃었을 때, 암호화를 켤 때 받은 복구 코드를 붙여 넣고 누릅니다."; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Btn { text: "설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt, root.form-vss); } }
                                 if root.settings-text != "": Text { text: root.settings-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                                 if root.settings-text == "": Rectangle { horizontal-stretch: 1; }
                             }
@@ -641,6 +715,8 @@ export component MainWindow inherits Window {
                                 spacing: 8px;
                                 Btn { text: "업데이트 확인"; clicked => { root.check-update(); } }
                                 Btn { text: "업데이트 설치"; kind: 1; clicked => { root.install-update(); } }
+                                Btn { text: "복구 훈련"; clicked => { root.run-drill(); } }
+                                Btn { text: "시스템 정보 내보내기"; clicked => { root.export-sysinfo(); } }
                                 Btn { text: "진단 파일 만들기"; clicked => { root.make-diag(); } }
                                 Rectangle { horizontal-stretch: 1; }
                             }

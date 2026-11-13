@@ -101,6 +101,71 @@ pub fn build(
     Ok(p)
 }
 
+/// 주간·월간 보관 개수(0=끔)를 프로파일에 저장한다. 파이썬 앱과 같은 파일을 쓰므로 extra 필드로 둔다.
+pub fn apply_keep(mut p: Profile, weekly: &str, monthly: &str) -> Result<Profile, String> {
+    let parse = |s: &str, what: &str| -> Result<u32, String> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Ok(0);
+        }
+        s.parse::<u32>()
+            .ok()
+            .filter(|n| *n <= 520)
+            .ok_or(format!("{what} 보관은 0~520 사이의 숫자여야 합니다"))
+    };
+    let (w, m) = (parse(weekly, "주간")?, parse(monthly, "월간")?);
+    p.extra.insert("keep_weekly".into(), w.into());
+    p.extra.insert("keep_monthly".into(), m.into());
+    Ok(p)
+}
+
+/// 자동 백업 켜기·끄기, 스케줄(N시간마다 / 매일 시:분), 제외 패턴을 프로파일에 반영한다.
+/// `daily` 가 참이면 `value` 는 "시:분", 아니면 시간 간격(0보다 크고 8760 이하).
+pub fn apply_schedule(
+    mut p: Profile,
+    auto: bool,
+    daily: bool,
+    value: &str,
+    exclude: &str,
+) -> Result<Profile, String> {
+    let value = value.trim();
+    if daily {
+        let (h, m) = value
+            .split_once(':')
+            .and_then(|(h, m)| Some((h.trim().parse::<u32>().ok()?, m.trim().parse::<u32>().ok()?)))
+            .filter(|(h, m)| *h < 24 && *m < 60)
+            .ok_or("매일 실행 시각은 시:분 형식이어야 합니다 (예: 02:30)")?;
+        p.schedule_type = "daily".into();
+        p.schedule_value = format!("{h:02}:{m:02}");
+    } else {
+        let h: f64 = value
+            .parse()
+            .ok()
+            .filter(|h: &f64| h.is_finite() && *h > 0.0 && *h <= 8760.0)
+            .ok_or("실행 간격은 0보다 크고 8760 이하의 시간 숫자여야 합니다")?;
+        p.schedule_type = "interval_hours".into();
+        p.schedule_value = h.to_string();
+    }
+    p.auto_backup_enabled = auto;
+    p.exclude_patterns = exclude
+        .split(';')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    Ok(p)
+}
+
+/// 목록에 보일 자동 백업 설명.
+pub fn schedule_text(p: &Profile) -> String {
+    if !p.auto_backup_enabled {
+        return "자동 백업 꺼짐".into();
+    }
+    match p.schedule_type.as_str() {
+        "daily" => format!("매일 {}", p.schedule_value),
+        _ => format!("{}시간마다", p.schedule_value),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,5 +212,49 @@ mod tests {
         assert!(bad("a", &src, &repo, "0", "7").is_err());
         assert!(bad("a", &src, &repo, "5", "abc").is_err());
         assert!(bad("a", &src, r"\\.\PhysicalDrive0", "5", "7").is_err());
+    }
+
+    #[test]
+    fn schedule_and_exclude_are_validated_and_saved() {
+        let p = Profile::new("p", "P");
+        let a = apply_schedule(p.clone(), true, false, " 6 ", "*.tmp; node_modules ;;").unwrap();
+        assert!(a.auto_backup_enabled);
+        assert_eq!(
+            (a.schedule_type.as_str(), a.schedule_value.as_str()),
+            ("interval_hours", "6")
+        );
+        assert_eq!(a.exclude_patterns, vec!["*.tmp", "node_modules"]);
+        assert_eq!(schedule_text(&a), "6시간마다");
+        let d = apply_schedule(p.clone(), true, true, "2:5", "").unwrap();
+        assert_eq!(
+            (d.schedule_type.as_str(), d.schedule_value.as_str()),
+            ("daily", "02:05")
+        );
+        assert!(d.exclude_patterns.is_empty());
+        assert_eq!(schedule_text(&d), "매일 02:05");
+        let off = apply_schedule(p.clone(), false, false, "12", "").unwrap();
+        assert_eq!(schedule_text(&off), "자동 백업 꺼짐");
+        for bad in ["0", "-1", "abc", "9000", "", "nan"] {
+            assert!(
+                apply_schedule(p.clone(), true, false, bad, "").is_err(),
+                "{bad}"
+            );
+        }
+        for bad in ["24:00", "12:60", "12", "ab:cd", ""] {
+            assert!(
+                apply_schedule(p.clone(), true, true, bad, "").is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn keep_counts_are_validated_and_stored_in_extra() {
+        let p = Profile::new("p", "P");
+        let a = apply_keep(p.clone(), " 4 ", "").unwrap();
+        assert_eq!(a.extra["keep_weekly"], 4);
+        assert_eq!(a.extra["keep_monthly"], 0);
+        assert!(apply_keep(p.clone(), "x", "0").is_err());
+        assert!(apply_keep(p, "0", "9999").is_err());
     }
 }

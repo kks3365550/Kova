@@ -2,7 +2,7 @@
 //! - 프로필별로 그룹을 나눠 세대 수 초과분과 보관 기간 만료분을 고른다.
 //! - 그룹의 가장 최신 스냅샷은 절대 삭제하지 않는다. 스냅샷이 1개 이하면 아무것도 지우지 않는다.
 //! - 디스크 여유 공간 부족을 이유로 스냅샷을 지우지 않는다(fail-closed).
-use chrono::{Local, NaiveDateTime, TimeZone};
+use chrono::{Datelike, Local, NaiveDateTime, TimeZone};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,6 +20,10 @@ pub struct SnapshotMeta {
 pub struct Policy {
     pub retention_count: Option<usize>,
     pub retention_days: Option<u32>,
+    /// 최근 N주 각각의 가장 최신 스냅샷을 추가로 남긴다(0=끔)
+    pub keep_weekly: u32,
+    /// 최근 N개월 각각의 가장 최신 스냅샷을 추가로 남긴다(0=끔)
+    pub keep_monthly: u32,
 }
 
 impl Default for Policy {
@@ -27,6 +31,8 @@ impl Default for Policy {
         Policy {
             retention_count: Some(30),
             retention_days: Some(60),
+            keep_weekly: 0,
+            keep_monthly: 0,
         }
     }
 }
@@ -80,6 +86,35 @@ fn normalize(f: f64) -> f64 {
     }
 }
 
+fn period_key(ts: f64, monthly: bool) -> (i32, u32) {
+    match Local.timestamp_opt(ts as i64, 0).single() {
+        Some(dt) if monthly => (dt.year(), dt.month()),
+        Some(dt) => (dt.iso_week().year(), dt.iso_week().week()),
+        None => (0, 0),
+    }
+}
+
+/// 최신순으로 정렬된 그룹에서, 최근 `n`개 구간(주 또는 월) 각각의 가장 최신 스냅샷 id.
+fn keepers(group: &[&SnapshotMeta], n: u32, monthly: bool) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut keep = Vec::new();
+    if n == 0 {
+        return keep;
+    }
+    for s in group {
+        if s.created_at <= 0.0 {
+            continue;
+        }
+        if seen.insert(period_key(s.created_at, monthly)) {
+            if seen.len() as u32 > n {
+                break;
+            }
+            keep.push(s.id.clone());
+        }
+    }
+    keep
+}
+
 /// 순수 선택 로직: 지울 스냅샷 id 목록(정렬됨)을 돌려준다.
 pub fn select_expired(snapshots: &[SnapshotMeta], policy: Policy, now: f64) -> Vec<String> {
     if snapshots.len() <= 1 {
@@ -113,6 +148,13 @@ pub fn select_expired(snapshots: &[SnapshotMeta], policy: Policy, now: f64) -> V
                     out.insert(s.id.clone());
                 }
             }
+        }
+        // 주간·월간 보관분은 세대 수·기간을 넘어도 남긴다
+        for id in keepers(group, policy.keep_weekly, false)
+            .into_iter()
+            .chain(keepers(group, policy.keep_monthly, true))
+        {
+            out.remove(&id);
         }
         // 그룹의 최신 스냅샷은 항상 보호
         if let Some(first) = group.first() {
@@ -236,6 +278,35 @@ fn apply_inner(repo: &Path, policy: Policy, only: Option<&str>) -> RetentionResu
     res
 }
 
+/// 사용자가 고른 스냅샷 하나를 지운다(복구할 수 없다). 저장소를 쓰는 작업이 있으면 하지 않고,
+/// 저장소의 마지막 스냅샷은 지우지 않는다. 지운 뒤 다른 스냅샷이 쓰지 않는 블롭을 정리한다.
+pub fn delete_snapshot(repo: &Path, id: &str) -> Result<String, String> {
+    if id.is_empty() || id.contains(['/', '\\', ':']) || id == "." || id == ".." {
+        return Err("스냅샷 번호가 올바르지 않습니다".into());
+    }
+    let _lock = crate::lock::RepoLock::try_acquire(repo)
+        .map_err(|_| "저장소를 쓰는 작업이 있어 지금은 지울 수 없습니다".to_string())?;
+    let snaps = list_snapshots(repo).map_err(|e| format!("스냅샷 목록을 읽지 못했습니다: {e}"))?;
+    if !snaps.iter().any(|s| s.id == id) {
+        return Err("이미 없는 스냅샷입니다".into());
+    }
+    if snaps.len() <= 1 {
+        return Err("저장소의 마지막 스냅샷은 지울 수 없습니다".into());
+    }
+    let file = repo.join("snapshots").join(format!("{id}.json"));
+    crate::worm::remove_protected(&file).map_err(|e| format!("지우지 못했습니다: {e}"))?;
+    if let Ok(h) = crate::history::History::open(repo) {
+        let _ = h.delete_snapshot_record(id);
+    }
+    let freed = crate::gc::prune_orphans(repo, crate::gc::DEFAULT_MIN_AGE_SECS)
+        .map(|g| g.freed_bytes)
+        .unwrap_or(0);
+    Ok(format!(
+        "스냅샷을 지웠습니다 (정리된 공간 {:.1} MB)",
+        freed as f64 / (1024.0 * 1024.0)
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -256,7 +327,9 @@ mod tests {
             &v,
             Policy {
                 retention_count: Some(1),
-                retention_days: Some(1)
+                retention_days: Some(1),
+                keep_weekly: 0,
+                keep_monthly: 0,
             },
             1e9
         )
@@ -273,6 +346,8 @@ mod tests {
             Policy {
                 retention_count: Some(2),
                 retention_days: None,
+                keep_weekly: 0,
+                keep_monthly: 0,
             },
             2000.0,
         );
@@ -291,6 +366,8 @@ mod tests {
             Policy {
                 retention_count: None,
                 retention_days: Some(60),
+                keep_weekly: 0,
+                keep_monthly: 0,
             },
             now,
         );
@@ -310,6 +387,8 @@ mod tests {
             Policy {
                 retention_count: Some(1),
                 retention_days: None,
+                keep_weekly: 0,
+                keep_monthly: 0,
             },
             now,
         );
@@ -346,6 +425,8 @@ mod tests {
             Policy {
                 retention_count: Some(1),
                 retention_days: None,
+                keep_weekly: 0,
+                keep_monthly: 0,
             },
         );
         assert!(r.status.starts_with("list_failed"));
@@ -383,6 +464,8 @@ mod tests {
             Policy {
                 retention_count: Some(1),
                 retention_days: None,
+                keep_weekly: 0,
+                keep_monthly: 0,
             },
         );
         let mut del = r.deleted_snapshots.clone();
@@ -398,5 +481,50 @@ mod tests {
             apply_for_profile(d.path(), "", Policy::default()).status,
             "no_profile"
         );
+    }
+
+    #[test]
+    fn delete_snapshot_removes_one_but_keeps_the_last() {
+        let d = tempfile::tempdir().unwrap();
+        let snaps = d.path().join("snapshots");
+        std::fs::create_dir_all(&snaps).unwrap();
+        for id in ["a", "b"] {
+            std::fs::write(
+                snaps.join(format!("{id}.json")),
+                format!("{{\"session_id\":\"{id}\",\"created_at\":1.0}}"),
+            )
+            .unwrap();
+        }
+        assert!(delete_snapshot(d.path(), "../x").is_err());
+        assert!(delete_snapshot(d.path(), "zzz").is_err());
+        assert!(delete_snapshot(d.path(), "a").is_ok());
+        assert!(!snaps.join("a.json").exists() && snaps.join("b.json").exists());
+        let e = delete_snapshot(d.path(), "b").unwrap_err();
+        assert!(e.contains("마지막"));
+        assert!(snaps.join("b.json").exists());
+    }
+
+    #[test]
+    fn weekly_and_monthly_keepers_survive_count_and_days() {
+        let day = 86400.0;
+        let base = 1_704_110_400.0; // 2024-01-01 12:00 UTC 근처, 매일 하나씩 90일치
+        let snaps: Vec<SnapshotMeta> = (0..90)
+            .map(|i| s(&format!("s{i:02}"), base + i as f64 * day, "p"))
+            .collect();
+        let now = base + 90.0 * day;
+        let pol = |w, m| Policy {
+            retention_count: Some(7),
+            retention_days: None,
+            keep_weekly: w,
+            keep_monthly: m,
+        };
+        let plain = select_expired(&snaps, pol(0, 0), now);
+        assert_eq!(plain.len(), 83);
+        let gfs = select_expired(&snaps, pol(4, 2), now);
+        assert!(gfs.len() < plain.len());
+        // 최신 스냅샷은 항상 남고, 오래된 것 대부분은 여전히 지워진다
+        assert!(!gfs.contains(&"s89".to_string()));
+        let kept = snaps.iter().filter(|x| !gfs.contains(&x.id)).count();
+        assert!((9..=13).contains(&kept), "{kept}");
     }
 }
