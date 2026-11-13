@@ -292,7 +292,8 @@ mod tests {
         for e in walk(repo.path()) {
             let b = fs::read(&e).unwrap();
             assert!(!b.windows(20).any(|w| w == needle), "{e:?}");
-            if e.extension().is_some_and(|x| x == "blob") {
+            // 백업은 새 블롭을 팩에 이어 쓰므로 팩의 첫 블롭(맨 앞)도 같은 머리표를 가진다
+            if e.extension().is_some_and(|x| x == "blob" || x == "pack") {
                 assert_eq!(&b[..4], b"ENC\x01");
                 found_blob = true;
             }
@@ -315,7 +316,7 @@ mod tests {
         // 변조된 블롭은 깊은 검사에서 걸린다
         let blob = walk(repo.path())
             .into_iter()
-            .find(|p| p.extension().is_some_and(|x| x == "blob"))
+            .find(|p| p.extension().is_some_and(|x| x == "blob" || x == "pack"))
             .unwrap();
         let mut b = fs::read(&blob).unwrap();
         let n = b.len();

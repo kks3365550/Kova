@@ -138,6 +138,21 @@ pub struct CasStorage {
     codec: Option<std::sync::Arc<dyn crate::codec::BlobCodec>>,
     /// 팩 컨테이너 색인(처음 쓸 때 한 번 읽는다)
     packs: std::sync::OnceLock<std::collections::HashMap<String, crate::pack::PackEntry>>,
+    /// 백업 중 새로 만든 블롭을 팩으로 쓰기 전까지 모아 두는 곳
+    stage: std::sync::Mutex<Stage>,
+    /// 이번 실행에서 이미 모아 둔(또는 팩으로 쓴) 블롭 해시 — 같은 내용의 중복 저장을 막는다
+    staged: std::sync::RwLock<std::collections::HashSet<String>>,
+    /// 팩 쓰기가 한 번이라도 실패했는지(실패하면 `flush_staged` 가 오류를 돌려준다)
+    stage_err: std::sync::Mutex<Option<String>>,
+}
+
+/// 모은 블롭이 이만큼 쌓이면 팩 파일 하나로 쓴다
+const STAGE_LIMIT: usize = 64 * 1024 * 1024;
+
+#[derive(Default)]
+struct Stage {
+    items: Vec<(String, Vec<u8>)>,
+    bytes: usize,
 }
 
 impl CasStorage {
@@ -150,6 +165,9 @@ impl CasStorage {
             repo_root: root,
             codec,
             packs: std::sync::OnceLock::new(),
+            stage: Default::default(),
+            staged: Default::default(),
+            stage_err: Default::default(),
         })
     }
 
@@ -183,7 +201,70 @@ impl CasStorage {
     }
 
     pub fn has_blob(&self, hash: &str) -> bool {
-        self.blob_path(hash).exists() || self.pack_index().contains_key(hash)
+        // 메모리 조회를 먼저 하고, 파일 시스템 조회는 마지막에 한다
+        self.staged
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(hash)
+            || self.pack_index().contains_key(hash)
+            || self.blob_path(hash).exists()
+    }
+
+    /// 새 블롭을 모아 두었다가 `STAGE_LIMIT` 이 차면 팩 하나로 쓴다(블롭마다 파일을 만들지 않아 빠르다).
+    /// 반드시 백업 끝에서 `flush_staged` 를 불러야 하고, 그 전에는 매니페스트를 쓰면 안 된다.
+    pub fn stage_blob(&self, hash: &str, data: Vec<u8>) -> io::Result<()> {
+        let fresh = self
+            .staged
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(hash.to_string());
+        if !fresh {
+            return Ok(());
+        }
+        let batch = {
+            let mut st = self.stage.lock().unwrap_or_else(|e| e.into_inner());
+            st.bytes += data.len();
+            st.items.push((hash.to_string(), data));
+            if st.bytes >= STAGE_LIMIT {
+                st.bytes = 0;
+                Some(std::mem::take(&mut st.items))
+            } else {
+                None
+            }
+        };
+        match batch {
+            Some(items) => self.write_stage_batch(&items),
+            None => Ok(()),
+        }
+    }
+
+    fn write_stage_batch(&self, items: &[(String, Vec<u8>)]) -> io::Result<()> {
+        crate::pack::write_pack(&self.repo_root, items)
+            .map(|_| ())
+            .inspect_err(|e| {
+                *self.stage_err.lock().unwrap_or_else(|x| x.into_inner()) = Some(e.to_string());
+            })
+    }
+
+    /// 모아 둔 블롭을 모두 팩으로 쓴다. 이번 실행 중 팩 쓰기가 한 번이라도 실패했다면 오류를 돌려준다.
+    pub fn flush_staged(&self) -> io::Result<()> {
+        let items = {
+            let mut st = self.stage.lock().unwrap_or_else(|e| e.into_inner());
+            st.bytes = 0;
+            std::mem::take(&mut st.items)
+        };
+        if !items.is_empty() {
+            let _ = self.write_stage_batch(&items);
+        }
+        match self
+            .stage_err
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            Some(msg) => Err(io::Error::other(format!("팩 쓰기 실패: {msg}"))),
+            None => Ok(()),
+        }
     }
 
     /// Loads all existing blob hashes into an in-memory HashSet using parallel directory scan.
@@ -417,6 +498,77 @@ mod tests {
         // 임시 파일이 남지 않는다
         let leftovers = walkdir_tmp(d.path());
         assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    fn h(n: usize) -> String {
+        format!("{n:064x}")
+    }
+
+    /// 모아 둔 블롭은 비우기 전에도 있는 것으로 보이고, 비운 뒤에는 팩에서 그대로 읽힌다(낱개 파일은 만들지 않는다).
+    #[test]
+    fn staged_blobs_are_visible_then_readable_after_flush() {
+        let d = tempfile::tempdir().unwrap();
+        let cas = CasStorage::new(d.path()).unwrap();
+        assert!(!cas.has_blob(&h(1)));
+        cas.stage_blob(&h(1), vec![1u8; 1000]).unwrap();
+        cas.stage_blob(&h(2), vec![2u8; 2000]).unwrap();
+        assert!(cas.has_blob(&h(1)) && cas.has_blob(&h(2)));
+        cas.flush_staged().unwrap();
+
+        // 새 인스턴스(= 다음 실행)가 색인을 읽어 같은 내용을 돌려준다
+        let again = CasStorage::new(d.path()).unwrap();
+        assert!(again.has_blob(&h(1)));
+        assert_eq!(again.read_blob(&h(1)).unwrap(), vec![1u8; 1000]);
+        assert_eq!(again.read_blob(&h(2)).unwrap(), vec![2u8; 2000]);
+        assert!(!again.blob_path(&h(1)).exists(), "낱개 파일이 생김");
+        // 팩 하나, 임시 파일 없음
+        assert_eq!(crate::pack::pack_ids(d.path()).len(), 1);
+        assert!(walkdir_tmp(d.path()).is_empty());
+    }
+
+    /// 한도(64MB)를 넘으면 중간에 팩이 쓰이고, 나머지는 flush 때 쓰인다. 같은 해시를 여러 번·여러 스레드가 모아도 한 번만 들어간다.
+    #[test]
+    fn staging_rolls_over_packs_and_dedups_same_hash() {
+        let d = tempfile::tempdir().unwrap();
+        let cas = CasStorage::new(d.path()).unwrap();
+        let block = vec![7u8; 8 * 1024 * 1024];
+        std::thread::scope(|sc| {
+            for t in 0..4 {
+                let (cas, block) = (&cas, &block);
+                sc.spawn(move || {
+                    for i in 0..10 {
+                        // 번호 0..10 은 4개 스레드가 모두 같은 해시를 모은다
+                        cas.stage_blob(&h(i), block.clone()).unwrap();
+                        let _ = t;
+                    }
+                });
+            }
+        });
+        cas.flush_staged().unwrap();
+        let again = CasStorage::new(d.path()).unwrap();
+        for i in 0..10 {
+            assert_eq!(again.read_blob(&h(i)).unwrap().len(), block.len());
+        }
+        let idx = crate::pack::load_index(d.path());
+        assert_eq!(idx.len(), 10, "같은 해시가 중복으로 들어감");
+        assert!(
+            crate::pack::pack_ids(d.path()).len() >= 2,
+            "한도에서 팩이 나뉘지 않음"
+        );
+    }
+
+    /// 팩을 쓸 수 없으면(여기서는 packs 자리에 파일이 있음) 백업이 성공으로 끝나지 않도록 flush 가 오류를 돌려준다.
+    #[test]
+    fn flush_reports_pack_write_failure() {
+        let d = tempfile::tempdir().unwrap();
+        let cas = CasStorage::new(d.path()).unwrap();
+        fs::write(d.path().join("packs"), b"not a dir").unwrap();
+        cas.stage_blob(&h(1), vec![1u8; 100]).unwrap();
+        assert!(cas.flush_staged().is_err());
+        assert!(
+            cas.flush_staged().is_err(),
+            "한 번 실패하면 계속 오류여야 함"
+        );
     }
 
     fn walkdir_tmp(dir: &Path) -> Vec<PathBuf> {

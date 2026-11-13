@@ -228,14 +228,14 @@ mod tests {
                 || fs::read_dir(dest.join("snapshots")).unwrap().count() == 0
         );
         // 원본 블롭이 사라지면 오류이고 대상에 스냅샷이 생기지 않는다
-        let blob = fs::read_dir(repo.join("blobs"))
+        // (백업은 새 블롭을 팩으로 쓰므로 팩 파일을 지운다)
+        let pack = fs::read_dir(repo.join("packs"))
             .unwrap()
-            .next()
-            .unwrap()
-            .unwrap()
-            .path();
-        let f = fs::read_dir(&blob).unwrap().next().unwrap().unwrap().path();
-        fs::remove_file(f).unwrap();
+            .flatten()
+            .map(|e| e.path())
+            .find(|p| p.extension().is_some_and(|x| x == "pack"))
+            .expect("팩 없음");
+        fs::remove_file(pack).unwrap();
         assert!(matches!(
             replicate(&repo, &dest, &AtomicBool::new(false)),
             Err(OffsiteError::MissingBlob(_))

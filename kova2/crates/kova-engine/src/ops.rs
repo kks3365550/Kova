@@ -340,7 +340,7 @@ pub fn run_backup(
                         .map_err(|e| format!("compress: {}", e))?;
                     let comp_len = compressed.len();
                     compressed_bytes.fetch_add(comp_len as u64, Ordering::Relaxed);
-                    cas.save_blob(&c.hash, &compressed)
+                    cas.stage_blob(&c.hash, compressed)
                         .map_err(|e| format!("save blob: {}", e))?;
                     Ok(FileChunkInfo {
                         hash: c.hash,
@@ -371,10 +371,14 @@ pub fn run_backup(
         })
         .collect();
 
+    // 모아 둔 새 블롭을 팩으로 모두 쓴 뒤에야 매니페스트를 쓴다(취소돼도 쓴 만큼은 남겨 이어 하기가 빠르다)
+    let flushed = cas.flush_staged();
+
     // 취소되면 매니페스트를 쓰지 않는다
     if cancel.load(Ordering::Relaxed) {
         return Err(EngineError::Cancelled);
     }
+    flushed?;
 
     let mut all_entries = file_entries;
     for dir in dirs {
@@ -1158,7 +1162,8 @@ mod tests {
         let cas = CasStorage::new(&repo).unwrap();
         let m = cas.load_manifest("t1").unwrap();
         let hash = m.files()[0].chunks[0].hash.clone();
-        // 정상 압축본이지만 다른 내용으로 바꿔치기
+        // 정상 압축본이지만 다른 내용으로 바꿔치기(낱개 파일이 팩보다 먼저 읽힌다)
+        fs::create_dir_all(cas.blob_path(&hash).parent().unwrap()).unwrap();
         fs::write(
             cas.blob_path(&hash),
             compressor::compress(b"evil data!!!!", 3).unwrap(),
@@ -1176,6 +1181,36 @@ mod tests {
         );
         let e = r.unwrap_err().to_string();
         assert!(e.contains("Hash mismatch"), "{}", e);
+    }
+
+    /// 팩 안의 바이트가 망가지면 복원이 조용히 넘어가지 않고 실패한다.
+    #[test]
+    fn corrupted_pack_fails_restore() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("a.bin"), noise(300_000, 5)).unwrap();
+        let repo = d.path().join("repo");
+        backup(&src, &repo, "t1");
+        let ids = crate::pack::pack_ids(&repo);
+        assert_eq!(ids.len(), 1, "백업이 팩을 만들지 않음");
+        let pf = crate::pack::pack_file(&repo, &ids[0]);
+        let mut bytes = fs::read(&pf).unwrap();
+        for b in bytes.iter_mut().skip(10).take(50) {
+            *b ^= 0xFF;
+        }
+        fs::write(&pf, bytes).unwrap();
+        let r = run_restore(
+            &RestoreOptions {
+                repo,
+                session_id: "t1".into(),
+                only: None,
+                target: Some(d.path().join("out")),
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        );
+        assert!(r.is_err(), "망가진 팩인데 복원이 성공함");
     }
 
     #[test]

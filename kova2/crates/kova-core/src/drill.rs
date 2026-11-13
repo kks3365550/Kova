@@ -92,7 +92,11 @@ mod tests {
             "임시 폴더가 남음"
         );
         // 블롭을 망가뜨리면 훈련이 실패해야 한다
-        for e in walk(&repo.join("blobs")) {
+        // 백업은 새 블롭을 팩으로 쓰므로 낱개 블롭 폴더와 팩 폴더를 모두 망가뜨린다
+        for e in walk(&repo.join("blobs"))
+            .into_iter()
+            .chain(walk(&repo.join("packs")))
+        {
             std::fs::write(e, b"garbage").unwrap();
         }
         let bad = run(&p, &scratch);

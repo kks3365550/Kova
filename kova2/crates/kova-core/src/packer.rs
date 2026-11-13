@@ -158,7 +158,24 @@ mod tests {
         }
         let repo = d.path().join("repo");
         backup(&src, &repo, "s1");
+        loosen(&repo);
         (d, src, repo)
+    }
+
+    /// 백업이 쓴 팩을 낱개 블롭으로 풀어 놓는다(정리 도구가 낱개 블롭을 묶는 경우를 시험하기 위해)
+    fn loosen(repo: &Path) {
+        use kova_engine::pack;
+        let cas = CasStorage::new(repo).unwrap();
+        for id in pack::pack_ids(repo) {
+            for (h, e) in pack::read_idx(repo, &id).unwrap() {
+                let data = pack::read_entry(repo, &e).unwrap();
+                let p = cas.blob_path(&h);
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(p, data).unwrap();
+            }
+            fs::remove_file(pack::idx_file(repo, &id)).unwrap();
+            fs::remove_file(pack::pack_file(repo, &id)).unwrap();
+        }
     }
 
     #[test]

@@ -811,12 +811,12 @@ mod tests {
         s.enqueue("p1", Kind::Backup);
         wait_idle(&s);
         assert_eq!(store.get("p1").unwrap().last_status, "success");
-        let blob = fs::read_dir(repo.join("blobs"))
+        // 백업은 새 블롭을 팩 파일로 쓴다
+        let blob = fs::read_dir(repo.join("packs"))
             .unwrap()
             .flatten()
-            .flat_map(|d| fs::read_dir(d.path()).unwrap().flatten())
             .map(|e| e.path())
-            .find(|p| p.extension().is_some_and(|x| x == "blob"))
+            .find(|p| p.extension().is_some_and(|x| x == "pack"))
             .unwrap();
         assert_eq!(&fs::read(&blob).unwrap()[..4], b"ENC");
     }
@@ -837,12 +837,12 @@ mod tests {
         let manifest = repo.join("snapshots").join(format!("{first}.json"));
         let ro = |p: &std::path::Path| fs::metadata(p).unwrap().permissions().readonly();
         assert!(ro(&manifest), "매니페스트가 잠겨야 함");
-        let blob = fs::read_dir(repo.join("blobs"))
+        // 백업은 새 블롭을 팩 파일로 쓴다
+        let blob = fs::read_dir(repo.join("packs"))
             .unwrap()
             .flatten()
-            .flat_map(|d| fs::read_dir(d.path()).unwrap().flatten())
             .map(|e| e.path())
-            .find(|p| p.extension().is_some_and(|x| x == "blob"))
+            .find(|p| p.extension().is_some_and(|x| x == "pack"))
             .unwrap();
         assert!(ro(&blob) && fs::write(&blob, b"x").is_err());
         // 보존 개수를 1로 줄이고 새 백업을 만들면 잠긴 옛 스냅샷도 서비스가 승인 경로로 지운다
