@@ -367,7 +367,7 @@ export component MainWindow inherits Window {
                                         padding-right: 4px;
                                         spacing: 8px;
                                         Text { text: f; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                                        Btn { text: "✕ 빼기"; y: 1px; clicked => { root.wz-remove(i); } }
+                                        Btn { text: "빼기"; y: 1px; clicked => { root.wz-remove(i); } }
                                     }
                                 }
                             }
@@ -513,18 +513,25 @@ export component MainWindow inherits Window {
                         Field { text <=> root.form-name; placeholder: "이름"; }
                         Text { text: "백업할 폴더 (" + root.form-list.length + "개)"; color: Theme.muted; font-size: 13px; }
                         if root.form-list.length == 0: Text { text: "아직 고른 폴더가 없습니다. 아래 '+ 폴더 추가'를 눌러 고르세요."; color: Theme.muted; font-size: 13px; }
-                        for f[i] in root.form-list: Rectangle {
-                            height: 34px;
-                            border-radius: 6px;
-                            border-width: 1px;
-                            border-color: Theme.line;
-                            background: Theme.bg;
-                            HorizontalLayout {
-                                padding-left: 10px;
-                                padding-right: 4px;
-                                spacing: 8px;
-                                Text { text: f; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                                Btn { text: "✕ 빼기"; y: 1px; clicked => { root.form-remove(i); } }
+                        // 폴더가 많아도 화면이 밀리지 않게, 목록만 일정 높이 안에서 스크롤한다
+                        ScrollView {
+                            height: min(root.form-list.length * 38px, 160px);
+                            VerticalLayout {
+                                spacing: 4px;
+                                for f[i] in root.form-list: Rectangle {
+                                    height: 34px;
+                                    border-radius: 6px;
+                                    border-width: 1px;
+                                    border-color: Theme.line;
+                                    background: Theme.bg;
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 4px;
+                                        spacing: 8px;
+                                        Text { text: f; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                        Btn { text: "빼기"; y: 1px; clicked => { root.form-remove(i); } }
+                                    }
+                                }
                             }
                         }
                         HorizontalLayout {
