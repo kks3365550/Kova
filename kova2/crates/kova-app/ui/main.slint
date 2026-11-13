@@ -1,6 +1,8 @@
 import { ListView, ScrollView } from "std-widgets.slint";
 
 export struct ProfileRow { id: string, name: string, last: string, detail: string }
+export struct ProgPick { name: string, sub: string, checked: bool }
+export struct SrcRow { kind: int, title: string, sub: string, key: string }
 export struct SnapRow { id: string, repo: string, when: string, name: string, summary: string, verified: string }
 export struct OffsiteRow { id: string, name: string, dir: string }
 export struct AlertRow { when: string, level: string, message: string, full: string, ack: bool }
@@ -227,10 +229,17 @@ export component MainWindow inherits Window {
     in-out property <string> form-id;
     in-out property <string> form-name;
     in-out property <string> form-sources;
-    in property <[string]> form-list;
+    in property <[SrcRow]> form-list;
     callback sync-form-list(string);
     callback form-add(string);
-    callback form-remove(int);
+    callback form-remove(string);
+    in-out property <bool> prog-shown: false;
+    in property <[ProgPick]> prog-list;
+    in property <int> prog-count;
+    callback prog-open();
+    callback prog-toggle(int);
+    callback prog-apply();
+    callback prog-close();
     changed form-sources => { root.sync-form-list(root.form-sources); }
     in-out property <string> form-repo;
     in-out property <string> form-count: "30";
@@ -511,32 +520,78 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         Heading { text: root.form-id == "" ? "새 프로파일 추가" : "프로파일 수정 중"; }
                         Field { text <=> root.form-name; placeholder: "이름"; }
-                        Text { text: "백업할 폴더 (" + root.form-list.length + "개)"; color: Theme.muted; font-size: 13px; }
+                        Text { text: "백업할 대상"; color: Theme.muted; font-size: 13px; }
                         if root.form-list.length == 0: Text { text: "아직 고른 폴더가 없습니다. 아래 '+ 폴더 추가'를 눌러 고르세요."; color: Theme.muted; font-size: 13px; }
                         // 폴더가 많아도 화면이 밀리지 않게, 목록만 일정 높이 안에서 스크롤한다
                         ScrollView {
-                            height: min(root.form-list.length * 38px, 160px);
+                            height: min(root.form-list.length * 46px, 230px);
                             VerticalLayout {
                                 spacing: 4px;
-                                for f[i] in root.form-list: Rectangle {
-                                    height: 34px;
+                                for f in root.form-list: Rectangle {
+                                    height: f.kind == 0 ? 26px : 44px;
                                     border-radius: 6px;
-                                    border-width: 1px;
+                                    border-width: f.kind == 0 ? 0px : 1px;
                                     border-color: Theme.line;
-                                    background: Theme.bg;
+                                    background: f.kind == 0 ? transparent : Theme.bg;
                                     HorizontalLayout {
-                                        padding-left: 10px;
+                                        padding-left: f.kind == 0 ? 2px : 10px;
                                         padding-right: 4px;
                                         spacing: 8px;
-                                        Text { text: f; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                                        Btn { text: "빼기"; y: 1px; clicked => { root.form-remove(i); } }
+                                        VerticalLayout {
+                                            horizontal-stretch: 1;
+                                            alignment: center;
+                                            Text { text: f.title; color: f.kind == 0 ? Theme.muted : Theme.text; font-size: f.kind == 0 ? 12px : 13px; font-weight: f.kind == 0 ? 700 : 400; overflow: elide; }
+                                            if f.kind != 0: Text { text: f.sub; color: Theme.muted; font-size: 11px; overflow: elide; }
+                                        }
+                                        if f.kind != 0: Btn { text: "빼기"; y: 5px; clicked => { root.form-remove(f.key); } }
                                     }
                                 }
                             }
                         }
                         HorizontalLayout {
                             alignment: start;
+                            spacing: 8px;
                             Btn { text: "+ 폴더 추가"; kind: 1; clicked => { root.form-add(root.browse("folders")); } }
+                            Btn { text: "+ 프로그램 추가"; kind: 1; clicked => { root.prog-open(); } }
+                        }
+                        if root.prog-shown: Rectangle {
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: Theme.accent;
+                            background: Theme.card-hi;
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 6px;
+                                Text { text: "추가할 프로그램을 누르세요 (여러 개 선택 가능)"; color: Theme.text; font-size: 13px; font-weight: 700; }
+                                if root.prog-list.length == 0: Text { text: "추가할 수 있는 프로그램이 없습니다."; color: Theme.muted; font-size: 13px; }
+                                ScrollView {
+                                    height: min(root.prog-list.length * 38px, 260px);
+                                    VerticalLayout {
+                                        spacing: 4px;
+                                        for p[i] in root.prog-list: Rectangle {
+                                            height: 34px;
+                                            border-radius: 6px;
+                                            border-width: 1px;
+                                            border-color: p.checked ? Theme.accent : Theme.line;
+                                            background: p.checked ? Theme.accent.with-alpha(0.22) : Theme.bg;
+                                            HorizontalLayout {
+                                                padding-left: 10px;
+                                                padding-right: 10px;
+                                                spacing: 8px;
+                                                Text { text: p.name; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                                Text { text: p.checked ? "선택됨" : p.sub; color: p.checked ? Theme.accent : Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                            }
+                                            TouchArea { clicked => { root.prog-toggle(i); } }
+                                        }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    alignment: start;
+                                    spacing: 8px;
+                                    Btn { text: "선택한 " + root.prog-count + "개 추가"; kind: 1; clicked => { root.prog-apply(); } }
+                                    Btn { text: "닫기"; clicked => { root.prog-close(); } }
+                                }
+                            }
                         }
                         PathField { text <=> root.form-repo; placeholder: "백업 저장 폴더 전체 경로"; pick(k) => { root.browse(k) } }
                         HorizontalLayout {

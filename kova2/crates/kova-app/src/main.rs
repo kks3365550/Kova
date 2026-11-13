@@ -92,6 +92,219 @@ fn wizard_sources(w: &MainWindow) -> Vec<String> {
         .collect()
 }
 
+/// 프로그램 이름 비교용 키: 글자·숫자만 소문자로, 끝의 'updater'는 뗀다(같은 프로그램의 갱신 폴더).
+fn prog_norm(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    match s.strip_suffix("updater") {
+        Some(t) if !t.is_empty() => t.to_string(),
+        _ => s,
+    }
+}
+
+/// 경로가 어떤 프로그램의 것이면 (비교 키, 표시 이름), 일반 폴더면 None. 경로 모양만 본다.
+fn program_of(path: &str) -> Option<(String, String)> {
+    let p = path.trim().trim_end_matches('\\').replace('/', "\\");
+    let low = p.to_ascii_lowercase(); // ASCII만 바꾸므로 바이트 위치가 p와 같다
+    fn after<'a>(p: &'a str, low: &str, marker: &str) -> Option<&'a str> {
+        let i = low.find(marker)? + marker.len();
+        p.get(i..)
+    }
+    let first = |rest: &str| rest.split('\\').next().unwrap_or("").to_string();
+    let name = if low.ends_with(".lnk") {
+        let stem = |s: &str| s[..s.len() - 4].to_string();
+        match after(&p, &low, "\\start menu\\programs\\") {
+            Some(rest) if rest.contains('\\') => first(rest),
+            Some(rest) => stem(rest),
+            None => stem(p.rsplit('\\').next().unwrap_or("")),
+        }
+    } else if let Some(r) =
+        after(&p, &low, "\\program files (x86)\\").or_else(|| after(&p, &low, "\\program files\\"))
+    {
+        first(r)
+    } else if let Some(r) = after(&p, &low, "\\appdata\\local\\programs\\") {
+        first(r)
+    } else if let Some(r) = after(&p, &low, "\\appdata\\local\\microsoft\\winget\\packages\\") {
+        first(r).split('_').next().unwrap_or("").to_string()
+    } else if low.contains("\\appdata\\local\\temp") {
+        return None;
+    } else {
+        let r = after(&p, &low, "\\appdata\\roaming\\")
+            .or_else(|| after(&p, &low, "\\appdata\\local\\"))
+            .or_else(|| after(&p, &low, "\\programdata\\"))?;
+        first(r)
+    };
+    let key = prog_norm(&name);
+    if key.is_empty() {
+        None
+    } else {
+        Some((key, name))
+    }
+}
+
+/// 백업 대상 경로를 화면 줄로 바꾼다: 0=구분 제목, 1=폴더/파일, 2=프로그램.
+/// 반환: (종류, 제목, 보조 설명, 빼기 키). 같은 프로그램의 경로들은 프로그램 이름 한 줄로 묶는다.
+fn source_rows(joined: &str) -> Vec<(i32, String, String, String)> {
+    let mut folders = vec![];
+    let mut programs: Vec<(String, String, usize)> = vec![];
+    let mut seen: std::collections::HashSet<String> = Default::default();
+    for p in joined.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+        if !seen.insert(p.to_lowercase()) {
+            continue;
+        }
+        if let Some((key, name)) = program_of(p) {
+            match programs.iter_mut().find(|x| x.0 == key) {
+                Some(x) => x.2 += 1,
+                None => programs.push((key, name, 1)),
+            }
+        } else {
+            let name = p
+                .trim_end_matches(['\\', '/'])
+                .rsplit(['\\', '/'])
+                .next()
+                .unwrap_or(p)
+                .to_string();
+            folders.push((1, name, p.to_string(), p.to_string()));
+        }
+    }
+    let mut out = vec![];
+    if !folders.is_empty() {
+        out.push((
+            0,
+            format!("폴더·파일 ({}개)", folders.len()),
+            String::new(),
+            String::new(),
+        ));
+        out.extend(folders);
+    }
+    if !programs.is_empty() {
+        out.push((
+            0,
+            format!("프로그램 ({}개)", programs.len()),
+            String::new(),
+            String::new(),
+        ));
+        for (key, name, n) in programs {
+            out.push((2, name, format!("{n}개 항목"), format!("prog:{key}")));
+        }
+    }
+    out
+}
+
+/// 이 PC에 설치된 프로그램(이름, 백업할 경로들). 시작 메뉴·Program Files·AppData 폴더 이름으로 찾는다.
+fn installed_programs() -> Vec<(String, Vec<String>)> {
+    let env = |k: &str| std::env::var_os(k).map(std::path::PathBuf::from);
+    let mut map: std::collections::BTreeMap<String, (String, Vec<String>)> = Default::default();
+    let mut add = |path: &std::path::Path, only_known: bool| {
+        let s = path.to_string_lossy().into_owned();
+        let Some((key, name)) = program_of(&s) else {
+            return;
+        };
+        if only_known && !map.contains_key(&key) {
+            return;
+        }
+        let e = map.entry(key).or_insert((name, vec![]));
+        if !e.1.iter().any(|x| x.eq_ignore_ascii_case(&s)) {
+            e.1.push(s);
+        }
+    };
+    let dirs = |root: &std::path::Path| -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(root)
+            .map(|rd| {
+                rd.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.is_dir())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    fn lnks(root: &std::path::Path, depth: u32, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(rd) = std::fs::read_dir(root) else {
+            return;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                if depth > 0 {
+                    lnks(&p, depth - 1, out);
+                }
+            } else if p.extension().is_some_and(|x| x.eq_ignore_ascii_case("lnk")) {
+                out.push(p);
+            }
+        }
+    }
+    // 1단계: 프로그램이 확실한 곳(설치 폴더, 시작 메뉴 바로가기)
+    for k in ["ProgramFiles", "ProgramFiles(x86)"] {
+        if let Some(r) = env(k) {
+            for d in dirs(&r) {
+                add(&d, false);
+            }
+        }
+    }
+    if let Some(r) = env("LOCALAPPDATA") {
+        for d in dirs(&r.join("Programs")) {
+            add(&d, false);
+        }
+    }
+    let mut menu = vec![];
+    if let Some(r) = env("ProgramData") {
+        lnks(
+            &r.join(r"Microsoft\Windows\Start Menu\Programs"),
+            3,
+            &mut menu,
+        );
+    }
+    if let Some(r) = env("APPDATA") {
+        lnks(
+            &r.join(r"Microsoft\Windows\Start Menu\Programs"),
+            3,
+            &mut menu,
+        );
+    }
+    for l in &menu {
+        add(l, false);
+    }
+    // 2단계: 설정·데이터 폴더는 1단계에서 찾은 프로그램에만 붙인다
+    for k in ["APPDATA", "LOCALAPPDATA", "ProgramData"] {
+        if let Some(r) = env(k) {
+            for d in dirs(&r) {
+                add(&d, true);
+            }
+        }
+    }
+    // 윈도 기본 폴더·메뉴 묶음은 프로그램이 아니므로 고르기 목록에서 뺀다
+    const SYSTEM: &[&str] = &[
+        "common",
+        "commonfiles",
+        "accessibility",
+        "accessories",
+        "administrativetools",
+        "systemtools",
+        "startup",
+        "windowspowershell",
+        "windowsapps",
+        "modifiablewindowsapps",
+        "windowsnt",
+        "windowsmail",
+        "windowsdefender",
+        "windowsmediaplayer",
+        "windowsportabledevices",
+        "windowssecurity",
+        "internetexplorer",
+        "uninstallinformation",
+        "referenceassemblies",
+        "microsoft",
+        "packages",
+    ];
+    map.retain(|k, _| !SYSTEM.contains(&k.as_str()));
+    let mut v: Vec<(String, Vec<String>)> = map.into_values().collect();
+    v.sort_by_key(|x| x.0.to_lowercase());
+    v
+}
+
 fn rows() -> Vec<ProfileRow> {
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
     store
@@ -1359,11 +1572,14 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = w.as_weak();
         w.on_sync_form_list(move |s| {
             let Some(w) = weak.upgrade() else { return };
-            let list: Vec<slint::SharedString> = s
-                .split(';')
-                .map(str::trim)
-                .filter(|x| !x.is_empty())
-                .map(Into::into)
+            let list: Vec<SrcRow> = source_rows(&s)
+                .into_iter()
+                .map(|(kind, title, sub, key)| SrcRow {
+                    kind,
+                    title: title.into(),
+                    sub: sub.into(),
+                    key: key.into(),
+                })
                 .collect();
             w.set_form_list(std::rc::Rc::new(slint::VecModel::from(list)).into());
         });
@@ -1384,18 +1600,86 @@ fn main() -> Result<(), slint::PlatformError> {
             w.set_form_sources(list.join(";").into());
         });
         let weak = w.as_weak();
-        w.on_form_remove(move |i| {
+        w.on_form_remove(move |key| {
             let Some(w) = weak.upgrade() else { return };
-            let mut list: Vec<String> = w
+            let list: Vec<String> = w
+                .get_form_sources()
+                .split(';')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .filter(|s| match key.strip_prefix("prog:") {
+                    Some(k) => program_of(s).map(|x| x.0).as_deref() != Some(k),
+                    None => !s.eq_ignore_ascii_case(&key),
+                })
+                .collect();
+            w.set_form_sources(list.join(";").into());
+        });
+        type Picks = std::rc::Rc<std::cell::RefCell<Vec<(String, Vec<String>, bool)>>>;
+        let picks: Picks = Default::default();
+        let show_picks = |w: &MainWindow, p: &[(String, Vec<String>, bool)]| {
+            let rows: Vec<ProgPick> = p
+                .iter()
+                .map(|(n, paths, c)| ProgPick {
+                    name: n.as_str().into(),
+                    sub: format!("{}개 항목", paths.len()).into(),
+                    checked: *c,
+                })
+                .collect();
+            w.set_prog_count(p.iter().filter(|x| x.2).count() as i32);
+            w.set_prog_list(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+        };
+        let (weak, pk) = (w.as_weak(), picks.clone());
+        w.on_prog_open(move || {
+            let Some(w) = weak.upgrade() else { return };
+            let have: std::collections::HashSet<String> = w
+                .get_form_sources()
+                .split(';')
+                .filter_map(|s| program_of(s).map(|x| x.0))
+                .collect();
+            let list: Vec<(String, Vec<String>, bool)> = installed_programs()
+                .into_iter()
+                .filter(|(n, _)| !have.contains(&prog_norm(n)))
+                .map(|(n, p)| (n, p, false))
+                .collect();
+            show_picks(&w, &list);
+            *pk.borrow_mut() = list;
+            w.set_prog_shown(true);
+        });
+        let (weak, pk) = (w.as_weak(), picks.clone());
+        w.on_prog_toggle(move |i| {
+            let Some(w) = weak.upgrade() else { return };
+            let mut list = pk.borrow_mut();
+            if let Some(x) = list.get_mut(i as usize) {
+                x.2 = !x.2;
+            }
+            show_picks(&w, &list);
+        });
+        let (weak, pk) = (w.as_weak(), picks.clone());
+        w.on_prog_apply(move || {
+            let Some(w) = weak.upgrade() else { return };
+            let mut cur: Vec<String> = w
                 .get_form_sources()
                 .split(';')
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            if (i as usize) < list.len() {
-                list.remove(i as usize);
+            for (_, paths, checked) in pk.borrow().iter() {
+                if *checked {
+                    for p in paths {
+                        if !cur.iter().any(|x| x.eq_ignore_ascii_case(p)) {
+                            cur.push(p.clone());
+                        }
+                    }
+                }
             }
-            w.set_form_sources(list.join(";").into());
+            w.set_form_sources(cur.join(";").into());
+            w.set_prog_shown(false);
+        });
+        let weak = w.as_weak();
+        w.on_prog_close(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_prog_shown(false);
+            }
         });
         let weak = w.as_weak();
         w.on_wz_remove(move |i| {
@@ -1958,6 +2242,33 @@ fn main() -> Result<(), slint::PlatformError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn source_rows_groups_programs_by_name_and_keeps_folders() {
+        let s = "C:\\Users\\a\\Desktop;C:\\Users\\a\\Desktop\\sub;C:\\Users\\a\\AppData\\Local\\Temp\\keep;\
+                 C:\\Program Files\\Tailscale;C:\\Users\\a\\AppData\\Local\\Tailscale;C:\\Users\\a\\AppData\\Roaming\\tailscale;\
+                 C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Tailscale.lnk;\
+                 C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs\\Git\\Git Bash.lnk;\
+                 C:\\Users\\a\\AppData\\Local\\antigravity-updater;C:\\Users\\a\\AppData\\Local\\Programs\\antigravity;c:\\users\\a\\desktop";
+        let r = super::source_rows(s);
+        let titles: Vec<(i32, &str)> = r.iter().map(|x| (x.0, x.1.as_str())).collect();
+        assert_eq!(
+            titles,
+            vec![
+                (0, "폴더·파일 (3개)"),
+                (1, "Desktop"),
+                (1, "sub"),
+                (1, "keep"),
+                (0, "프로그램 (3개)"),
+                (2, "Tailscale"),
+                (2, "Git"),
+                (2, "antigravity-updater"),
+            ]
+        );
+        assert_eq!(r[5].2, "4개 항목");
+        assert_eq!(r[7].2, "2개 항목");
+        assert_eq!(r[5].3, "prog:tailscale");
+    }
+
     #[test]
     fn apply_settings_validates_and_preserves_other_fields() {
         let dir = std::env::temp_dir().join(format!("kova_set_test_{}", std::process::id()));
