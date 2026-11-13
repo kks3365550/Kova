@@ -455,7 +455,7 @@ export component MainWindow inherits Window {
             if root.page == 2: VerticalLayout {
                 spacing: 12px;
                 Card {
-                    height: 112px;
+                    height: 132px;
                     VerticalLayout {
                         padding: 16px;
                         spacing: 8px;
@@ -522,10 +522,14 @@ export component MainWindow inherits Window {
                                 padding-left: 14px;
                                 padding-right: 14px;
                                 spacing: 8px;
-                                Text { text: s.when; color: Theme.text; width: 120px; font-size: 13px; vertical-alignment: center; }
-                                Text { text: s.name; color: Theme.text; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                                Text { text: s.summary; color: Theme.muted; font-size: 13px; width: 110px; vertical-alignment: center; overflow: elide; }
-                                Text { text: s.verified; color: s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok; font-size: 12px; width: 70px; vertical-alignment: center; }
+                                Text { text: s.when; color: Theme.text; width: 84px; font-size: 13px; vertical-alignment: center; }
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    Text { text: s.name; color: Theme.text; font-size: 13px; overflow: elide; }
+                                    Text { text: s.summary; color: Theme.muted; font-size: 12px; overflow: elide; }
+                                }
+                                Text { text: s.verified; color: s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok; font-size: 12px; width: 64px; vertical-alignment: center; }
                                 Btn { text: "파일 보기"; y: 6px; clicked => { root.browse-open = true; root.open-browse(s.repo, s.id, s.when); } }
                                 Btn { text: "전체 복원"; kind: 0; y: 6px; clicked => { root.snap-pending = ""; root.restore-snapshot(s.repo, s.id, rt.text); } }
                                 Btn {
