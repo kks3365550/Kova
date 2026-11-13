@@ -1042,6 +1042,65 @@ mod tests {
         assert!(second.dedup_bytes > 0);
     }
 
+    fn noise(len: usize, seed: u64) -> Vec<u8> {
+        let mut x = seed | 1;
+        (0..len)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                (x >> 24) as u8
+            })
+            .collect()
+    }
+
+    #[test]
+    fn large_multi_chunk_files_roundtrip_and_dedup() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        // 청크 수십 개짜리 파일 + 내용이 같은 복사본(같은 청크를 동시에 저장) + 작은 파일
+        let big = noise(40 * 1024 * 1024, 7);
+        fs::write(src.join("big.bin"), &big).unwrap();
+        fs::write(src.join("big_copy.bin"), &big).unwrap();
+        fs::write(src.join("other.bin"), noise(9 * 1024 * 1024, 99)).unwrap();
+        fs::write(src.join("tiny.txt"), "작은 파일").unwrap();
+        let repo = d.path().join("repo");
+        let first = backup(&src, &repo, "t1");
+        assert!(first.skipped_files.is_empty());
+
+        let out = d.path().join("out");
+        restore_only(&repo, &out, None);
+        assert_eq!(tree_hashes(&src), tree_hashes(&out));
+
+        // 큰 파일 한가운데를 조금만 바꾸면 대부분의 청크를 다시 쓰지 않는다
+        let mut edited = big.clone();
+        for b in &mut edited[20 * 1024 * 1024..20 * 1024 * 1024 + 100] {
+            *b ^= 0xFF;
+        }
+        fs::write(src.join("big.bin"), &edited).unwrap();
+        let second = backup(&src, &repo, "t2");
+        assert_eq!(second.modified_files, 1);
+        assert!(
+            second.dedup_bytes > 30 * 1024 * 1024,
+            "dedup {}",
+            second.dedup_bytes
+        );
+        let out2 = d.path().join("out2");
+        run_restore(
+            &RestoreOptions {
+                repo,
+                session_id: "t2".into(),
+                only: None,
+                target: Some(out2.clone()),
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(tree_hashes(&src), tree_hashes(&out2));
+    }
+
     #[test]
     fn in_place_restore_recreates_deleted_files() {
         let d = tempfile::tempdir().unwrap();
