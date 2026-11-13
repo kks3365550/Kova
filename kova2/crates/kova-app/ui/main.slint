@@ -180,11 +180,12 @@ export component MainWindow inherits Window {
     callback check-update();
     in property <[RunRow]> running;
     callback cancel-job(int);
-    callback save-settings(string, bool, bool, bool);
+    callback save-settings(string, bool, bool, bool, bool);
     in-out property <string> form-min-free: "5";
     in-out property <bool> form-ransom: true;
     in-out property <bool> form-encrypt: false;
     in-out property <bool> form-vss: true;
+    in-out property <bool> form-pack: false;
     in-out property <string> form-recovery: "";
     callback restore-key(string);
     in property <string> settings-text;
@@ -692,6 +693,13 @@ export component MainWindow inherits Window {
                             Hint { text: "백업 직전에 원본 드라이브의 스냅샷을 떠서, 다른 프로그램이 열어 둔 파일도 같은 시점으로 백업합니다. 만들 수 없으면 직접 읽습니다."; }
                             HorizontalLayout {
                                 spacing: 8px;
+                                Text { text: "블롭 팩으로 묶기"; color: Theme.text; font-size: 13px; width: 150px; vertical-alignment: center; }
+                                Btn { text: root.form-pack ? "켜짐" : "꺼짐"; kind: root.form-pack ? 1 : 0; clicked => { root.form-pack = !root.form-pack; } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            Hint { text: "백업 뒤 오래된 작은 파일들을 큰 파일 몇 개로 묶어 저장소의 파일 수를 줄입니다(복사·오프사이트가 빨라집니다). 묶기 전에 다시 읽어 확인합니다. 팩을 모르는 이전 Kova2 버전으로는 이렇게 묶은 저장소를 읽지 못합니다."; }
+                            HorizontalLayout {
+                                spacing: 8px;
                                 Text { text: "복구 코드로 키 복원"; color: Theme.text; font-size: 13px; width: 150px; vertical-alignment: center; }
                                 Field { text <=> root.form-recovery; horizontal-stretch: 1; }
                                 Btn { text: "복원"; clicked => { root.restore-key(root.form-recovery); } }
@@ -699,7 +707,7 @@ export component MainWindow inherits Window {
                             Hint { text: "PC를 바꾸거나 키 파일을 잃었을 때, 암호화를 켤 때 받은 복구 코드를 붙여 넣고 누릅니다."; }
                             HorizontalLayout {
                                 spacing: 8px;
-                                Btn { text: "설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt, root.form-vss); } }
+                                Btn { text: "설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt, root.form-vss, root.form-pack); } }
                                 if root.settings-text != "": Text { text: root.settings-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                                 if root.settings-text == "": Rectangle { horizontal-stretch: 1; }
                             }

@@ -93,6 +93,9 @@ pub struct Settings {
     /// 백업 때 원본 드라이브를 VSS 로 스냅샷해 잠긴 파일도 읽는다(못 만들면 직접 읽기로 되돌아감)
     #[serde(default = "d_true")]
     pub use_vss: bool,
+    /// 백업 뒤 오래된 낱개 블롭을 팩 컨테이너로 묶는다(파일 수 감소). 팩을 모르는 옛 버전은 읽지 못한다
+    #[serde(default)]
+    pub pack_blobs: bool,
     #[serde(default)]
     pub offsite_enabled: bool,
     #[serde(default = "d_prov")]

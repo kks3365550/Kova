@@ -15,6 +15,7 @@ pub mod install;
 pub mod jobs;
 pub mod lock;
 pub mod offsite;
+pub mod packer;
 pub mod profile_form;
 pub mod repocrypto;
 pub mod restore_target;

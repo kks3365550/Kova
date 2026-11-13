@@ -87,6 +87,8 @@ pub fn replicate(
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     manifests.sort();
+    let packs = kova_engine::pack::load_index(repo);
+    let mut done_packs = std::collections::HashSet::new();
     for mp in manifests {
         let name = mp.file_name().unwrap().to_owned();
         let dm = dest.join("snapshots").join(&name);
@@ -109,7 +111,26 @@ pub fn replicate(
             let s = blob_path(repo, &h);
             let d = blob_path(dest, &h);
             let Ok(sm) = fs::metadata(&s) else {
-                return Err(OffsiteError::MissingBlob(h));
+                // 낱개 블롭이 없으면 팩 컨테이너에 있는지 보고, 있으면 팩 전체(.pack 먼저, .idx 나중)를 복사한다
+                let Some(e) = packs.get(&h) else {
+                    return Err(OffsiteError::MissingBlob(h));
+                };
+                if done_packs.insert(e.pack.clone()) {
+                    use kova_engine::pack::{idx_file, pack_file};
+                    let (sp, si) = (pack_file(repo, &e.pack), idx_file(repo, &e.pack));
+                    let (dp, di) = (pack_file(dest, &e.pack), idx_file(dest, &e.pack));
+                    let have = fs::metadata(&di).is_ok()
+                        && fs::metadata(&dp)
+                            .is_ok_and(|m| fs::metadata(&sp).is_ok_and(|s| s.len() == m.len()));
+                    if have {
+                        rep.blobs_skipped += 1;
+                    } else {
+                        rep.bytes_copied += copy_atomic(&sp, &dp)?;
+                        rep.bytes_copied += copy_atomic(&si, &di)?;
+                        rep.blobs_copied += 1;
+                    }
+                }
+                continue;
             };
             if fs::metadata(&d).is_ok_and(|dm| dm.len() == sm.len()) {
                 rep.blobs_skipped += 1;
@@ -171,6 +192,26 @@ mod tests {
         let r3 = replicate(&repo, &dest, &no).unwrap();
         assert_eq!((r3.snapshots_copied, r3.blobs_copied), (1, 0));
         assert!(r3.blobs_skipped >= 1);
+    }
+
+    #[test]
+    fn packed_blobs_are_replicated_as_whole_packs_and_verify() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = make_repo(d.path(), "묶인 내용");
+        crate::packer::compact(&repo, 0, crate::packer::DEFAULT_PACK_BYTES).unwrap();
+        let dest = d.path().join("offsite");
+        let no = AtomicBool::new(false);
+        let r1 = replicate(&repo, &dest, &no).unwrap();
+        assert_eq!((r1.snapshots_copied, r1.blobs_copied), (1, 1));
+        assert!(crate::verify::verify_repo(&dest, true).unwrap().ok());
+        for e in fs::read_dir(dest.join("snapshots")).unwrap() {
+            fs::remove_file(e.unwrap().path()).unwrap();
+        }
+        let r2 = replicate(&repo, &dest, &no).unwrap();
+        assert_eq!(
+            (r2.snapshots_copied, r2.blobs_copied, r2.blobs_skipped),
+            (1, 0, 1)
+        );
     }
 
     #[test]

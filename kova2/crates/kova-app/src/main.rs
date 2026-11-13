@@ -173,6 +173,7 @@ fn apply_settings(
     ransomware: bool,
     encrypt: bool,
     use_vss: bool,
+    pack_blobs: bool,
 ) -> Result<String, String> {
     let gb: u32 = min_free_gb
         .trim()
@@ -201,6 +202,7 @@ fn apply_settings(
     s.enable_ransomware_protection = ransomware;
     s.encrypt_backups = encrypt;
     s.use_vss = use_vss;
+    s.pack_blobs = pack_blobs;
     store
         .save_settings(&s)
         .map_err(|e| format!("저장 실패: {e}"))?;
@@ -1211,12 +1213,13 @@ fn main() -> Result<(), slint::PlatformError> {
         w.set_form_ransom(s.enable_ransomware_protection);
         w.set_form_encrypt(s.encrypt_backups);
         w.set_form_vss(s.use_vss);
+        w.set_form_pack(s.pack_blobs);
     }
     {
         let weak = w.as_weak();
-        w.on_save_settings(move |gb, ransom, enc, vss| {
+        w.on_save_settings(move |gb, ransom, enc, vss, pack| {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let msg = match apply_settings(&store, &gb, ransom, enc, vss) {
+            let msg = match apply_settings(&store, &gb, ransom, enc, vss, pack) {
                 Ok(m) | Err(m) => m,
             };
             if let Some(w) = weak.upgrade() {
@@ -1659,16 +1662,17 @@ mod tests {
         s.extra.insert("unknown_key".into(), 7.into());
         store.save_settings(&s).unwrap();
 
-        assert!(apply_settings(&store, "abc", true, false, true).is_err());
-        assert!(apply_settings(&store, "-1", true, false, true).is_err());
-        assert!(apply_settings(&store, "999999", true, false, true).is_err());
+        assert!(apply_settings(&store, "abc", true, false, true, false).is_err());
+        assert!(apply_settings(&store, "-1", true, false, true, false).is_err());
+        assert!(apply_settings(&store, "999999", true, false, true, false).is_err());
         assert_eq!(store.settings().offsite_remote_path, "keep"); // 실패 시 변경 없음
 
-        assert!(apply_settings(&store, " 25 ", false, false, false).is_ok());
+        assert!(apply_settings(&store, " 25 ", false, false, false, true).is_ok());
         let after = store.settings();
         assert_eq!(after.min_free_disk_gb, 25);
         assert!(!after.enable_ransomware_protection);
         assert!(!after.use_vss);
+        assert!(after.pack_blobs);
         assert_eq!(after.offsite_remote_path, "keep");
         assert_eq!(after.extra.get("unknown_key"), Some(&7.into()));
         let _ = std::fs::remove_dir_all(&dir);

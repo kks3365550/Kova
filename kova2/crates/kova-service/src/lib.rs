@@ -263,6 +263,28 @@ impl Supervisor {
                 if let Ok(mut h) = History::open(&opts.repo) {
                     let _ = h.sync_snapshots();
                 }
+                // 팩 컨테이너: 1시간 이상 된 낱개 블롭을 묶는다. 실패해도 백업은 성공으로 두고 메시지에 남긴다
+                let pack_note = if self.0.store.settings().pack_blobs {
+                    // 다른 작업이 저장소를 쓰는 중이면 이번엔 건너뛴다(다음 백업 때 다시 시도)
+                    let _lock = kova_core::lock::RepoLock::try_acquire(&opts.repo);
+                    if _lock.is_err() {
+                        String::new()
+                    } else {
+                        match kova_core::packer::compact(
+                            &opts.repo,
+                            kova_core::gc::DEFAULT_MIN_AGE_SECS,
+                            kova_core::packer::DEFAULT_PACK_BYTES,
+                        ) {
+                            Ok(r) if r.packed_blobs > 0 => {
+                                format!(", 블롭 {}개를 팩 {}개로 묶음", r.packed_blobs, r.packs)
+                            }
+                            Ok(_) => String::new(),
+                            Err(e) => format!(", 팩 묶기 실패: {e}"),
+                        }
+                    }
+                } else {
+                    String::new()
+                };
                 // 랜섬웨어 보호: 이번 백업으로 생긴 매니페스트·블롭을 읽기 전용(+매니페스트는 삭제 거부 ACL)으로 잠근다.
                 // 삭제는 보존 정책·정리가 승인 경로(worm::remove_protected)로만 한다
                 let protected = if self.0.store.settings().enable_ransomware_protection {
@@ -300,6 +322,7 @@ impl Supervisor {
                     }
                 }
                 msg.push_str(&vss_note);
+                msg.push_str(&pack_note);
                 if let Some(n) = protected.filter(|n| *n > 0) {
                     msg.push_str(&format!(", 랜섬웨어 보호 {n}개 잠금"));
                 }

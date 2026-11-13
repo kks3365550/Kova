@@ -202,6 +202,21 @@ pub fn protect_new_files(repo: &Path) -> ProtectStats {
             }
         }
     }
+    if let Ok(files) = fs::read_dir(repo.join("packs")) {
+        for e in files.flatten() {
+            let p = e.path();
+            let ro = e
+                .metadata()
+                .map(|m| m.permissions().readonly())
+                .unwrap_or(true);
+            if !ro
+                && p.extension().is_some_and(|x| x == "pack" || x == "idx")
+                && set_readonly(&p, true).is_ok()
+            {
+                st.blobs += 1;
+            }
+        }
+    }
     st
 }
 
@@ -225,6 +240,11 @@ pub fn protect_repository(repo: &Path, protect_dirs: bool) -> ProtectStats {
             if p.extension().is_some_and(|x| x == "blob") && protect_file(&p, true) {
                 st.blobs += 1;
             }
+        }
+    }
+    for p in walk(&repo.join("packs")) {
+        if p.extension().is_some_and(|x| x == "pack" || x == "idx") && protect_file(&p, true) {
+            st.blobs += 1;
         }
     }
     st

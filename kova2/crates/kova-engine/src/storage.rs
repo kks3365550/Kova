@@ -136,6 +136,8 @@ impl SnapshotManifest {
 pub struct CasStorage {
     repo_root: PathBuf,
     codec: Option<std::sync::Arc<dyn crate::codec::BlobCodec>>,
+    /// 팩 컨테이너 색인(처음 쓸 때 한 번 읽는다)
+    packs: std::sync::OnceLock<std::collections::HashMap<String, crate::pack::PackEntry>>,
 }
 
 impl CasStorage {
@@ -147,7 +149,13 @@ impl CasStorage {
         Ok(Self {
             repo_root: root,
             codec,
+            packs: std::sync::OnceLock::new(),
         })
+    }
+
+    fn pack_index(&self) -> &std::collections::HashMap<String, crate::pack::PackEntry> {
+        self.packs
+            .get_or_init(|| crate::pack::load_index(&self.repo_root))
     }
 
     /// 평문 청크를 저장 형식으로(암호화 저장소면 암호화, 아니면 zstd).
@@ -175,18 +183,18 @@ impl CasStorage {
     }
 
     pub fn has_blob(&self, hash: &str) -> bool {
-        self.blob_path(hash).exists()
+        self.blob_path(hash).exists() || self.pack_index().contains_key(hash)
     }
 
     /// Loads all existing blob hashes into an in-memory HashSet using parallel directory scan.
     /// This eliminates hundreds of thousands of GetFileAttributesW disk syscalls during incremental checks.
     pub fn get_all_blob_hashes(&self) -> std::collections::HashSet<String> {
         use rayon::prelude::*;
-        use std::collections::HashSet;
 
         let blobs_dir = self.repo_root.join("blobs");
+        let packed: Vec<String> = self.pack_index().keys().cloned().collect();
         if !blobs_dir.is_dir() {
-            return HashSet::new();
+            return packed.into_iter().collect();
         }
 
         let prefix_dirs: Vec<PathBuf> = match fs::read_dir(&blobs_dir) {
@@ -216,13 +224,13 @@ impl CasStorage {
             })
             .collect();
 
-        hashes.into_iter().collect()
+        hashes.into_iter().chain(packed).collect()
     }
 
     /// Stores compressed blob data atomically. Returns true if newly written, false if deduplicated.
     pub fn save_blob(&self, hash: &str, compressed_data: &[u8]) -> io::Result<bool> {
         let target_path = self.blob_path(hash);
-        if target_path.exists() {
+        if target_path.exists() || self.pack_index().contains_key(hash) {
             return Ok(false);
         }
 
@@ -243,10 +251,26 @@ impl CasStorage {
 
     pub fn read_blob(&self, hash: &str) -> io::Result<Vec<u8>> {
         let target_path = self.blob_path(hash);
-        let mut file = File::open(target_path)?;
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)?;
-        Ok(data)
+        match File::open(target_path) {
+            Ok(mut file) => {
+                let mut data = Vec::new();
+                file.read_to_end(&mut data)?;
+                Ok(data)
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                // 캐시된 색인 이후에 묶인 블롭일 수 있으니, 없으면 색인을 새로 읽어 한 번 더 찾는다
+                let hit = self
+                    .pack_index()
+                    .get(hash)
+                    .cloned()
+                    .or_else(|| crate::pack::load_index(&self.repo_root).remove(hash));
+                match hit {
+                    Some(entry) => crate::pack::read_entry(&self.repo_root, &entry),
+                    None => Err(e),
+                }
+            }
+            Err(e) => Err(e),
+        }
     }
 
     pub fn save_manifest(&self, manifest: &SnapshotManifest) -> io::Result<()> {

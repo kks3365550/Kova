@@ -5,6 +5,7 @@ pub mod codec;
 pub mod compressor;
 pub mod hasher;
 pub mod ops;
+pub mod pack;
 pub mod scanner;
 pub mod search;
 pub mod storage;

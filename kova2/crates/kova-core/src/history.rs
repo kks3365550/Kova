@@ -284,6 +284,13 @@ impl History {
                 }
             }
         }
+        for id in kova_engine::pack::pack_ids(&self.repo) {
+            if let Some(entries) = kova_engine::pack::read_idx(&self.repo, &id) {
+                n += entries.len() as i64;
+                bytes += fs::metadata(kova_engine::pack::pack_file(&self.repo, &id))
+                    .map_or(0, |m| m.len() as i64);
+            }
+        }
         self.conn.execute(
             "INSERT INTO blobs_summary (id,total_blobs,stored_bytes,last_updated) VALUES (1,?1,?2,?3)
              ON CONFLICT(id) DO UPDATE SET total_blobs=?1,stored_bytes=?2,last_updated=?3",
