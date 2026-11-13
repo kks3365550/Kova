@@ -478,7 +478,8 @@ export component MainWindow inherits Window {
             }
 
             // 프로파일
-            if root.page == 1: VerticalLayout {
+            if root.page == 1: ScrollView {
+              VerticalLayout {
                 spacing: 12px;
                 Card {
                     height: 170px;
@@ -515,7 +516,8 @@ export component MainWindow inherits Window {
                     }
                 }
                 Card {
-                    VerticalLayout {
+                    height: formlay.preferred-height;
+                    formlay := VerticalLayout {
                         padding: 16px;
                         spacing: 8px;
                         Heading { text: root.form-id == "" ? "새 프로파일 추가" : "프로파일 수정 중"; }
@@ -624,9 +626,9 @@ export component MainWindow inherits Window {
                         }
                         Text { text: root.form-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
                         Hint { text: "삭제는 프로파일 설정만 지우며 저장소의 백업 파일은 그대로 둡니다. 새 프로파일은 자동 백업이 꺼진 채로 시작합니다. 자동 백업은 서비스가 켜져 있어야 동작합니다."; }
-                        Rectangle { vertical-stretch: 1; }
                     }
                 }
+              }
             }
 
             // 이력 · 복원
