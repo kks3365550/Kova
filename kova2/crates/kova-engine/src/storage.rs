@@ -238,14 +238,28 @@ impl CasStorage {
             fs::create_dir_all(parent)?;
         }
 
-        let tmp_path = target_path.with_extension("tmp");
+        // 같은 내용(같은 해시)을 여러 스레드가 동시에 저장할 수 있으므로 임시 파일 이름은 호출마다 다르게 한다
+        static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let tmp_path = target_path.with_extension(format!(
+            "{}.{}.tmp",
+            std::process::id(),
+            TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
         {
             let mut file = File::create(&tmp_path)?;
             file.write_all(compressed_data)?;
             file.flush()?;
         }
 
-        fs::rename(&tmp_path, &target_path)?;
+        if let Err(e) = fs::rename(&tmp_path, &target_path) {
+            // 다른 스레드가 먼저 같은 블롭을 놓았다면(내용이 같으므로) 그걸로 충분하다
+            if target_path.exists() {
+                let _ = fs::remove_file(&tmp_path);
+                return Ok(false);
+            }
+            let _ = fs::remove_file(&tmp_path);
+            return Err(e);
+        }
         Ok(true)
     }
 
@@ -376,5 +390,48 @@ impl CasStorage {
 
     pub fn get_latest_manifest(&self) -> Option<SnapshotManifest> {
         self.get_recent_manifests(1).into_iter().next()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 같은 해시를 여러 스레드가 동시에 저장해도 전부 성공하고 블롭은 하나만 남는다.
+    #[test]
+    fn concurrent_save_of_same_blob_never_fails() {
+        let d = tempfile::tempdir().unwrap();
+        let cas = CasStorage::new(d.path()).unwrap();
+        let data = vec![9u8; 4096];
+        for round in 0..200 {
+            let hash = format!("{round:064x}");
+            let wrote: usize = std::thread::scope(|s| {
+                let hs: Vec<_> = (0..8)
+                    .map(|_| s.spawn(|| cas.save_blob(&hash, &data).unwrap()))
+                    .collect();
+                hs.into_iter().map(|h| h.join().unwrap() as usize).sum()
+            });
+            assert!(wrote >= 1, "아무도 저장하지 않음");
+            assert_eq!(cas.read_blob(&hash).unwrap(), data);
+        }
+        // 임시 파일이 남지 않는다
+        let leftovers = walkdir_tmp(d.path());
+        assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    fn walkdir_tmp(dir: &Path) -> Vec<PathBuf> {
+        let mut out = vec![];
+        let mut st = vec![dir.to_path_buf()];
+        while let Some(d) = st.pop() {
+            for e in fs::read_dir(&d).into_iter().flatten().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    st.push(p)
+                } else if p.extension().is_some_and(|x| x == "tmp") {
+                    out.push(p)
+                }
+            }
+        }
+        out
     }
 }
