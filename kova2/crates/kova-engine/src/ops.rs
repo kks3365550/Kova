@@ -320,37 +320,40 @@ pub fn run_backup(
                 Ok(c) => c,
                 Err(e) => return skip(format!("read: {}", e)),
             };
-            let mut file_chunks = Vec::new();
-            let mut file_size: u64 = 0;
-            for c in chunks_raw {
-                file_size += c.length as u64;
-                total_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
-                if cas.has_blob(&c.hash) {
-                    dedup_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
-                    file_chunks.push(FileChunkInfo {
-                        hash: c.hash,
-                        offset: c.offset,
-                        length: c.length,
-                        compressed_length: 0,
-                    });
-                } else {
-                    let compressed = match cas.encode_blob(&c.data, &c.hash, opts.zstd_level) {
-                        Ok(d) => d,
-                        Err(e) => return skip(format!("compress: {}", e)),
-                    };
+            let file_size: u64 = chunks_raw.iter().map(|c| c.length as u64).sum();
+            // 청크마다 압축·저장이 독립이라 병렬 처리(큰 파일 하나도 여러 코어 사용). 순서는 유지된다
+            let stored: Result<Vec<FileChunkInfo>, String> = chunks_raw
+                .into_par_iter()
+                .map(|c| {
+                    total_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
+                    if cas.has_blob(&c.hash) {
+                        dedup_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
+                        return Ok(FileChunkInfo {
+                            hash: c.hash,
+                            offset: c.offset,
+                            length: c.length,
+                            compressed_length: 0,
+                        });
+                    }
+                    let compressed = cas
+                        .encode_blob(&c.data, &c.hash, opts.zstd_level)
+                        .map_err(|e| format!("compress: {}", e))?;
                     let comp_len = compressed.len();
                     compressed_bytes.fetch_add(comp_len as u64, Ordering::Relaxed);
-                    if let Err(e) = cas.save_blob(&c.hash, &compressed) {
-                        return skip(format!("save blob: {}", e));
-                    }
-                    file_chunks.push(FileChunkInfo {
+                    cas.save_blob(&c.hash, &compressed)
+                        .map_err(|e| format!("save blob: {}", e))?;
+                    Ok(FileChunkInfo {
                         hash: c.hash,
                         offset: c.offset,
                         length: c.length,
                         compressed_length: comp_len,
-                    });
-                }
-            }
+                    })
+                })
+                .collect();
+            let file_chunks = match stored {
+                Ok(v) => v,
+                Err(why) => return skip(why),
+            };
             report(
                 processed_files.fetch_add(1, Ordering::Relaxed) + 1,
                 &item.rel_path,

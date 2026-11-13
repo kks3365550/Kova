@@ -297,8 +297,19 @@ impl Supervisor {
                     format!("완료: {}개 항목, {}바이트", s.total_files, s.total_bytes)
                 } else {
                     format!(
-                        "완료(건너뜀 {}개): {}개 항목",
+                        "완료(건너뜀 {}개: {}{}): {}개 항목",
                         s.skipped_files.len(),
+                        s.skipped_files
+                            .iter()
+                            .take(3)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("; "),
+                        if s.skipped_files.len() > 3 {
+                            " 외"
+                        } else {
+                            ""
+                        },
                         s.total_files
                     )
                 };

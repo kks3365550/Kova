@@ -1,5 +1,6 @@
 use fastcdc::FastCDC;
 use memmap2::Mmap;
+use rayon::prelude::*;
 use std::fs::File;
 use std::io;
 use std::path::Path;
@@ -32,21 +33,23 @@ pub fn chunk_slice(data: &[u8]) -> Vec<Chunk> {
         }];
     }
 
-    let chunker = FastCDC::new(data, MIN_CHUNK_SIZE, AVG_CHUNK_SIZE, MAX_CHUNK_SIZE);
-    let mut chunks = Vec::new();
-
-    for entry in chunker {
-        let slice = &data[entry.offset..entry.offset + entry.length];
-        let hash = blake3::hash(slice).to_hex().to_string();
-        chunks.push(Chunk {
-            offset: entry.offset as u64,
-            length: entry.length,
-            hash,
-            data: slice.to_vec(),
-        });
-    }
-
-    chunks
+    // 경계 탐색은 순서대로(가벼움), 해시·복사는 청크끼리 독립이라 병렬로 한다.
+    // 큰 파일 하나도 여러 코어를 쓰며 결과 순서(offset 오름차순)는 유지된다.
+    let cuts: Vec<(usize, usize)> =
+        FastCDC::new(data, MIN_CHUNK_SIZE, AVG_CHUNK_SIZE, MAX_CHUNK_SIZE)
+            .map(|e| (e.offset, e.length))
+            .collect();
+    cuts.par_iter()
+        .map(|&(offset, length)| {
+            let slice = &data[offset..offset + length];
+            Chunk {
+                offset: offset as u64,
+                length,
+                hash: blake3::hash(slice).to_hex().to_string(),
+                data: slice.to_vec(),
+            }
+        })
+        .collect()
 }
 
 pub fn chunk_file(path: &Path) -> io::Result<Vec<Chunk>> {

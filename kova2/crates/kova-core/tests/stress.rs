@@ -42,6 +42,32 @@ fn make_tree(root: &Path, small: usize, big: usize, big_mb: usize) {
     }
 }
 
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::io::Read;
+    let (Ok(ma), Ok(mb)) = (fs::metadata(a), fs::metadata(b)) else {
+        return false;
+    };
+    if ma.len() != mb.len() {
+        return false;
+    }
+    let (Ok(mut x), Ok(mut y)) = (fs::File::open(a), fs::File::open(b)) else {
+        return false;
+    };
+    let (mut bx, mut by) = (vec![0u8; 1 << 20], vec![0u8; 1 << 20]);
+    let mut left = ma.len() as usize;
+    while left > 0 {
+        let n = left.min(bx.len());
+        if x.read_exact(&mut bx[..n]).is_err() || y.read_exact(&mut by[..n]).is_err() {
+            return false;
+        }
+        if bx[..n] != by[..n] {
+            return false;
+        }
+        left -= n;
+    }
+    true
+}
+
 fn walk(dir: &Path) -> Vec<PathBuf> {
     let mut out = vec![];
     let mut st = vec![dir.to_path_buf()];
@@ -80,20 +106,30 @@ fn scale_backup_cancel_resume_pack_verify_restore() {
     .unwrap();
     let src = d.path().join("src");
     let repo = d.path().join("repo");
+    // 규모 조절: KOVA_STRESS_BIG(큰 파일 개수), KOVA_STRESS_BIG_MB(각 크기 MB). 기본은 8개×32MB
+    let env = |k: &str, d: usize| {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(d)
+    };
+    let (big, big_mb) = (env("KOVA_STRESS_BIG", 8), env("KOVA_STRESS_BIG_MB", 32));
     let t = Instant::now();
-    make_tree(&src, 4000, 8, 32);
+    make_tree(&src, 4000, big, big_mb);
     let files = walk(&src);
     println!("데이터 생성 {}개 {:?}", files.len(), t.elapsed());
 
     // 1) 취소: 시작 직후 취소 → 오류, 스냅샷(매니페스트) 없음
     let flag = AtomicBool::new(false);
     let cancel_repo = d.path().join("repo_cancel");
+    let csrc = d.path().join("csrc");
+    make_tree(&csrc, 4000, 8, 32);
     std::thread::scope(|s| {
         s.spawn(|| {
             std::thread::sleep(std::time::Duration::from_millis(300));
             flag.store(true, Ordering::Relaxed);
         });
-        let r = run_backup(&opts(&src, &cancel_repo, "c1"), &|_| {}, &flag);
+        let r = run_backup(&opts(&csrc, &cancel_repo, "c1"), &|_| {}, &flag);
         println!("취소 결과: {:?}", r.as_ref().err().map(|e| e.to_string()));
         assert!(
             r.is_err(),
@@ -106,7 +142,7 @@ fn scale_backup_cancel_resume_pack_verify_restore() {
     // 취소 뒤 같은 저장소로 이어서 백업 성공
     let t = Instant::now();
     run_backup(
-        &opts(&src, &cancel_repo, "c2"),
+        &opts(&csrc, &cancel_repo, "c2"),
         &|_| {},
         &AtomicBool::new(false),
     )
@@ -115,8 +151,23 @@ fn scale_backup_cancel_resume_pack_verify_restore() {
 
     // 2) 전체 백업 + 증분
     let t = Instant::now();
-    let s1 = run_backup(&opts(&src, &repo, "s1"), &|_| {}, &AtomicBool::new(false)).unwrap();
-    println!("전체 백업 {:?}", t.elapsed());
+    let s1 = run_backup(
+        &opts(&src, &repo, "s1"),
+        &|e| {
+            if let kova_engine::ops::Event::Phase { phase, message } = e {
+                println!("  [{:>6.1}s] {phase}: {message}", t.elapsed().as_secs_f64());
+            }
+        },
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    println!(
+        "전체 백업 {:?} ({:.1}GB, {:.0}MB/s, 저장 {:.1}GB)",
+        t.elapsed(),
+        s1.total_bytes as f64 / 1e9,
+        s1.throughput_mb,
+        s1.compressed_bytes as f64 / 1e9
+    );
     assert!(
         s1.skipped_files.is_empty(),
         "백업에서 빠진 파일: {:?}",
@@ -176,7 +227,7 @@ fn scale_backup_cancel_resume_pack_verify_restore() {
         let rel = f.strip_prefix(&src).unwrap();
         let hit = restored.iter().find(|r| r.ends_with(rel));
         match hit {
-            Some(r) if fs::read(r).unwrap() == fs::read(f).unwrap() => {}
+            Some(r) if same_file(r, f) => {}
             _ => bad += 1,
         }
     }
