@@ -452,6 +452,16 @@ fn chrono_fmt(ts: f64) -> String {
     }
 }
 
+/// 직전과 같으면 None(화면을 건드리지 않음), 달라졌으면 Some(새 값)을 돌려주고 기억한다.
+fn changed_only<T: PartialEq + Clone>(last: &mut Option<Vec<T>>, new: Vec<T>) -> Option<Vec<T>> {
+    if last.as_ref() == Some(&new) {
+        None
+    } else {
+        *last = Some(new.clone());
+        Some(new)
+    }
+}
+
 /// 서비스와 통신하는 백그라운드 스레드: 상태 폴링 + 이벤트 구독. 화면 갱신은 이벤트 루프로 넘긴다.
 fn spawn_ipc(weak: slint::Weak<MainWindow>) {
     let rt = std::sync::Arc::new(
@@ -465,6 +475,10 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
     std::thread::spawn(move || {
         rt1.block_on(async move {
             let mut last_off: Option<Vec<(String, String, String)>> = None;
+            let mut last_profiles: Option<Vec<ProfileRow>> = None;
+            let mut last_snaps: Option<Vec<SnapRow>> = None;
+            let mut last_alerts: Option<Vec<AlertRow>> = None;
+            let mut last_lines: Option<Vec<slint::SharedString>> = None;
             loop {
                 let text = match kova_ipc::request(kova_ipc::PIPE_NAME, &kova_ipc::Request::Status)
                     .await
@@ -492,6 +506,10 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                     last_off = Some(key);
                     Some(off)
                 };
+                let profiles = changed_only(&mut last_profiles, profiles);
+                let snapshots = changed_only(&mut last_snaps, snapshots);
+                let alerts = changed_only(&mut last_alerts, alerts);
+                let lines = changed_only(&mut last_lines, lines);
                 let n = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir())
                     .unacknowledged();
                 let alert = if n > 0 {
@@ -507,10 +525,24 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                         if let Some(off) = off {
                             w.set_offsite_rows(std::rc::Rc::new(slint::VecModel::from(off)).into());
                         }
-                        w.set_alerts(std::rc::Rc::new(slint::VecModel::from(alerts)).into());
-                        w.set_setting_lines(std::rc::Rc::new(slint::VecModel::from(lines)).into());
-                        w.set_profiles(std::rc::Rc::new(slint::VecModel::from(profiles)).into());
-                        w.set_snapshots(std::rc::Rc::new(slint::VecModel::from(snapshots)).into());
+                        if let Some(alerts) = alerts {
+                            w.set_alerts(std::rc::Rc::new(slint::VecModel::from(alerts)).into());
+                        }
+                        if let Some(lines) = lines {
+                            w.set_setting_lines(
+                                std::rc::Rc::new(slint::VecModel::from(lines)).into(),
+                            );
+                        }
+                        if let Some(profiles) = profiles {
+                            w.set_profiles(
+                                std::rc::Rc::new(slint::VecModel::from(profiles)).into(),
+                            );
+                        }
+                        if let Some(snapshots) = snapshots {
+                            w.set_snapshots(
+                                std::rc::Rc::new(slint::VecModel::from(snapshots)).into(),
+                            );
+                        }
                     }
                 });
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1323,6 +1355,47 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
             set_wizard_sources(&w, &list);
+        });
+        let weak = w.as_weak();
+        w.on_sync_form_list(move |s| {
+            let Some(w) = weak.upgrade() else { return };
+            let list: Vec<slint::SharedString> = s
+                .split(';')
+                .map(str::trim)
+                .filter(|x| !x.is_empty())
+                .map(Into::into)
+                .collect();
+            w.set_form_list(std::rc::Rc::new(slint::VecModel::from(list)).into());
+        });
+        let weak = w.as_weak();
+        w.on_form_add(move |paths| {
+            let Some(w) = weak.upgrade() else { return };
+            let mut list: Vec<String> = w
+                .get_form_sources()
+                .split(';')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            for p in paths.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+                if !list.iter().any(|x| x.eq_ignore_ascii_case(p)) {
+                    list.push(p.to_string());
+                }
+            }
+            w.set_form_sources(list.join(";").into());
+        });
+        let weak = w.as_weak();
+        w.on_form_remove(move |i| {
+            let Some(w) = weak.upgrade() else { return };
+            let mut list: Vec<String> = w
+                .get_form_sources()
+                .split(';')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if (i as usize) < list.len() {
+                list.remove(i as usize);
+            }
+            w.set_form_sources(list.join(";").into());
         });
         let weak = w.as_weak();
         w.on_wz_remove(move |i| {

@@ -227,6 +227,11 @@ export component MainWindow inherits Window {
     in-out property <string> form-id;
     in-out property <string> form-name;
     in-out property <string> form-sources;
+    in property <[string]> form-list;
+    callback sync-form-list(string);
+    callback form-add(string);
+    callback form-remove(int);
+    changed form-sources => { root.sync-form-list(root.form-sources); }
     in-out property <string> form-repo;
     in-out property <string> form-count: "30";
     in-out property <string> form-days: "60";
@@ -506,7 +511,26 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         Heading { text: root.form-id == "" ? "새 프로파일 추가" : "프로파일 수정 중"; }
                         Field { text <=> root.form-name; placeholder: "이름"; }
-                        PathField { text <=> root.form-sources; placeholder: "백업할 폴더 전체 경로 (여러 개는 ; 로 구분)"; kind: "folders"; append: true; pick(k) => { root.browse(k) } }
+                        Text { text: "백업할 폴더 (" + root.form-list.length + "개)"; color: Theme.muted; font-size: 13px; }
+                        if root.form-list.length == 0: Text { text: "아직 고른 폴더가 없습니다. 아래 '+ 폴더 추가'를 눌러 고르세요."; color: Theme.muted; font-size: 13px; }
+                        for f[i] in root.form-list: Rectangle {
+                            height: 34px;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: Theme.line;
+                            background: Theme.bg;
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 4px;
+                                spacing: 8px;
+                                Text { text: f; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+                                Btn { text: "✕ 빼기"; y: 1px; clicked => { root.form-remove(i); } }
+                            }
+                        }
+                        HorizontalLayout {
+                            alignment: start;
+                            Btn { text: "+ 폴더 추가"; kind: 1; clicked => { root.form-add(root.browse("folders")); } }
+                        }
                         PathField { text <=> root.form-repo; placeholder: "백업 저장 폴더 전체 경로"; pick(k) => { root.browse(k) } }
                         HorizontalLayout {
                             spacing: 8px;
