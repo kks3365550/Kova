@@ -1,6 +1,6 @@
 [package]
 name = "kova-app"
-version = "3.5.1"
+version = "3.6.0"
 edition = "2021"
 
 [dependencies]
