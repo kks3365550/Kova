@@ -765,11 +765,47 @@ pub fn run_restore(
     })
 }
 
+/// 블롭을 읽고 풀어서 해시까지 검증한 평문을 돌려준다.
+fn load_chunk(cas: &CasStorage, c: &crate::storage::FileChunkInfo) -> Result<Vec<u8>, String> {
+    let comp = cas
+        .read_blob(&c.hash)
+        .map_err(|e| format!("Missing blob {}: {}", c.hash, e))?;
+    let raw = cas
+        .decode_blob(&comp, &c.hash)
+        .map_err(|e| format!("Decompress failed for {}: {}", c.hash, e))?;
+    if hasher::hash_bytes(&raw) != c.hash {
+        return Err(format!(
+            "Hash mismatch for blob {} (corrupt or tampered)",
+            c.hash
+        ));
+    }
+    Ok(raw)
+}
+
+/// 파일 위치를 지정해 쓴다(핸들을 공유하는 여러 스레드가 서로 다른 위치에 동시에 써도 안전하다).
+fn write_at(f: &File, buf: &[u8], offset: u64) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt;
+        let mut done = 0usize;
+        while done < buf.len() {
+            let n = f.seek_write(&buf[done..], offset + done as u64)?;
+            if n == 0 {
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "쓰기 0바이트"));
+            }
+            done += n;
+        }
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileExt;
+        f.write_all_at(buf, offset)
+    }
+}
+
 fn restore_one(cas: &CasStorage, base: &RestoreBase, entry: &FileEntry) -> Result<(), String> {
     let file_path = resolve_restore_path(base, entry)?;
-    if let Some(parent) = file_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
     // 내용이 있어야 할 파일(size>0)에 청크 정보가 없으면 Rust 형식이 아닌 매니페스트다.
     // 빈 파일을 만들고 성공으로 끝내면 조용한 데이터 유실이므로 실패로 처리한다.
     if entry.size > 0 && entry.chunks.is_empty() {
@@ -779,23 +815,47 @@ fn restore_one(cas: &CasStorage, base: &RestoreBase, entry: &FileEntry) -> Resul
             entry.size
         ));
     }
-    let mut file = File::create(&file_path)
-        .map_err(|e| format!("Cannot create file {}: {}", file_path.display(), e))?;
-    for c in &entry.chunks {
-        let comp = cas
-            .read_blob(&c.hash)
-            .map_err(|e| format!("Missing blob {}: {}", c.hash, e))?;
-        let raw = cas
-            .decode_blob(&comp, &c.hash)
-            .map_err(|e| format!("Decompress failed for {}: {}", c.hash, e))?;
-        if hasher::hash_bytes(&raw) != c.hash {
-            return Err(format!(
-                "Hash mismatch for blob {} (corrupt or tampered)",
-                c.hash
-            ));
+    // 폴더는 복원 시작 때 이미 만들어 두었으니, 없을 때(일부만 복원 등)에만 만든다. 파일마다 폴더를 확인하면
+    // 같은 폴더에 동시에 접근하는 스레드끼리 서로 기다려 크게 느려진다
+    let mut file = match File::create(&file_path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            if let Some(parent) = file_path.parent() {
+                let _ = fs::create_dir_all(parent);
+            }
+            File::create(&file_path)
+                .map_err(|e| format!("Cannot create file {}: {}", file_path.display(), e))?
         }
-        file.write_all(&raw)
-            .map_err(|e| format!("Write failed for {}: {}", file_path.display(), e))?;
+        Err(e) => return Err(format!("Cannot create file {}: {}", file_path.display(), e)),
+    };
+    // 청크가 여럿이고 길이 합이 파일 크기와 맞으면 청크를 묶음 단위로 병렬 복원한다(큰 파일 하나도 여러 코어 사용)
+    let total_len: u64 = entry.chunks.iter().map(|c| c.length as u64).sum();
+    if entry.chunks.len() >= 4 && total_len == entry.size && file.set_len(entry.size).is_ok() {
+        let mut offs = Vec::with_capacity(entry.chunks.len());
+        let mut off = 0u64;
+        for c in &entry.chunks {
+            offs.push(off);
+            off += c.length as u64;
+        }
+        // 묶음마다 끝나야 다음 묶음을 시작하므로 쓰기 위치가 크게 앞서 나가지 않는다
+        // (파일 끝보다 멀리 쓰면 NTFS가 그 앞 구간을 0으로 채우느라 느려진다)
+        const BATCH: usize = 64;
+        for (ci, co) in entry.chunks.chunks(BATCH).zip(offs.chunks(BATCH)) {
+            ci.par_iter().zip(co.par_iter()).try_for_each(|(c, &o)| {
+                let raw = load_chunk(cas, c)?;
+                if raw.len() != c.length {
+                    return Err(format!("Chunk length mismatch for blob {}", c.hash));
+                }
+                write_at(&file, &raw, o)
+                    .map_err(|e| format!("Write failed for {}: {}", file_path.display(), e))
+            })?;
+        }
+    } else {
+        for c in &entry.chunks {
+            let raw = load_chunk(cas, c)?;
+            file.write_all(&raw)
+                .map_err(|e| format!("Write failed for {}: {}", file_path.display(), e))?;
+        }
     }
     // 원래 수정 시각 복원 (실패해도 복원 자체는 성공)
     if entry.modified > 0 {
@@ -1162,7 +1222,8 @@ mod tests {
         let cas = CasStorage::new(&repo).unwrap();
         let m = cas.load_manifest("t1").unwrap();
         let hash = m.files()[0].chunks[0].hash.clone();
-        // 정상 압축본이지만 다른 내용으로 바꿔치기(낱개 파일이 팩보다 먼저 읽힌다)
+        // 정상 압축본이지만 다른 내용으로 바꿔치기. 낱개 파일만 남도록 팩은 지운다(읽을 때는 팩이 먼저다)
+        fs::remove_dir_all(repo.join("packs")).unwrap();
         fs::create_dir_all(cas.blob_path(&hash).parent().unwrap()).unwrap();
         fs::write(
             cas.blob_path(&hash),
@@ -1211,6 +1272,36 @@ mod tests {
             &AtomicBool::new(false),
         );
         assert!(r.is_err(), "망가진 팩인데 복원이 성공함");
+    }
+
+    /// 청크가 많아 병렬로 복원되는 큰 파일에서도 변조된 청크는 복원 실패로 잡힌다.
+    #[test]
+    fn tampered_chunk_in_parallel_restore_fails() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("big.bin"), noise(24 * 1024 * 1024, 11)).unwrap();
+        let repo = d.path().join("repo");
+        backup(&src, &repo, "t1");
+        let ids = crate::pack::pack_ids(&repo);
+        let pf = crate::pack::pack_file(&repo, ids.last().unwrap());
+        let mut bytes = fs::read(&pf).unwrap();
+        let mid = bytes.len() / 2;
+        for b in &mut bytes[mid..mid + 64] {
+            *b ^= 0xFF;
+        }
+        fs::write(&pf, bytes).unwrap();
+        let r = run_restore(
+            &RestoreOptions {
+                repo,
+                session_id: "t1".into(),
+                only: None,
+                target: Some(d.path().join("out")),
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        );
+        assert!(r.is_err(), "변조된 청크인데 복원이 성공함");
     }
 
     #[test]

@@ -144,7 +144,12 @@ pub struct CasStorage {
     staged: std::sync::RwLock<std::collections::HashSet<String>>,
     /// 팩 쓰기가 한 번이라도 실패했는지(실패하면 `flush_staged` 가 오류를 돌려준다)
     stage_err: std::sync::Mutex<Option<String>>,
+    /// 복원 중 같은 팩을 청크마다 다시 열지 않도록 열어 둔 팩 파일 핸들
+    open_packs: std::sync::RwLock<std::collections::HashMap<String, std::sync::Arc<File>>>,
 }
+
+/// 열어 둘 팩 핸들 수의 상한(넘으면 비우고 다시 연다)
+const OPEN_PACKS_MAX: usize = 256;
 
 /// 모은 블롭이 이만큼 쌓이면 팩 파일 하나로 쓴다
 const STAGE_LIMIT: usize = 64 * 1024 * 1024;
@@ -168,6 +173,7 @@ impl CasStorage {
             stage: Default::default(),
             staged: Default::default(),
             stage_err: Default::default(),
+            open_packs: Default::default(),
         })
     }
 
@@ -344,7 +350,47 @@ impl CasStorage {
         Ok(true)
     }
 
+    /// 팩 안의 블롭을 읽는다(핸들 재사용). 핸들 읽기가 실패하면 새로 열어 한 번 더 읽는다.
+    fn read_packed(&self, entry: &crate::pack::PackEntry) -> io::Result<Vec<u8>> {
+        let cached = self
+            .open_packs
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&entry.pack)
+            .cloned();
+        let handle = match cached {
+            Some(h) => h,
+            None => {
+                let h = std::sync::Arc::new(File::open(crate::pack::pack_file(
+                    &self.repo_root,
+                    &entry.pack,
+                ))?);
+                let mut m = self.open_packs.write().unwrap_or_else(|e| e.into_inner());
+                if m.len() >= OPEN_PACKS_MAX {
+                    m.clear();
+                }
+                m.insert(entry.pack.clone(), h.clone());
+                h
+            }
+        };
+        let mut buf = vec![0u8; entry.len as usize];
+        match crate::pack::read_at(&handle, &mut buf, entry.offset) {
+            Ok(()) => Ok(buf),
+            Err(_) => {
+                self.open_packs
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&entry.pack);
+                crate::pack::read_entry(&self.repo_root, entry)
+            }
+        }
+    }
+
     pub fn read_blob(&self, hash: &str) -> io::Result<Vec<u8>> {
+        // 팩에 있는 블롭은 낱개 파일이 없으므로, 없는 파일을 먼저 열어 보는 헛걸음을 하지 않는다
+        if let Some(entry) = self.pack_index().get(hash) {
+            return self.read_packed(entry);
+        }
         let target_path = self.blob_path(hash);
         match File::open(target_path) {
             Ok(mut file) => {
@@ -360,7 +406,7 @@ impl CasStorage {
                     .cloned()
                     .or_else(|| crate::pack::load_index(&self.repo_root).remove(hash));
                 match hit {
-                    Some(entry) => crate::pack::read_entry(&self.repo_root, &entry),
+                    Some(entry) => self.read_packed(&entry),
                     None => Err(e),
                 }
             }

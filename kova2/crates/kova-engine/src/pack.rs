@@ -89,6 +89,28 @@ pub fn read_entry(repo: &Path, e: &PackEntry) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
+/// 파일 핸들을 공유하는 위치 지정 읽기(여러 스레드가 같은 핸들로 동시에 읽어도 안전하다).
+pub fn read_at(f: &File, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileExt;
+        let (mut done, total) = (0usize, buf.len());
+        while done < total {
+            let n = f.seek_read(&mut buf[done..], offset + done as u64)?;
+            if n == 0 {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "팩이 짧음"));
+            }
+            done += n;
+        }
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::FileExt;
+        f.read_exact_at(buf, offset)
+    }
+}
+
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn new_id() -> String {
