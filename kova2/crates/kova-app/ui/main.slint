@@ -237,6 +237,10 @@ export component MainWindow inherits Window {
     callback restore-inplace(string, string);
     callback delete-snapshot(string, string);
     in-out property <string> snap-pending;
+    // 되돌리기 기본값은 "원래 자리": 백업해 둔 파일을 원래 있던 곳으로 돌려놓는 것이 보통의 목적이다
+    in-out property <bool> restore-orig: true;
+    in-out property <string> restore-folder: root.default-restore;
+    in-out property <bool> browse-confirm: false;
     callback open-browse(string, string, string);
     callback browse-go(string);
     callback browse-up();
@@ -794,13 +798,21 @@ export component MainWindow inherits Window {
             if root.page == 2: VerticalLayout {
                 spacing: 12px;
                 Card {
-                    height: 132px;
+                    height: root.restore-orig ? 170px : 216px;
                     VerticalLayout {
                         padding: 16px;
                         spacing: 8px;
-                        Heading { text: "어디에 되돌릴까요?"; }
-                        rt := PathField { text: root.default-restore; placeholder: "되돌린 파일을 넣을 새 폴더"; pick(k) => { root.browse(k) } }
-                        Hint { text: "아래 목록에서 되돌리고 싶은 날짜를 골라 버튼을 누르세요. 지금 있는 파일은 건드리지 않고, 위 폴더에 따로 꺼내 드립니다."; }
+                        Heading { text: "백업해 둔 파일 되돌리기"; }
+                        Hint { text: "① 아래 목록에서 되돌리고 싶은 날짜를 고릅니다.  ② '되돌리기'를 누릅니다.  ③ 그 날짜에 백업해 둔 파일이 되돌려집니다."; }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: start;
+                            Btn { text: "원래 자리에 되돌리기 (기본)"; kind: root.restore-orig ? 1 : 0; clicked => { root.restore-orig = true; root.snap-pending = ""; root.browse-confirm = false; } }
+                            Btn { text: "다른 폴더에 따로 꺼내기"; kind: root.restore-orig ? 0 : 1; clicked => { root.restore-orig = false; root.snap-pending = ""; root.browse-confirm = false; } }
+                        }
+                        if root.restore-orig: Hint { text: "파일이 원래 있던 자리로 돌아갑니다. 지금 있는 같은 이름의 파일은 백업했을 때의 내용으로 바뀝니다. (덮어쓰기 전에 한 번 더 물어봅니다)"; }
+                        if !root.restore-orig: PathField { text <=> root.restore-folder; placeholder: "꺼낸 파일을 넣을 폴더"; pick(k) => { root.browse(k) } }
+                        if !root.restore-orig: Hint { text: "지금 있는 파일은 건드리지 않고, 위 폴더에 따로 꺼내 드립니다."; }
                     }
                 }
                 if root.browse-open: VerticalLayout {
@@ -808,7 +820,7 @@ export component MainWindow inherits Window {
                     vertical-stretch: 1;
                     HorizontalLayout {
                         spacing: 8px;
-                        Btn { text: "← 목록"; clicked => { root.browse-open = false; } }
+                        Btn { text: "← 목록"; clicked => { root.browse-open = false; root.browse-confirm = false; } }
                         Btn { text: "상위 폴더"; clicked => { root.browse-up(); } }
                         Text { text: root.browse-title + "  " + root.browse-dir; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
                         bq := Field { placeholder: "파일 이름 검색"; width: 180px; }
@@ -849,7 +861,20 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         Text { text: root.browse-status != "" ? root.browse-status : "폴더를 누르면 안으로 들어가고, 네모 칸을 눌러 되돌릴 파일을 체크하세요"; color: Theme.muted; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
                         Text { text: root.browse-selected + "개 선택"; color: Theme.text; font-size: 13px; vertical-alignment: center; }
-                        Btn { text: "체크한 파일 되돌리기"; kind: 1; clicked => { root.browse-restore(rt.text); } }
+                        Btn {
+                            text: !root.restore-orig ? "체크한 파일 꺼내기" : root.browse-confirm ? "정말 덮어쓰기" : "체크한 파일 되돌리기";
+                            kind: root.restore-orig && root.browse-confirm ? 2 : 1;
+                            clicked => {
+                                if (!root.restore-orig) {
+                                    root.browse-restore(root.restore-folder);
+                                } else if (root.browse-confirm) {
+                                    root.browse-confirm = false;
+                                    root.browse-restore("@원래자리");
+                                } else {
+                                    root.browse-confirm = true;
+                                }
+                            }
+                        }
                     }
                 }
                 if !root.browse-open: Card {
@@ -876,14 +901,16 @@ export component MainWindow inherits Window {
                                     Text { text: s.summary; color: Theme.muted; font-size: 12px; overflow: elide; }
                                 }
                                 Text { text: s.verified; color: s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok; font-size: 12px; width: 64px; vertical-alignment: center; }
-                                Btn { text: "골라서 되돌리기"; y: 6px; clicked => { root.browse-open = true; root.open-browse(s.repo, s.id, s.when); } }
-                                Btn { text: "전부 되돌리기"; kind: 1; y: 6px; clicked => { root.snap-pending = ""; root.restore-snapshot(s.repo, s.id, rt.text); } }
-                                if root.advanced: Btn {
-                                    text: root.snap-pending == "R" + s.repo + s.id ? "정말 덮어쓰기" : "원래 위치로";
-                                    kind: 2;
+                                Btn { text: "일부만 골라서"; y: 6px; clicked => { root.browse-confirm = false; root.browse-open = true; root.open-browse(s.repo, s.id, s.when); } }
+                                Btn {
+                                    text: !root.restore-orig ? "전부 꺼내기" : root.snap-pending == "R" + s.repo + s.id ? "정말 덮어쓰기" : "전부 되돌리기";
+                                    kind: root.restore-orig && root.snap-pending == "R" + s.repo + s.id ? 2 : 1;
                                     y: 6px;
                                     clicked => {
-                                        if (root.snap-pending == "R" + s.repo + s.id) {
+                                        if (!root.restore-orig) {
+                                            root.snap-pending = "";
+                                            root.restore-snapshot(s.repo, s.id, root.restore-folder);
+                                        } else if (root.snap-pending == "R" + s.repo + s.id) {
                                             root.snap-pending = "";
                                             root.restore-inplace(s.repo, s.id);
                                         } else {
@@ -943,51 +970,62 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     spacing: 12px;
                     Card {
+                        height: 120px;
+                        background: Theme.accent.with-alpha(0.12);
+                        border-color: Theme.accent;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 6px;
+                            Heading { text: "디스크 통째 백업이란?"; }
+                            Hint { text: "파일을 하나하나 저장하는 대신, 드라이브 전체를 사진 찍듯이 '이미지 파일(.qblk)' 하나로 저장하는 기능입니다. 윈도가 아예 켜지지 않을 만큼 컴퓨터가 망가졌을 때 통째로 되살리려고 씁니다. 평소 문서·사진 백업은 '홈'에서 하시면 되고, 이 화면은 보통 쓸 일이 없습니다."; }
+                        }
+                    }
+                    Card {
+                        height: 128px;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+                            Heading { text: "1. 드라이브를 통째로 저장하기"; }
+                            Hint { text: "저장할 드라이브 글자(예: C 또는 D)를 적고 버튼을 누르세요. 지금 쓰는 중이어도 안전하게 복사본을 만들어 저장합니다. 저장된 이미지는 백업 저장 폴더 안의 images 폴더에 생깁니다."; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: start;
+                                cvol := Field { placeholder: "드라이브 글자 (예: C)"; width: 200px; }
+                                Btn { text: "드라이브 저장 시작"; kind: 1; clicked => { root.capture-volume(cvol.text); } }
+                            }
+                        }
+                    }
+                    Card {
                         height: 178px;
                         VerticalLayout {
                             padding: 16px;
                             spacing: 8px;
-                            Heading { text: "이미지(.qblk) 검증 · 복원"; }
-                            Hint { text: "복원은 새 파일(.img/.raw/.vhd/.vhdx/.bin)로만 풉니다. 실제 디스크·드라이브로는 복원되지 않습니다."; }
-                            img := PathField { placeholder: "이미지 파일(.qblk) 경로"; kind: "qblk-open"; pick(k) => { root.browse(k) } }
-                            out := PathField { placeholder: "복원할 새 파일 경로 (예: 새 폴더의 restored.img)"; kind: "img-save"; pick(k) => { root.browse(k) } }
+                            Heading { text: "2. 저장해 둔 이미지 확인하거나 꺼내기"; }
+                            Hint { text: "'확인만'은 이미지가 망가지지 않았는지 검사합니다. '꺼내기'는 이미지 안의 내용을 새 파일(.img/.vhd 등)로 풀어 줍니다. 안전을 위해 지금 쓰는 디스크 위에는 덮어쓰지 않고, 항상 새 파일로만 만듭니다."; }
+                            img := PathField { placeholder: "저장해 둔 이미지 파일(.qblk) 고르기"; kind: "qblk-open"; pick(k) => { root.browse(k) } }
+                            out := PathField { placeholder: "꺼낸 내용을 담을 새 파일 이름 (예: restored.img)"; kind: "img-save"; pick(k) => { root.browse(k) } }
                         }
                     }
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: end;
-                        Btn { text: "검증만"; clicked => { root.verify-image(img.text); } }
-                        Btn { text: "복원"; kind: 2; clicked => { root.restore-image(img.text, out.text); } }
+                        Btn { text: "확인만"; clicked => { root.verify-image(img.text); } }
+                        Btn { text: "꺼내기"; kind: 1; clicked => { root.restore-image(img.text, out.text); } }
                     }
                     Card {
-                        height: 150px;
+                        height: 160px;
                         VerticalLayout {
                             padding: 16px;
                             spacing: 8px;
-                            Heading { text: "디스크 이미지 파일 → .qblk"; }
-                            Hint { text: ".img/.raw/.bin/.vhd 를 .qblk 로 만듭니다. 원본은 읽기만 합니다."; }
-                            csrc := PathField { placeholder: "원본 이미지 파일 경로"; kind: "img-open"; pick(k) => { root.browse(k) } }
-                            cout := PathField { placeholder: "만들 .qblk 파일 전체 경로 (새 파일)"; kind: "qblk-save"; pick(k) => { root.browse(k) } }
+                            Heading { text: "3. 이미 가진 디스크 이미지를 Kova 형식으로 바꾸기 (고급)"; }
+                            Hint { text: "다른 프로그램으로 만든 .img/.raw/.bin/.vhd 파일을 Kova 이미지(.qblk)로 변환합니다. 원본 파일은 읽기만 하고 바꾸지 않습니다."; }
+                            csrc := PathField { placeholder: "변환할 원본 이미지 파일 고르기"; kind: "img-open"; pick(k) => { root.browse(k) } }
+                            cout := PathField { placeholder: "만들 Kova 이미지(.qblk) 이름 (새 파일)"; kind: "qblk-save"; pick(k) => { root.browse(k) } }
                         }
                     }
                     HorizontalLayout {
                         alignment: end;
-                        Btn { text: "이미지 만들기"; kind: 1; clicked => { root.capture-image(csrc.text, cout.text); } }
-                    }
-                    Card {
-                        height: 120px;
-                        VerticalLayout {
-                            padding: 16px;
-                            spacing: 8px;
-                            Heading { text: "내장 드라이브 볼륨 이미지"; }
-                            Hint { text: "서비스가 섀도 복사본으로 읽기 전용 이미지를 만듭니다. 저장 위치: 첫 프로파일 저장 폴더 안 images 폴더."; }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                alignment: start;
-                                cvol := Field { placeholder: "드라이브 문자 (예: F)"; width: 200px; }
-                                Btn { text: "볼륨 이미지 만들기"; kind: 1; clicked => { root.capture-volume(cvol.text); } }
-                            }
-                        }
+                        Btn { text: "변환하기"; kind: 1; clicked => { root.capture-image(csrc.text, cout.text); } }
                     }
                     Text { text: root.image-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
                 }

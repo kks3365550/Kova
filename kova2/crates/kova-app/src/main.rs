@@ -1524,7 +1524,12 @@ fn parent_dir(dir: &str) -> String {
 }
 
 /// 스냅샷을 원래 위치로 되돌린다(같은 이름의 파일은 덮어쓴다). 화면에서 두 번 확인한 뒤에만 호출된다.
-fn restore_inplace_job(weak: slint::Weak<MainWindow>, repo: String, sid: String) {
+fn restore_inplace_job(
+    weak: slint::Weak<MainWindow>,
+    repo: String,
+    sid: String,
+    only: Option<Vec<String>>,
+) {
     let show = |w: &slint::Weak<MainWindow>, t: String| {
         let w = w.clone();
         let _ = slint::invoke_from_event_loop(move || {
@@ -1538,7 +1543,7 @@ fn restore_inplace_job(weak: slint::Weak<MainWindow>, repo: String, sid: String)
         let opts = kova_engine::ops::RestoreOptions {
             repo: std::path::PathBuf::from(&repo),
             session_id: sid,
-            only: None,
+            only,
             target: None,
         };
         let cancel = std::sync::atomic::AtomicBool::new(false);
@@ -2213,7 +2218,18 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
-            restore_snapshot_job(weak.clone(), repo, sid, t.to_string(), Some(sel));
+            // 대상 폴더가 비어 있으면 "원래 자리로 되돌리기"(화면에서 덮어쓰기를 두 번 확인한 뒤에만 비워 보낸다)
+            if t.as_str() == "@원래자리" {
+                if app_locked() {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_restore_text(LOCKED_MSG.into());
+                    }
+                    return;
+                }
+                restore_inplace_job(weak.clone(), repo, sid, Some(sel));
+            } else {
+                restore_snapshot_job(weak.clone(), repo, sid, t.to_string(), Some(sel));
+            }
         });
     }
     w.on_run_gc(|id| send("gc", id.to_string()));
@@ -2226,7 +2242,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
-            restore_inplace_job(weak.clone(), repo.to_string(), sid.to_string())
+            restore_inplace_job(weak.clone(), repo.to_string(), sid.to_string(), None)
         });
         let weak = w.as_weak();
         w.on_delete_snapshot(move |repo, sid| {
