@@ -344,6 +344,14 @@ fn rows() -> Vec<ProfileRow> {
                 kova_core::profile_form::schedule_text(&p)
             )
             .into(),
+            size: "".into(),
+            next: kova_core::profile_form::schedule_text(&p).into(),
+            stale: p.last_run.is_some_and(|t| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64() - t > 3.0 * 86400.0)
+                    .unwrap_or(false)
+            }),
             last: match (p.last_status.as_str(), p.last_run) {
                 ("", _) | (_, None) => "기록 없음".to_string(),
                 (s, Some(t)) => format!(
@@ -671,6 +679,38 @@ fn snaps() -> Vec<SnapRow> {
     all.into_iter().take(50).map(|x| x.1).collect()
 }
 
+/// 홈 화면의 "내 드라이브와 백업 보관함": 존재하는 드라이브별 사용률. 백업 저장소가 있는 드라이브를 표시한다.
+fn drive_rows() -> Vec<DriveRow> {
+    let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+    let repos: Vec<String> = store
+        .profiles()
+        .iter()
+        .map(|p| p.repo_dir.to_uppercase())
+        .collect();
+    let gb = |b: u64| format!("{:.1} GB", b as f64 / 1_073_741_824.0);
+    let mut v = Vec::new();
+    for l in b'C'..=b'Z' {
+        let root = format!("{}:\\", l as char);
+        if !std::path::Path::new(&root).exists() {
+            continue;
+        }
+        let Some((total, avail)) = kova_core::diskspace::usage(std::path::Path::new(&root)) else {
+            continue;
+        };
+        let used = total.saturating_sub(avail);
+        v.push(DriveRow {
+            name: format!("{}:", l as char).into(),
+            pct: (used as f64 * 100.0 / total as f64).round() as i32,
+            used: gb(used).into(),
+            free: gb(avail).into(),
+            repo: repos
+                .iter()
+                .any(|r| r.starts_with(&format!("{}:", l as char))),
+        });
+    }
+    v
+}
+
 fn chrono_fmt(ts: f64) -> String {
     // 외부 의존 없이 "N분/시간/일 전"으로 표시
     let secs = (std::time::SystemTime::now()
@@ -712,6 +752,7 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
             let mut last_off: Option<Vec<(String, String, String)>> = None;
             let mut last_profiles: Option<Vec<ProfileRow>> = None;
             let mut last_snaps: Option<Vec<SnapRow>> = None;
+            let mut last_drives: Option<Vec<DriveRow>> = None;
             let mut last_alerts: Option<Vec<AlertRow>> = None;
             let mut last_lines: Option<Vec<slint::SharedString>> = None;
             loop {
@@ -727,8 +768,16 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                     Err(_) => "서비스에 연결할 수 없음 (Kova 서비스가 꺼져 있습니다)".into(),
                 };
                 let w = w1.clone();
-                let profiles = rows();
+                let mut profiles = rows();
                 let snapshots = snaps();
+                // 대상별 크기: 가장 최근 스냅샷 요약("파일 N개 · 크기")의 크기 부분
+                for p in profiles.iter_mut() {
+                    if let Some(s) = snapshots.iter().find(|s| s.name == p.name) {
+                        if let Some((_, sz)) = s.summary.split_once(" · ") {
+                            p.size = sz.into();
+                        }
+                    }
+                }
                 let (alerts, lines, off) = (alert_rows(), setting_lines(), offsite_rows());
                 // 입력 중인 칸이 2초마다 초기화되지 않도록, 내용이 바뀐 때만 모델을 교체한다
                 let key: Vec<(String, String, String)> = off
@@ -743,6 +792,7 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                 };
                 let profiles = changed_only(&mut last_profiles, profiles);
                 let snapshots = changed_only(&mut last_snaps, snapshots);
+                let drives = changed_only(&mut last_drives, drive_rows());
                 let alerts = changed_only(&mut last_alerts, alerts);
                 let lines = changed_only(&mut last_lines, lines);
                 let n = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir())
@@ -757,6 +807,9 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                         w.set_service_ok(text.starts_with("서비스 연결됨"));
                         w.set_service_status(text.into());
                         w.set_alert_text(alert.into());
+                        if let Some(drives) = drives {
+                            w.set_drives(std::rc::Rc::new(slint::VecModel::from(drives)).into());
+                        }
                         if let Some(off) = off {
                             w.set_offsite_rows(std::rc::Rc::new(slint::VecModel::from(off)).into());
                         }
@@ -1576,6 +1629,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let w = MainWindow::new()?;
+    w.set_app_version(env!("CARGO_PKG_VERSION").into());
     w.set_wz_repo(known_folder("backup").into());
     w.set_default_restore(known_folder("restore").into());
     w.on_known_folder(|k| known_folder(&k).into());

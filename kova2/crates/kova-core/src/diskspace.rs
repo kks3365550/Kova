@@ -35,6 +35,28 @@ pub fn free_bytes(path: &Path) -> Option<u64> {
     }
 }
 
+/// 드라이브의 (전체 바이트, 쓸 수 있는 바이트). 알 수 없으면 None. 화면 표시용.
+pub fn usage(path: &Path) -> Option<(u64, u64)> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        let wide: Vec<u16> = path
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
+        // SAFETY: wide 는 NUL 로 끝나는 유효한 UTF-16 문자열이고, 세 출력 포인터는 이 함수 안의 지역 변수다.
+        let ok = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut avail, &mut total, &mut free) };
+        (ok != 0 && total > 0).then_some((total, avail))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 /// 남은 공간이 최소 기준(GB) 아래면 사용자에게 보여 줄 사유를 돌려준다. 기준이 0이거나 남은 공간을 모르면 통과.
 pub fn check_min_free(free: Option<u64>, min_gb: u32) -> Result<(), String> {
     let (Some(free), true) = (free, min_gb > 0) else {
