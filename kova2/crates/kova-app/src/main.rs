@@ -727,6 +727,44 @@ fn chrono_fmt(ts: f64) -> String {
     }
 }
 
+/// 백업 보관함의 images 폴더에서 저장된 디스크 이미지(.qblk)를 최신순으로 찾는다.
+fn image_rows() -> Vec<ImageRow> {
+    let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+    let mut seen = std::collections::HashSet::new();
+    let mut all: Vec<(std::time::SystemTime, ImageRow)> = Vec::new();
+    for p in store.profiles() {
+        let dir = std::path::Path::new(&p.repo_dir).join("images");
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some("qblk")
+                || !seen.insert(path.clone())
+            {
+                continue;
+            }
+            let Ok(md) = e.metadata() else { continue };
+            let mtime = md.modified().unwrap_or(std::time::UNIX_EPOCH);
+            let ts = mtime
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            all.push((
+                mtime,
+                ImageRow {
+                    name: e.file_name().to_string_lossy().to_string().into(),
+                    path: path.to_string_lossy().to_string().into(),
+                    size: format!("{:.1} GB", md.len() as f64 / 1_073_741_824.0).into(),
+                    when: chrono_fmt(ts).into(),
+                },
+            ));
+        }
+    }
+    all.sort_by_key(|x| std::cmp::Reverse(x.0));
+    all.into_iter().take(20).map(|x| x.1).collect()
+}
+
 /// 직전과 같으면 None(화면을 건드리지 않음), 달라졌으면 Some(새 값)을 돌려주고 기억한다.
 fn changed_only<T: PartialEq + Clone>(last: &mut Option<Vec<T>>, new: Vec<T>) -> Option<Vec<T>> {
     if last.as_ref() == Some(&new) {
@@ -753,6 +791,7 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
             let mut last_profiles: Option<Vec<ProfileRow>> = None;
             let mut last_snaps: Option<Vec<SnapRow>> = None;
             let mut last_drives: Option<Vec<DriveRow>> = None;
+            let mut last_images: Option<Vec<ImageRow>> = None;
             let mut last_alerts: Option<Vec<AlertRow>> = None;
             let mut last_lines: Option<Vec<slint::SharedString>> = None;
             loop {
@@ -793,6 +832,7 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                 let profiles = changed_only(&mut last_profiles, profiles);
                 let snapshots = changed_only(&mut last_snaps, snapshots);
                 let drives = changed_only(&mut last_drives, drive_rows());
+                let images = changed_only(&mut last_images, image_rows());
                 let alerts = changed_only(&mut last_alerts, alerts);
                 let lines = changed_only(&mut last_lines, lines);
                 let n = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir())
@@ -807,6 +847,14 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                         w.set_service_ok(text.starts_with("서비스 연결됨"));
                         w.set_service_status(text.into());
                         w.set_alert_text(alert.into());
+                        if let Some(images) = images {
+                            if w.get_img_path().is_empty() {
+                                if let Some(f) = images.first() {
+                                    w.set_img_path(f.path.clone());
+                                }
+                            }
+                            w.set_images(std::rc::Rc::new(slint::VecModel::from(images)).into());
+                        }
                         if let Some(drives) = drives {
                             w.set_drives(std::rc::Rc::new(slint::VecModel::from(drives)).into());
                         }
@@ -2131,7 +2179,23 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
         let weak = w.as_weak();
-        w.on_restore_image(move |p, t| image_job(weak.clone(), p.to_string(), Some(t.to_string())));
+        w.on_restore_image(move |p, t| {
+            let (p, mut t) = (p.to_string(), t.trim().to_string());
+            if t.is_empty() {
+                // 비워 두면 이미지 옆에 `<이름>_restored.img` 로 자동 지정(기존 파일은 덮어쓰지 않으므로 번호를 붙인다)
+                let src = std::path::Path::new(&p);
+                let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("image");
+                let dir = src.parent().unwrap_or(std::path::Path::new("."));
+                let mut cand = dir.join(format!("{stem}_restored.img"));
+                let mut n = 2;
+                while cand.exists() {
+                    cand = dir.join(format!("{stem}_restored_{n}.img"));
+                    n += 1;
+                }
+                t = cand.to_string_lossy().to_string();
+            }
+            image_job(weak.clone(), p, Some(t));
+        });
     }
     {
         let weak = w.as_weak();
