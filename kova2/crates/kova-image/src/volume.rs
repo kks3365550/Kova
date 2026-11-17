@@ -33,12 +33,14 @@ pub fn write_image<R: Read + Seek, W: Write + Seek>(
         },
     );
     let mut w = Writer::new(std::io::BufWriter::new(out), header, level)?;
-    let mut st = Stats::default();
-    st.total_raw_bytes = runs
-        .iter()
-        .filter(|(lcn, _)| *lcn < total)
-        .map(|(lcn, count)| (*count).min(total - *lcn) * cs)
-        .sum();
+    let mut st = Stats {
+        total_raw_bytes: runs
+            .iter()
+            .filter(|(lcn, _)| *lcn < total)
+            .map(|(lcn, count)| (*count).min(total - *lcn) * cs)
+            .sum(),
+        ..Stats::default()
+    };
     let mut buf: Vec<u8> = Vec::new();
     for (lcn, count) in runs {
         if cancel.load(Ordering::Relaxed) {

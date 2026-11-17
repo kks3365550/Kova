@@ -453,11 +453,9 @@ impl Supervisor {
             if *l != gb {
                 *l = gb;
                 let total_gb = s.total_raw_bytes >> 30;
-                let percent = if s.total_raw_bytes > 0 {
-                    (s.raw_bytes * 100 / s.total_raw_bytes).min(99)
-                } else {
-                    0
-                };
+                let percent = (s.raw_bytes * 100)
+                    .checked_div(s.total_raw_bytes)
+                    .map_or(0, |p| p.min(99));
                 self.emit(SvcEvent::Progress {
                     job_id: id,
                     percent,

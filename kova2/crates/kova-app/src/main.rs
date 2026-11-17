@@ -806,13 +806,16 @@ fn convert_candidates() -> Vec<ImageRow> {
         if visited > 20000 || out.len() >= 40 {
             break;
         }
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in rd.flatten() {
             let path = e.path();
             let Ok(md) = e.metadata() else { continue };
             if md.is_dir() {
                 let name = e.file_name().to_string_lossy().to_lowercase();
-                if depth > 1 && !SKIP.contains(&name.as_str()) && !repos.iter().any(|r| r == &path) {
+                if depth > 1 && !SKIP.contains(&name.as_str()) && !repos.iter().any(|r| r == &path)
+                {
                     stack.push((path, depth - 1));
                 }
                 continue;
@@ -878,6 +881,8 @@ fn delete_image_file(path: &str) -> Result<(), String> {
         // 읽기 전용(랜섬웨어 보호)이면 속성을 풀고 한 번 더 시도
         if let Ok(md) = std::fs::metadata(&canon) {
             let mut perm = md.permissions();
+            #[allow(clippy::permissions_set_readonly_false)]
+            // 윈도우 전용 앱: 읽기 전용 속성만 푼다
             perm.set_readonly(false);
             let _ = std::fs::set_permissions(&canon, perm);
         }
