@@ -1,3 +1,0 @@
-select volume W
-extend filesystem
-exit
