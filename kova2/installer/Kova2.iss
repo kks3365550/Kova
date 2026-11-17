@@ -3,7 +3,7 @@
 ; =========================================================================
 
 #define MyAppName "Kova2"
-#define MyAppVersion "3.11.2"
+#define MyAppVersion "3.11.3"
 #define MyAppPublisher "kks3365550"
 
 [Setup]

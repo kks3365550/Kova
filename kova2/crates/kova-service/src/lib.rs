@@ -194,7 +194,8 @@ impl Supervisor {
         let on_event = |e: EngineEvent| {
             if let EngineEvent::Progress(p) = e {
                 let mut l = last_pct.lock().unwrap();
-                if *l != p.percent {
+                // 병렬 작업자가 순서 없이 보고해도 진행률이 뒤로 가지 않게(100% 다음 99% 방지) 커질 때만 알린다
+                if *l == u64::MAX || p.percent > *l {
                     *l = p.percent;
                     self.emit(SvcEvent::Progress {
                         job_id: id,
@@ -306,13 +307,24 @@ impl Supervisor {
                 let mut msg = if s.skipped_files.is_empty() {
                     format!("완료: {}개 항목, {}바이트", s.total_files, s.total_bytes)
                 } else {
+                    // 건너뛴 파일은 경로만 보인다(운영체제 오류 원문은 로그에 있으므로 메시지에서 뺀다)
+                    let denied = s
+                        .skipped_files
+                        .iter()
+                        .filter(|f| f.contains("os error 5") || f.contains("os error 32"))
+                        .count();
                     format!(
-                        "완료(건너뜀 {}개: {}{}): {}개 항목",
+                        "완료(건너뜀 {}개{}: {}{}): {}개 항목",
                         s.skipped_files.len(),
+                        if denied > 0 {
+                            format!(", 시스템이 잠근 파일 {denied}개")
+                        } else {
+                            String::new()
+                        },
                         s.skipped_files
                             .iter()
                             .take(3)
-                            .cloned()
+                            .map(|f| f.split(" (").next().unwrap_or(f).to_string())
                             .collect::<Vec<_>>()
                             .join("; "),
                         if s.skipped_files.len() > 3 {
@@ -440,10 +452,16 @@ impl Supervisor {
             let mut l = last.lock().unwrap();
             if *l != gb {
                 *l = gb;
+                let total_gb = s.total_raw_bytes >> 30;
+                let percent = if s.total_raw_bytes > 0 {
+                    (s.raw_bytes * 100 / s.total_raw_bytes).min(99)
+                } else {
+                    0
+                };
                 self.emit(SvcEvent::Progress {
                     job_id: id,
-                    percent: 0,
-                    current: format!("{gb}GB 읽음"),
+                    percent,
+                    current: format!("{gb}GB / {total_gb}GB 읽음"),
                 });
             }
         });

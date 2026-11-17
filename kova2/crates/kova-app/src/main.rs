@@ -765,6 +765,146 @@ fn image_rows() -> Vec<ImageRow> {
     all.into_iter().take(20).map(|x| x.1).collect()
 }
 
+/// 변환할 만한 디스크 이미지(.img/.raw/.bin/.vhd, 100MB 이상)를 사용자 폴더와 각 드라이브 앞쪽 폴더에서 찾는다.
+fn convert_candidates() -> Vec<ImageRow> {
+    const SKIP: [&str; 9] = [
+        "windows",
+        "program files",
+        "program files (x86)",
+        "programdata",
+        "$recycle.bin",
+        "system volume information",
+        "appdata",
+        "node_modules",
+        ".git",
+    ];
+    let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+    let repos: Vec<std::path::PathBuf> = store
+        .profiles()
+        .iter()
+        .map(|p| std::path::PathBuf::from(&p.repo_dir))
+        .collect();
+    let mut roots: Vec<(std::path::PathBuf, u32)> = Vec::new();
+    if let Some(h) = std::env::var_os("USERPROFILE") {
+        let h = std::path::PathBuf::from(h);
+        for d in ["Downloads", "Desktop", "Documents"] {
+            roots.push((h.join(d), 3));
+        }
+    }
+    for l in b'C'..=b'Z' {
+        let r = std::path::PathBuf::from(format!("{}:\\", l as char));
+        if r.exists() {
+            roots.push((r, 2));
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    let mut out: Vec<(std::time::SystemTime, ImageRow)> = Vec::new();
+    let mut stack: Vec<(std::path::PathBuf, u32)> = roots;
+    let mut visited = 0usize;
+    while let Some((dir, depth)) = stack.pop() {
+        visited += 1;
+        if visited > 20000 || out.len() >= 40 {
+            break;
+        }
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let path = e.path();
+            let Ok(md) = e.metadata() else { continue };
+            if md.is_dir() {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                if depth > 1 && !SKIP.contains(&name.as_str()) && !repos.iter().any(|r| r == &path) {
+                    stack.push((path, depth - 1));
+                }
+                continue;
+            }
+            let ext = path
+                .extension()
+                .and_then(|x| x.to_str())
+                .map(|x| x.to_ascii_lowercase())
+                .unwrap_or_default();
+            if !matches!(ext.as_str(), "img" | "raw" | "bin" | "vhd")
+                || md.len() < 100 * 1024 * 1024
+                || !seen.insert(path.clone())
+            {
+                continue;
+            }
+            let mtime = md.modified().unwrap_or(std::time::UNIX_EPOCH);
+            out.push((
+                mtime,
+                ImageRow {
+                    name: e.file_name().to_string_lossy().to_string().into(),
+                    path: path.to_string_lossy().to_string().into(),
+                    size: format!("{:.1} GB", md.len() as f64 / 1_073_741_824.0).into(),
+                    when: "".into(),
+                },
+            ));
+        }
+    }
+    out.sort_by_key(|x| std::cmp::Reverse(x.0));
+    out.into_iter().take(20).map(|x| x.1).collect()
+}
+
+fn scan_convert_async(weak: slint::Weak<MainWindow>) {
+    std::thread::spawn(move || {
+        let rows = convert_candidates();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak.upgrade() {
+                w.set_conv_cands(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+            }
+        });
+    });
+}
+
+/// 저장해 둔 이미지(.qblk) 한 개를 지운다. 백업 보관함의 images 폴더 안 .qblk 파일만 허용한다.
+fn delete_image_file(path: &str) -> Result<(), String> {
+    if app_locked() {
+        return Err(LOCKED_MSG.into());
+    }
+    let target = std::path::Path::new(path);
+    if target.extension().and_then(|x| x.to_str()) != Some("qblk") {
+        return Err("이미지(.qblk) 파일만 지울 수 있습니다".into());
+    }
+    let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+    let canon = std::fs::canonicalize(target).map_err(|e| format!("파일을 찾을 수 없음: {e}"))?;
+    let allowed = store.profiles().iter().any(|p| {
+        std::fs::canonicalize(std::path::Path::new(&p.repo_dir).join("images"))
+            .map(|d| canon.parent() == Some(d.as_path()))
+            .unwrap_or(false)
+    });
+    if !allowed {
+        return Err("백업 보관함의 images 폴더 밖 파일은 지우지 않습니다".into());
+    }
+    if let Err(e) = std::fs::remove_file(&canon) {
+        // 읽기 전용(랜섬웨어 보호)이면 속성을 풀고 한 번 더 시도
+        if let Ok(md) = std::fs::metadata(&canon) {
+            let mut perm = md.permissions();
+            perm.set_readonly(false);
+            let _ = std::fs::set_permissions(&canon, perm);
+        }
+        std::fs::remove_file(&canon).map_err(|e2| format!("지우지 못했습니다: {e2} ({e})"))?;
+    }
+    Ok(())
+}
+
+/// 변환 결과를 둘 위치: 첫 프로파일 저장소의 images 폴더에 `<원본이름>.qblk`(있으면 번호)
+fn auto_convert_target(src: &str) -> Option<String> {
+    let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+    let p = store.profiles().into_iter().next()?;
+    let dir = std::path::Path::new(&p.repo_dir).join("images");
+    std::fs::create_dir_all(&dir).ok()?;
+    let stem = std::path::Path::new(src)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("image");
+    let mut cand = dir.join(format!("{stem}.qblk"));
+    let mut n = 2;
+    while cand.exists() {
+        cand = dir.join(format!("{stem}_{n}.qblk"));
+        n += 1;
+    }
+    Some(cand.to_string_lossy().to_string())
+}
+
 /// 직전과 같으면 None(화면을 건드리지 않음), 달라졌으면 Some(새 값)을 돌려주고 기억한다.
 fn changed_only<T: PartialEq + Clone>(last: &mut Option<Vec<T>>, new: Vec<T>) -> Option<Vec<T>> {
     if last.as_ref() == Some(&new) {
@@ -2161,7 +2301,45 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = w.as_weak();
         w.on_verify_image(move |p| image_job(weak.clone(), p.to_string(), None));
         let weak = w.as_weak();
-        w.on_capture_image(move |s, o| capture_job(weak.clone(), s.to_string(), o.to_string()));
+        w.on_capture_image(move |s, o| {
+            let (src, mut out) = (s.to_string(), o.to_string());
+            if src.trim().is_empty() {
+                if let Some(w) = weak.upgrade() {
+                    w.set_image_text("위 목록에서 변환할 이미지를 먼저 고르세요".into());
+                }
+                return;
+            }
+            if out.trim().is_empty() {
+                match auto_convert_target(&src) {
+                    Some(t) => out = t,
+                    None => {
+                        if let Some(w) = weak.upgrade() {
+                            w.set_image_text(
+                                "프로파일이 없어 저장 위치를 정할 수 없습니다. 프로파일 탭에서 먼저 만드세요".into(),
+                            );
+                        }
+                        return;
+                    }
+                }
+            }
+            capture_job(weak.clone(), src, out);
+        });
+        let weak = w.as_weak();
+        w.on_scan_convert(move || scan_convert_async(weak.clone()));
+        scan_convert_async(w.as_weak());
+        let weak = w.as_weak();
+        w.on_delete_image(move |p| {
+            let msg = match delete_image_file(p.as_str()) {
+                Ok(()) => "이미지를 삭제했습니다".to_string(),
+                Err(e) => e,
+            };
+            if let Some(w) = weak.upgrade() {
+                if w.get_img_path() == p {
+                    w.set_img_path("".into());
+                }
+                w.set_image_text(msg.into());
+            }
+        });
         let weak = w.as_weak();
         w.on_capture_volume(move |d| {
             let d = d.trim().trim_end_matches([':', '\\']).to_string();

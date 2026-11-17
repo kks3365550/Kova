@@ -237,6 +237,11 @@ export component MainWindow inherits Window {
     callback verify-image(string);
     callback restore-image(string, string);
     callback capture-image(string, string);
+    callback delete-image(string);
+    callback scan-convert();
+    in property <[ImageRow]> conv-cands;
+    in-out property <string> conv-src;
+    in-out property <string> confirm-del;
     callback capture-volume(string);
     callback restore-snapshot(string, string, string);
     callback restore-inplace(string, string);
@@ -1020,7 +1025,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     Card {
-                        height: 232px + min(root.images.length, 5) * 42px;
+                        height: 172px + min(root.images.length, 5) * 42px;
                         VerticalLayout {
                             padding: 16px;
                             spacing: 8px;
@@ -1033,40 +1038,61 @@ export component MainWindow inherits Window {
                                 border-width: 1px;
                                 border-color: root.img-path == im.path ? Theme.accent : Theme.line;
                                 background: root.img-path == im.path ? Theme.accent.with-alpha(0.15) : Theme.bg;
+                                TouchArea { clicked => { root.img-path = im.path; root.confirm-del = ""; } }
                                 HorizontalLayout {
                                     padding-left: 10px;
-                                    padding-right: 10px;
+                                    padding-right: 6px;
+                                    padding-top: 4px;
+                                    padding-bottom: 4px;
                                     spacing: 12px;
                                     Text { text: im.name; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
                                     Text { text: im.size; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
                                     Text { text: im.when; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                    if root.confirm-del != im.path: Btn { text: "삭제"; kind: 2; height: 26px; clicked => { root.confirm-del = im.path; root.img-path = im.path; } }
+                                    if root.confirm-del == im.path: Text { text: "되돌릴 수 없습니다"; color: Theme.danger; font-size: 12px; vertical-alignment: center; }
+                                    if root.confirm-del == im.path: Btn { text: "정말 삭제"; kind: 2; height: 26px; clicked => { root.delete-image(im.path); root.confirm-del = ""; } }
+                                    if root.confirm-del == im.path: Btn { text: "취소"; height: 26px; clicked => { root.confirm-del = ""; } }
                                 }
-                                TouchArea { clicked => { root.img-path = im.path; } }
                             }
-                            PathField { text <=> root.img-path; placeholder: "저장해 둔 이미지 파일(.qblk) — 위 목록에서 고르거나 찾아보기"; kind: "qblk-open"; pick(k) => { root.browse(k) } }
-                            out := PathField { placeholder: "꺼낸 파일 이름 (비워 두면 이미지 옆에 자동으로 만듭니다)"; kind: "img-save"; pick(k) => { root.browse(k) } }
+                            Text { text: root.img-path == "" ? "위 목록에서 이미지를 눌러 고르세요. 꺼낸 파일은 이미지 옆에 자동으로 만들어집니다." : "선택됨: " + root.img-path; color: Theme.muted; font-size: 12px; overflow: elide; }
                         }
                     }
                     HorizontalLayout {
                         spacing: 8px;
                         alignment: end;
                         Btn { text: "확인만"; clicked => { root.verify-image(root.img-path); } }
-                        Btn { text: "꺼내기"; kind: 1; clicked => { root.restore-image(root.img-path, out.text); } }
+                        Btn { text: "꺼내기"; kind: 1; clicked => { root.restore-image(root.img-path, ""); } }
                     }
                     Card {
-                        height: 160px;
+                        height: 120px + min(root.conv-cands.length, 5) * 42px;
                         VerticalLayout {
                             padding: 16px;
                             spacing: 8px;
                             Heading { text: "3. 이미 가진 디스크 이미지를 Kova 형식으로 바꾸기 (고급)"; }
-                            Hint { text: "다른 프로그램으로 만든 .img/.raw/.bin/.vhd 파일을 Kova 이미지(.qblk)로 변환합니다. 원본 파일은 읽기만 하고 바꾸지 않습니다."; }
-                            csrc := PathField { placeholder: "변환할 원본 이미지 파일 고르기"; kind: "img-open"; pick(k) => { root.browse(k) } }
-                            cout := PathField { placeholder: "만들 Kova 이미지(.qblk) 이름 (새 파일)"; kind: "qblk-save"; pick(k) => { root.browse(k) } }
+                            Hint { text: "다른 프로그램으로 만든 .img/.raw/.bin/.vhd 파일을 자동으로 찾아 Kova 이미지(.qblk)로 변환합니다. 원본 파일은 읽기만 하고 바꾸지 않으며, 결과는 백업 보관함의 images 폴더에 새로 만듭니다."; }
+                            Text { text: root.conv-cands.length > 0 ? "찾은 이미지 (눌러서 고르세요)" : "변환할 만한 이미지 파일(100MB 이상)을 찾지 못했습니다."; color: Theme.muted; font-size: 12px; }
+                            for im in root.conv-cands: Rectangle {
+                                height: 34px;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: root.conv-src == im.path ? Theme.accent : Theme.line;
+                                background: root.conv-src == im.path ? Theme.accent.with-alpha(0.15) : Theme.bg;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    spacing: 12px;
+                                    Text { text: im.path; color: Theme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                                    Text { text: im.size; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                }
+                                TouchArea { clicked => { root.conv-src = im.path; } }
+                            }
                         }
                     }
                     HorizontalLayout {
                         alignment: end;
-                        Btn { text: "변환하기"; kind: 1; clicked => { root.capture-image(csrc.text, cout.text); } }
+                        spacing: 8px;
+                        Btn { text: "다시 찾기"; clicked => { root.scan-convert(); } }
+                        Btn { text: "변환하기"; kind: 1; clicked => { root.capture-image(root.conv-src, ""); } }
                     }
                     Text { text: root.image-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
                 }

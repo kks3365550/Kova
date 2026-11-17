@@ -289,6 +289,8 @@ pub struct Stats {
     pub chunks: u64,
     pub clusters: u64,
     pub raw_bytes: u64,
+    /// 이번에 읽을 전체 바이트(진행률 계산용, 쓰기 루프가 시작할 때 채운다)
+    pub total_raw_bytes: u64,
     pub compressed_bytes: u64,
     /// 데이터가 비어 있는 청크 수와 그 클러스터 수(백업 당시 읽기에 실패한 구간). 0 이 아니면 그 구간은 복원되지 않는다.
     pub empty_chunks: u64,
