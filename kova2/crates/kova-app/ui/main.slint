@@ -41,6 +41,9 @@ export component MainWindow inherits Window {
     in-out property <string> delete-pending;
     in property <string> form-text;
     in property <string> image-text;
+    in property <string> volume-text;
+    callback volume-check(string);
+    callback restore-volume(string, string, string);
     callback install-update();
     in property <string> update-text;
     callback save-offsite(string, string);
@@ -165,6 +168,23 @@ export component MainWindow inherits Window {
                     cout := LineEdit { placeholder-text: "만들 .qblk 파일 전체 경로 (새 파일)"; }
                     Button { text: "이미지 만들기"; clicked => { root.capture-image(csrc.text, cout.text); } }
                     Text { text: root.image-text; wrap: word-wrap; vertical-stretch: 1; }
+                }
+            }
+            Tab {
+                title: "볼륨 복원";
+                VerticalLayout {
+                    spacing: 8px;
+                    Text { text: "이미지(.qblk)를 드라이브(볼륨)에 직접 복원"; font-weight: 600; }
+                    Text { text: "주의: 대상 볼륨의 내용이 전부 덮어써지며 되돌릴 수 없습니다. 시스템 드라이브·백업 저장소·이미지가 있는 드라이브는 거부됩니다. 파일이 열려 있는 볼륨도 복원되지 않습니다. 관리자 권한으로 실행해야 합니다."; wrap: word-wrap; color: #c0392b; }
+                    vimg := LineEdit { placeholder-text: "이미지 파일(.qblk) 경로"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        vletter := LineEdit { placeholder-text: "대상 드라이브 문자 (예: E)"; width: 200px; }
+                        Button { text: "대상 확인"; clicked => { root.volume-check(vletter.text); } }
+                    }
+                    vphrase := LineEdit { placeholder-text: "위에 표시된 확인 문구를 그대로 입력"; }
+                    Button { text: "볼륨에 복원 (되돌릴 수 없음)"; clicked => { root.restore-volume(vimg.text, vletter.text, vphrase.text); } }
+                    Text { text: root.volume-text; wrap: word-wrap; vertical-stretch: 1; }
                 }
             }
             Tab {

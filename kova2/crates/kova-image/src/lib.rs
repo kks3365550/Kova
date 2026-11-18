@@ -7,4 +7,5 @@ pub mod bitmap;
 pub mod capture;
 pub mod qblk;
 pub mod restore;
+pub mod volume;
 pub use qblk::*;
