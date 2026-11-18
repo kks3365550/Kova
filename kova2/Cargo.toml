@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/kova-image", "crates/kova-app", "crates/kova-ipc", "crates/kova-service", "crates/kova-engine", "crates/kova-core"]
+members = ["crates/kova-image", "crates/kova-app", "crates/kova-ipc", "crates/kova-service", "crates/kova-engine", "crates/kova-core", "crates/kova-pe"]
 
 [profile.release]
 opt-level = 3

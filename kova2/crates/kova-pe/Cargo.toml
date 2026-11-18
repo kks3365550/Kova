@@ -1,0 +1,11 @@
+[package]
+name = "kova-pe"
+version = "0.0.1"
+edition = "2021"
+
+[[bin]]
+name = "kova-pe"
+path = "src/main.rs"
+
+[dependencies]
+kova-image = { path = "../kova-image" }

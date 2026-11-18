@@ -2971,6 +2971,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "kova-pe"
+version = "0.0.1"
+dependencies = [
+ "kova-image",
+]
+
+[[package]]
 name = "kova-service"
 version = "0.0.1"
 dependencies = [
