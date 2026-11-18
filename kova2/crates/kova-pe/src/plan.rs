@@ -65,13 +65,13 @@ pub fn disk_selected_ok(
 ) -> Result<(), String> {
     if image_disks.contains(&disk.num) {
         return Err(format!(
-            "디스크 {} 에 복원 이미지가 들어 있어 지울 수 없음",
+            "disk {} holds the restore image and cannot be erased",
             disk.num
         ));
     }
     if !disk.status.eq_ignore_ascii_case("online") {
         return Err(format!(
-            "디스크 {} 가 온라인이 아님({})",
+            "disk {} is not online ({})",
             disk.num, disk.status
         ));
     }
@@ -79,7 +79,7 @@ pub fn disk_selected_ok(
     let need = image_bytes + (512 << 20);
     if disk.bytes < need {
         return Err(format!(
-            "디스크 {} 크기({} MB)가 이미지({} MB)+부팅 영역보다 작음",
+            "disk {} size ({} MB) is smaller than image ({} MB) + boot area",
             disk.num,
             disk.bytes >> 20,
             image_bytes >> 20

@@ -23,7 +23,7 @@ fn diskpart(script: &str) -> String {
     let _ = std::fs::remove_file(&f);
     match out {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
-        Err(e) => format!("diskpart 실행 실패: {e}"),
+        Err(e) => format!("diskpart failed: {e}"),
     }
 }
 
@@ -113,7 +113,7 @@ fn finish(log: &mut Log, image: Option<&Path>, code: i32, auto: bool) -> i32 {
         let _ = Command::new("wpeutil").arg("shutdown").status();
     } else {
         let _ = ask(
-            "Enter 를 누르면 재부팅합니다(실패한 경우 Shift+F10 으로 명령창을 열 수 있습니다).",
+            "Press Enter to reboot (on failure, Shift+F10 opens a command prompt).",
         );
         let _ = Command::new("wpeutil").arg("reboot").status();
     }
@@ -122,14 +122,14 @@ fn finish(log: &mut Log, image: Option<&Path>, code: i32, auto: bool) -> i32 {
 
 pub fn main() -> i32 {
     let mut log = Log(Vec::new());
-    log.say("=== Kova2 WinPE 시스템 복원 ===");
+    log.say("=== Kova2 WinPE system restore ===");
     let auto = read_auto();
     let is_auto = auto.is_some();
 
     // 1) 이미지 선택
     let images = find_images();
     if images.is_empty() {
-        log.say("ERROR: 어느 드라이브에서도 .qblk 이미지를 찾지 못했습니다(Kova2_Repository\\images, KovaImages).");
+        log.say("ERROR: no .qblk image found on any drive (Kova2_Repository\\images, KovaImages).");
         return finish(&mut log, None, 1, is_auto);
     }
     let image: PathBuf = if let Some(m) = &auto {
@@ -140,7 +140,7 @@ pub fn main() -> i32 {
         match hit {
             Some(p) => p.clone(),
             None => {
-                log.say(format!("ERROR: 자동 모드 image={want} 를 찾지 못했습니다."));
+                log.say(format!("ERROR: auto mode image={want} not found."));
                 return finish(&mut log, None, 1, true);
             }
         }
@@ -149,19 +149,19 @@ pub fn main() -> i32 {
             let mb = std::fs::metadata(p).map(|m| m.len() >> 20).unwrap_or(0);
             println!("  [{}] {} ({} MB)", i + 1, p.display(), mb);
         }
-        let n: usize = ask("복원할 이미지 번호: ").parse().unwrap_or(0);
+        let n: usize = ask("Image number to restore: ").parse().unwrap_or(0);
         match images.get(n.wrapping_sub(1)) {
             Some(p) => p.clone(),
             None => {
-                log.say("ERROR: 잘못된 번호");
+                log.say("ERROR: invalid number");
                 return finish(&mut log, None, 1, false);
             }
         }
     };
-    log.say(format!("이미지: {}", image.display()));
+    log.say(format!("Image: {}", image.display()));
 
     // 2) 이미지 검증 (디스크를 건드리기 전)
-    log.say("이미지 전체 검증 중...");
+    log.say("Verifying the whole image...");
     let verified = File::open(&image).map_err(|e| e.to_string()).and_then(|f| {
         verify(
             BufReader::with_capacity(8 << 20, f),
@@ -173,14 +173,14 @@ pub fn main() -> i32 {
     let header = match verified {
         Ok((h, s)) => {
             log.say(format!(
-                "검증 OK: 클러스터 {} / 사용 {} / 청크 {}",
+                "Verify OK: clusters {} / used {} / chunks {}",
                 h.total_clusters, h.used_clusters, s.chunks
             ));
             h
         }
         Err(e) => {
             log.say(format!(
-                "ERROR: 이미지 검증 실패, 아무것도 바꾸지 않았습니다: {e}"
+                "ERROR: image verification failed, nothing was changed: {e}"
             ));
             return finish(&mut log, Some(&image), 1, is_auto);
         }
@@ -205,22 +205,22 @@ pub fn main() -> i32 {
     } else {
         for d in &disks {
             let tag = if image_disks.contains(&d.num) {
-                "  <- 이미지가 있는 디스크(선택 불가)"
+                "  <- holds the image (cannot select)"
             } else {
                 ""
             };
             println!(
-                "  디스크 {}: {} MB, {}{}",
+                "  Disk {}: {} MB, {}{}",
                 d.num,
                 d.bytes >> 20,
                 d.status,
                 tag
             );
         }
-        ask("지울 대상 디스크 번호: ").parse().unwrap_or(u32::MAX)
+        ask("Disk number to ERASE: ").parse().unwrap_or(u32::MAX)
     };
     let Some(disk) = disks.iter().find(|d| d.num == disk_num) else {
-        log.say(format!("ERROR: 디스크 {disk_num} 없음"));
+        log.say(format!("ERROR: disk {disk_num} not found"));
         return finish(&mut log, Some(&image), 1, is_auto);
     };
     if let Err(e) = disk_selected_ok(disk, &image_disks, image_bytes) {
@@ -235,14 +235,14 @@ pub fn main() -> i32 {
         m.get("confirm").cloned().unwrap_or_default()
     } else {
         println!(
-            "디스크 {} ({} MB)의 모든 내용이 지워집니다.",
+            "ALL data on disk {} ({} MB) will be erased.",
             disk.num,
             disk.bytes >> 20
         );
-        ask(&format!("계속하려면 [{phrase}] 를 그대로 입력: "))
+        ask(&format!("To continue type exactly [{phrase}]: "))
     };
     if norm(&typed) != phrase {
-        log.say("ERROR: 확인 문구가 다릅니다. 아무것도 바꾸지 않았습니다.");
+        log.say("ERROR: confirmation phrase does not match. Nothing was changed.");
         return finish(&mut log, Some(&image), 1, is_auto);
     }
 
@@ -250,12 +250,12 @@ pub fn main() -> i32 {
     let uefi = is_uefi();
     let fl = free_letters();
     if fl.len() < 2 {
-        log.say("ERROR: 쓸 수 있는 드라이브 문자가 부족합니다.");
+        log.say("ERROR: not enough free drive letters.");
         return finish(&mut log, Some(&image), 1, is_auto);
     }
     let (sys, os) = (fl[0], fl[1]);
     log.say(format!(
-        "부팅 방식 {}, 시스템 {sys}: 대상 {os}: 파티션 생성",
+        "Boot mode {}, system {sys}: target {os}: creating partitions",
         if uefi { "UEFI/GPT" } else { "BIOS/MBR" }
     ));
     let out = diskpart(&if uefi {
@@ -264,7 +264,7 @@ pub fn main() -> i32 {
         script_mbr(disk.num, sys, os)
     });
     if !exists_letter(os) || !exists_letter(sys) {
-        log.say(format!("ERROR: 파티션 생성 실패\n{out}"));
+        log.say(format!("ERROR: partitioning failed\n{out}"));
         return finish(&mut log, Some(&image), 1, is_auto);
     }
 
@@ -272,11 +272,11 @@ pub fn main() -> i32 {
     let info = match volume_info(os) {
         Ok(i) => i,
         Err(e) => {
-            log.say(format!("ERROR: 대상 볼륨 조회 실패: {e}"));
+            log.say(format!("ERROR: target volume lookup failed: {e}"));
             return finish(&mut log, Some(&image), 1, is_auto);
         }
     };
-    log.say(format!("복원 시작 -> {os}:"));
+    log.say(format!("Restore started -> {os}:"));
     let t = std::time::Instant::now();
     let res = restore_image_to_volume(
         &image,
@@ -286,22 +286,22 @@ pub fn main() -> i32 {
         &AtomicBool::new(false),
         &|s| {
             if s.chunks % 200 == 0 {
-                eprint!("\r청크 {} / {:.1} GB", s.chunks, s.raw_bytes as f64 / 1e9);
+                eprint!("\rchunks {} / {:.1} GB", s.chunks, s.raw_bytes as f64 / 1e9);
             }
         },
     );
     println!();
     if let Err(e) = res {
-        log.say(format!("ERROR: 복원 실패: {e}"));
+        log.say(format!("ERROR: restore failed: {e}"));
         return finish(&mut log, Some(&image), 1, is_auto);
     }
-    log.say(format!("복원 완료 ({:.0}초)", t.elapsed().as_secs_f64()));
+    log.say(format!("Restore done ({:.0}s)", t.elapsed().as_secs_f64()));
 
     // 6) 확장·부팅 구성
     let _ = diskpart(&script_extend(os));
     if !Path::new(&format!("{os}:\\Windows\\System32")).exists() {
         log.say(format!(
-            "ERROR: {os}:\\Windows\\System32 가 없습니다. 복원된 이미지에 Windows 가 없는 것 같습니다."
+            "ERROR: {os}:\\Windows\\System32 is missing; the image seems to contain no Windows."
         ));
         return finish(&mut log, Some(&image), 1, is_auto);
     }
@@ -309,17 +309,17 @@ pub fn main() -> i32 {
         .args(bcdboot_args(os, sys, uefi))
         .output()
     {
-        Ok(o) if o.status.success() => log.say("bcdboot OK: 부팅 파일을 만들었습니다."),
+        Ok(o) if o.status.success() => log.say("bcdboot OK: boot files created."),
         Ok(o) => {
             log.say(format!(
-                "ERROR: bcdboot 실패: {}{}",
+                "ERROR: bcdboot failed: {}{}",
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
             ));
             return finish(&mut log, Some(&image), 1, is_auto);
         }
         Err(e) => {
-            log.say(format!("ERROR: bcdboot 실행 실패: {e}"));
+            log.say(format!("ERROR: bcdboot could not run: {e}"));
             return finish(&mut log, Some(&image), 1, is_auto);
         }
     }
