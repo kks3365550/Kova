@@ -301,6 +301,12 @@ export component MainWindow inherits Window {
     in-out property <string> delete-pending;
     in property <string> form-text;
     in property <string> image-text;
+    in property <string> volume-text;
+    in-out property <string> vol-img;
+    in-out property <string> vol-letter;
+    in-out property <string> vol-phrase;
+    callback volume-check(string);
+    callback restore-volume(string, string, string);
     callback install-update();
     in property <string> update-text;
     callback save-offsite(string, string);
@@ -1093,6 +1099,24 @@ export component MainWindow inherits Window {
                         spacing: 8px;
                         Btn { text: "다시 찾기"; clicked => { root.scan-convert(); } }
                         Btn { text: "변환하기"; kind: 1; clicked => { root.capture-image(root.conv-src, ""); } }
+                    }
+                    Card {
+                        height: 330px;
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 8px;
+                            Heading { text: "4. 이미지를 드라이브에 직접 복원 (고급, 되돌릴 수 없음)"; }
+                            Text { text: "주의: 대상 드라이브의 내용이 전부 덮어써집니다. 시스템 드라이브·백업 보관함·이미지가 있는 드라이브는 거부되며, 파일이 열려 있는 드라이브도 복원되지 않습니다. Kova를 관리자 권한으로 실행해야 합니다."; color: Theme.danger; font-size: 12px; wrap: word-wrap; }
+                            Field { text <=> root.vol-img; placeholder: "이미지 파일(.qblk) 전체 경로"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Field { text <=> root.vol-letter; placeholder: "대상 드라이브 문자 (예: E)"; width: 220px; }
+                                Btn { text: "대상 확인"; clicked => { root.volume-check(root.vol-letter); } }
+                            }
+                            Field { text <=> root.vol-phrase; placeholder: "'대상 확인'에 표시된 확인 문구를 그대로 입력"; }
+                            Btn { text: "드라이브에 복원 (되돌릴 수 없음)"; kind: 2; clicked => { root.restore-volume(root.vol-img, root.vol-letter, root.vol-phrase); } }
+                            Text { text: root.volume-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
+                        }
                     }
                     Text { text: root.image-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
                 }

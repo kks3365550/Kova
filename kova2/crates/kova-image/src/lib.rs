@@ -8,4 +8,5 @@ pub mod capture;
 pub mod qblk;
 pub mod restore;
 pub mod volume;
+pub mod volume_restore;
 pub use qblk::*;

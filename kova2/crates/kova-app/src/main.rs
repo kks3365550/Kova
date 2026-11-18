@@ -1813,6 +1813,96 @@ fn restore_snapshot_job(
     });
 }
 
+fn show_volume(weak: &slint::Weak<MainWindow>, t: String) {
+    let w = weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(w) = w.upgrade() {
+            w.set_volume_text(t.into());
+        }
+    });
+}
+
+/// 볼륨 직접 복원에서 대상이 될 수 없는 드라이브: 모든 프로파일의 백업 저장소가 있는 드라이브.
+#[cfg(windows)]
+fn protected_drive_letters() -> Vec<char> {
+    let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+    store
+        .profiles()
+        .iter()
+        .filter_map(|p| {
+            let b = p.repo_dir.as_bytes();
+            (b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic()).then(|| b[0] as char)
+        })
+        .collect()
+}
+
+/// 대상 볼륨을 조회해 사용자가 직접 입력해야 할 확인 문구를 보여 준다(아무것도 쓰지 않는다).
+#[cfg(windows)]
+fn volume_check(weak: &slint::Weak<MainWindow>, letter: &str) {
+    let text = match letter.trim().chars().next() {
+        None => "드라이브 문자를 입력하세요.".to_string(),
+        Some(c) => match kova_image::volume_restore::volume_info(c) {
+            Ok(v) => format!(
+                "{}: 볼륨 '{}' 의 내용이 전부 덮어써집니다. 계속하려면 아래 칸에 그대로 입력하세요:\n{}",
+                v.letter,
+                v.label,
+                kova_image::volume_restore::confirmation_phrase(&v)
+            ),
+            Err(e) => format!("대상으로 사용할 수 없음: {e}"),
+        },
+    };
+    show_volume(weak, text);
+}
+
+/// 볼륨 직접 복원: 검증·정책·확인 문구·잠금을 모두 통과해야 쓴다. 오래 걸리므로 별도 스레드에서 진행률을 흘린다.
+#[cfg(windows)]
+fn restore_volume_job(weak: slint::Weak<MainWindow>, image: String, letter: String, typed: String) {
+    let Some(c) = letter.trim().chars().next() else {
+        show_volume(&weak, "드라이브 문자를 입력하세요.".into());
+        return;
+    };
+    show_volume(
+        &weak,
+        "이미지 검증 중… (검증이 끝나기 전에는 볼륨에 쓰지 않습니다)".into(),
+    );
+    std::thread::spawn(move || {
+        let cancel = std::sync::atomic::AtomicBool::new(false);
+        let last =
+            std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(5));
+        let w2 = weak.clone();
+        let progress = |s: &kova_image::Stats| {
+            let mut l = last.lock().unwrap();
+            if l.elapsed() >= std::time::Duration::from_secs(1) {
+                *l = std::time::Instant::now();
+                show_volume(
+                    &w2,
+                    format!("복원 중… {:.1}GB 기록", s.raw_bytes as f64 / 1e9),
+                );
+            }
+        };
+        let r = kova_image::volume_restore::restore_image_to_volume(
+            std::path::Path::new(image.trim().trim_matches('"')),
+            c,
+            &typed,
+            &protected_drive_letters(),
+            &cancel,
+            &progress,
+        );
+        let text = match r {
+            Ok((_, s)) => format!(
+                "복원 완료: {}: ({:.2}GB 기록). 볼륨이 마운트 해제됐으므로 탐색기에서 다시 열어 확인하세요.",
+                c.to_ascii_uppercase(),
+                s.raw_bytes as f64 / 1e9
+            ),
+            Err(kova_image::volume_restore::VolumeError::Io(e)) if e.raw_os_error() == Some(5) => {
+                "복원하지 않음: 액세스가 거부됐습니다. Kova 앱을 관리자 권한으로 실행해야 합니다.".into()
+            }
+            Err(e) => format!("복원하지 않음: {e}"),
+        };
+        show_volume(&weak, text);
+    });
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     kova_core::repocrypto::install_provider(); // 암호화된 저장소의 탐색·복원에 필요
                                                // 관리자 권한으로 다시 실행된 업데이트 설치 도우미: 설치하고 결과를 파일에 적은 뒤 끝낸다
@@ -1827,6 +1917,15 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let w = MainWindow::new()?;
+    #[cfg(windows)]
+    {
+        let weak = w.as_weak();
+        w.on_volume_check(move |l| volume_check(&weak, l.as_str()));
+        let weak = w.as_weak();
+        w.on_restore_volume(move |img, l, t| {
+            restore_volume_job(weak.clone(), img.to_string(), l.to_string(), t.to_string())
+        });
+    }
     w.set_app_version(env!("CARGO_PKG_VERSION").into());
     w.set_wz_repo(known_folder("backup").into());
     w.set_default_restore(known_folder("restore").into());
