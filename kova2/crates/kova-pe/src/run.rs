@@ -196,7 +196,24 @@ pub fn main() -> i32 {
         .as_ref()
         .and_then(|m| m.get("disk_mb"))
         .and_then(|s| s.parse().ok());
-    let disk_num: u32 = if let Some(mb) = auto_mb {
+    let auto_id: Option<String> = auto.as_ref().and_then(|m| m.get("disk_id")).map(|s| {
+        s.trim_matches(['{', '}']).to_uppercase()
+    });
+    let disk_num: u32 = if let Some(id) = &auto_id {
+        // 디스크 고유 ID 가 정확히 하나의 디스크와 일치할 때만 선택한다.
+        let hits: Vec<u32> = disks
+            .iter()
+            .filter(|d| {
+                parse_disk_id(&diskpart(&format!("select disk {}
+detail disk
+exit
+", d.num)))
+                    .is_some_and(|x| x == *id)
+            })
+            .map(|d| d.num)
+            .collect();
+        if hits.len() == 1 { hits[0] } else { u32::MAX }
+    } else if let Some(mb) = auto_mb {
         find_disk_by_mb(&disks, mb).map_or(u32::MAX, |d| d.num)
     } else if let Some(m) = &auto {
         m.get("disk")
@@ -227,9 +244,10 @@ pub fn main() -> i32 {
         log.say(format!("ERROR: {e}"));
         return finish(&mut log, Some(&image), 1, is_auto);
     }
-    let phrase = match auto_mb {
-        Some(mb) => confirm_phrase_mb(mb),
-        None => confirm_phrase(disk.num),
+    let phrase = match (&auto_id, auto_mb) {
+        (Some(id), _) => confirm_phrase_id(id),
+        (None, Some(mb)) => confirm_phrase_mb(mb),
+        (None, None) => confirm_phrase(disk.num),
     };
     let typed = if let Some(m) = &auto {
         m.get("confirm").cloned().unwrap_or_default()

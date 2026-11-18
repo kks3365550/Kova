@@ -103,6 +103,21 @@ pub fn confirm_phrase_mb(mb: u64) -> String {
     format!("ERASE DISK {mb} MB")
 }
 
+/// `detail disk` 출력에서 디스크 고유 ID(GPT GUID 또는 MBR 서명)를 읽는다. (영문 diskpart 기준)
+pub fn parse_disk_id(out: &str) -> Option<String> {
+    out.lines().find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        k.trim()
+            .eq_ignore_ascii_case("disk id")
+            .then(|| v.trim().trim_matches(['{', '}']).to_uppercase())
+            .filter(|s| !s.is_empty())
+    })
+}
+
+pub fn confirm_phrase_id(id: &str) -> String {
+    format!("ERASE DISK ID {}", id.trim_matches(['{', '}']).to_uppercase())
+}
+
 pub fn norm(s: &str) -> String {
     s.split_whitespace()
         .collect::<Vec<_>>()
@@ -227,6 +242,23 @@ mod tests {
         });
         assert!(find_disk_by_mb(&two, 60 << 10).is_none());
         assert_eq!(norm("erase disk 61440 mb"), confirm_phrase_mb(61440));
+    }
+
+    #[test]
+    fn disk_id() {
+        let o = "Netac NVMe SSD 1TB
+Disk ID: {919F469D-68F8-4433-9D35-34531B929926}
+Type   : NVMe
+";
+        assert_eq!(
+            parse_disk_id(o).as_deref(),
+            Some("919F469D-68F8-4433-9D35-34531B929926")
+        );
+        assert_eq!(parse_disk_id("Type : NVMe"), None);
+        assert_eq!(
+            norm("erase disk id 919f469d-68f8-4433-9d35-34531b929926"),
+            confirm_phrase_id("{919F469D-68F8-4433-9D35-34531B929926}")
+        );
     }
 
     #[test]
