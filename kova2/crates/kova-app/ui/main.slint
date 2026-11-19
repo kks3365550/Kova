@@ -270,6 +270,13 @@ export component MainWindow inherits Window {
     in-out property <bool> form-pack: false;
     in-out property <string> form-recovery: "";
     callback restore-key(string);
+    callback export-recovery-kit();
+    in-out property <string> form-webhook: "";
+    in-out property <string> form-max-threads: "0";
+    in-out property <string> form-bw-limit: "0";
+    in-out property <bool> form-pause-battery: false;
+    callback save-ops-settings(string, string, string, bool);
+    callback test-webhook(string);
     in-out property <string> form-lock-cur: "";
     in-out property <string> form-lock-new: "";
     in property <string> lock-text;
@@ -1477,9 +1484,10 @@ export component MainWindow inherits Window {
                                 spacing: 10px;
                                 Text { text: "AES-256 저장소 암호화"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
                                 Btn { text: root.form-encrypt ? "켜짐" : "꺼짐"; kind: root.form-encrypt ? 1 : 0; clicked => { root.form-encrypt = !root.form-encrypt; } }
+                                Btn { text: "복구 키트 저장"; clicked => { root.export-recovery-kit(); } }
                                 Rectangle { horizontal-stretch: 1; }
                             }
-                            Hint { text: "백업 저장소를 군사급 암호화로 보호합니다. 활성화 시 표시되는 복구 코드를 반드시 별도 보관하세요."; }
+                            Hint { text: "백업 저장소를 군사급 암호화로 보호합니다. 활성화 후 '복구 키트 저장'으로 복구 코드를 안전한 곳에 보관하세요."; }
                             
                             HorizontalLayout {
                                 spacing: 8px;
@@ -1551,6 +1559,25 @@ export component MainWindow inherits Window {
                                 Rectangle { horizontal-stretch: 1; }
                             }
                             Hint { text: "수만 개의 작은 파일들을 고속 팩 블록으로 묶어 IOPS 병목을 획기적으로 줄입니다."; }
+
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: "원격 웹훅 알림 URL"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                Field { text <=> root.form-webhook; placeholder: "https://hooks.slack.com/... 또는 Discord 웹훅"; horizontal-stretch: 1; }
+                                Btn { text: "테스트 발송"; clicked => { root.test-webhook(root.form-webhook); } }
+                            }
+                            Hint { text: "백업 실패·경고 시 Slack/Discord/HTTP 웹훅으로 즉시 알림을 보냅니다. 비워두면 끕니다."; }
+
+                            HorizontalLayout {
+                                spacing: 10px;
+                                Text { text: "CPU 스레드 / 전송 속도(MB/s)"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                Field { text <=> root.form-max-threads; width: 70px; placeholder: "0"; }
+                                Field { text <=> root.form-bw-limit; width: 70px; placeholder: "0"; }
+                                Btn { text: root.form-pause-battery ? "배터리 일시정지: 켜짐" : "배터리 일시정지: 꺼짐"; kind: root.form-pause-battery ? 1 : 0; clicked => { root.form-pause-battery = !root.form-pause-battery; } }
+                                Btn { text: "운영 설정 저장"; kind: 1; clicked => { root.save-ops-settings(root.form-webhook, root.form-max-threads, root.form-bw-limit, root.form-pause-battery); } }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
+                            Hint { text: "0은 자동/무제한. CPU 스레드(1~64)와 오프사이트 전송 속도(MB/s)를 제한해 작업 중 PC 부하를 줄입니다."; }
                             
                             HorizontalLayout {
                                 spacing: 8px;

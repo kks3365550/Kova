@@ -215,6 +215,58 @@ pub fn restore_key(repo: &Path, code: &str) -> Result<(), String> {
     store_key(&m.repo_id, &key)
 }
 
+/// 이 PC에 보관된 암호화 저장소 키를 복구 코드(8자리 그룹 16진수)로 내보낸다.
+pub fn export_recovery_code(repo: &Path) -> Result<String, String> {
+    let key = load_key(repo)?;
+    Ok(group(&hex(&key)))
+}
+
+/// 복구 키트(Recovery Kit) 문서를 인쇄·보관하기 쉬운 텍스트로 만든다.
+/// `entries`: `(프로파일 이름, 저장소 경로, 복구 코드)`
+pub fn format_recovery_kit(entries: &[(String, String, String)]) -> String {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let host = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "UNKNOWN".into());
+    let mut out = String::new();
+    out.push_str("============================================================\r\n");
+    out.push_str("  Kova2 암호화 복구 키트 (Recovery Kit)\r\n");
+    out.push_str("============================================================\r\n");
+    out.push_str(&format!("생성 시각: {now}\r\n"));
+    out.push_str(&format!("생성 PC  : {host}\r\n"));
+    out.push_str("\r\n");
+    out.push_str("[중요 안내]\r\n");
+    out.push_str(
+        "- 이 문서는 PC 포맷·교체·Windows 재설치 후 암호화 백업을 복구하는 유일한 열쇠입니다.\r\n",
+    );
+    out.push_str(
+        "- 인쇄하거나 별도 USB·안전 금고에 보관하고, 저장소와 같은 드라이브에 두지 마세요.\r\n",
+    );
+    out.push_str("- 복원 방법: Kova2 > 보호 및 시스템 관리 > 상세 엔지니어링 설정 > '복구 코드로 마스터 키 복원'\r\n");
+    out.push_str("\r\n");
+    for (i, (name, repo, code)) in entries.iter().enumerate() {
+        out.push_str(&format!(
+            "--- [{}/{}] {} ---\r\n",
+            i + 1,
+            entries.len(),
+            name
+        ));
+        out.push_str(&format!("저장소 경로: {repo}\r\n"));
+        out.push_str(&format!("복구 코드  : {code}\r\n\r\n"));
+    }
+    out
+}
+
+/// 복구 키트 문서를 파일로 저장한다.
+pub fn write_recovery_kit(path: &Path, entries: &[(String, String, String)]) -> Result<(), String> {
+    if entries.is_empty() {
+        return Err("내보낼 암호화 저장소가 없습니다".into());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("폴더 생성 실패: {e}"))?;
+    }
+    let body = format_recovery_kit(entries);
+    fs::write(path, body).map_err(|e| format!("복구 키트 저장 실패: {e}"))
+}
+
 /// 엔진이 암호화 저장소를 열 때 쓸 키 제공자를 등록한다(여러 번 호출해도 된다).
 pub fn install_provider() {
     codec::set_provider(Arc::new(|repo: &Path| {
@@ -284,6 +336,7 @@ mod tests {
         fs::write(src.path().join("a.txt"), &secret).unwrap();
         let code = enable(repo.path()).unwrap().expect("새로 켜짐");
         assert_eq!(code.len(), 64 + 7);
+        assert_eq!(export_recovery_code(repo.path()).unwrap(), code);
         assert!(enable(repo.path()).unwrap().is_none());
         backup(src.path(), repo.path());
         // 저장소 어디에도 평문이 없어야 한다
@@ -328,5 +381,22 @@ mod tests {
         fs::write(&blob, b).unwrap();
         let rep = crate::verify::verify_repo(repo.path(), true).unwrap();
         assert!(!rep.problems.is_empty());
+    }
+
+    #[test]
+    fn recovery_kit_writes_formatted_entries() {
+        let d = tempfile::tempdir().unwrap();
+        let out = d.path().join("kit.txt");
+        assert!(write_recovery_kit(&out, &[]).is_err());
+        let entries = vec![(
+            "문서 백업".into(),
+            "D:\\KovaRepo".into(),
+            "01234567-89abcdef".into(),
+        )];
+        write_recovery_kit(&out, &entries).unwrap();
+        let body = fs::read_to_string(&out).unwrap();
+        assert!(body.contains("Recovery Kit"));
+        assert!(body.contains("문서 백업"));
+        assert!(body.contains("01234567-89abcdef"));
     }
 }

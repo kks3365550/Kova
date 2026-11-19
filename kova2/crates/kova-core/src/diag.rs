@@ -110,6 +110,11 @@ pub fn bundle(
     if let Ok(b) = std::fs::read(config_dir.join("alerts.json")) {
         put("alerts.json", &b)?;
     }
+    for (zip_name, log_path) in crate::applog::collect_log_files(config_dir) {
+        if let Ok(b) = std::fs::read(&log_path) {
+            put(&zip_name, &b)?;
+        }
+    }
     z.finish().map_err(std::io::Error::other)?;
     Ok(())
 }
@@ -144,9 +149,13 @@ mod tests {
     #[test]
     fn bundle_zip_contains_report_and_health() {
         let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join("cfg");
+        crate::applog::write(&cfg, "INFO", "diag log sample");
         let out = d.path().join("diag.zip");
-        bundle(&d.path().join("cfg"), "0.0.1", "연결됨", &out).unwrap();
+        bundle(&cfg, "0.0.1", "연결됨", &out).unwrap();
         let mut z = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
-        assert!(z.by_name("report.txt").is_ok() && z.by_name("health.txt").is_ok());
+        assert!(z.by_name("report.txt").is_ok());
+        assert!(z.by_name("health.txt").is_ok());
+        assert!(z.by_name("logs/kova-service.log").is_ok());
     }
 }

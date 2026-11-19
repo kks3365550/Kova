@@ -4,12 +4,15 @@ use chrono::{DateTime, Local};
 use kova_core::config::ConfigStore;
 use kova_core::history::History;
 use kova_core::jobs::{Enqueue, Job, JobQueue, Kind};
-use kova_core::schedule::{should_run, MAX_AUTO_RETRIES};
-use kova_engine::ops::{run_backup, BackupOptions, EngineError, Event as EngineEvent};
+use kova_core::schedule::{should_run, should_run_maintenance, MAX_AUTO_RETRIES};
+use kova_engine::ops::{run_backup_with_threads, BackupOptions, EngineError, Event as EngineEvent};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+const REPO_LOCK_WAIT: Duration = Duration::from_secs(3);
 
 /// 화면(IPC)으로 푸시되는 이벤트.
 #[derive(Debug, Clone, PartialEq)]
@@ -94,12 +97,57 @@ impl Supervisor {
     /// 스케줄이 도래한 프로파일을 큐에 넣고 시작 가능한 작업을 시작한다. 새로 큐에 넣은 수를 반환.
     pub fn tick(&self, now: DateTime<Local>) -> usize {
         let mut n = 0;
+        let settings = self.0.store.settings();
+        if settings.pause_on_battery && kova_core::schedule::is_on_battery() {
+            kova_core::applog::write(
+                &self.0.config_dir,
+                "INFO",
+                "배터리 구동 중이라 자동 스케줄 백업을 일시정지합니다",
+            );
+            return 0;
+        }
         for p in self.0.store.profiles() {
             if should_run(&p, now) {
                 let mut q = self.0.queue.lock().unwrap();
                 if !q.is_profile_busy(&p.id) {
                     q.enqueue(&p.id, Kind::Backup);
                     n += 1;
+                    continue;
+                }
+            }
+            // 이미 스냅샷이 있는 프로파일에 대해 정기 Deep Scrub / 자동 GC 스케줄을 점검한다
+            if p.last_snapshot_id.is_some() {
+                let last_verify = p.extra.get("last_verify_at").and_then(|v| v.as_f64());
+                let last_gc = p.extra.get("last_gc_at").and_then(|v| v.as_f64());
+                let mut q = self.0.queue.lock().unwrap();
+                if !q.is_profile_busy(&p.id) {
+                    if should_run_maintenance(
+                        last_verify,
+                        p.last_run,
+                        settings.auto_verify_days,
+                        now,
+                    ) {
+                        q.enqueue(&p.id, Kind::Verify);
+                        kova_core::applog::write(
+                            &self.0.config_dir,
+                            "INFO",
+                            &format!("정기 무결성 검증(Deep Scrub) 예약: profile={}", p.id),
+                        );
+                        n += 1;
+                    } else if should_run_maintenance(
+                        last_gc,
+                        p.last_run,
+                        settings.auto_gc_days,
+                        now,
+                    ) {
+                        q.enqueue(&p.id, Kind::Gc);
+                        kova_core::applog::write(
+                            &self.0.config_dir,
+                            "INFO",
+                            &format!("정기 고아 블롭 정리(GC) 예약: profile={}", p.id),
+                        );
+                        n += 1;
+                    }
                 }
             }
         }
@@ -127,6 +175,14 @@ impl Supervisor {
     }
 
     fn run_job(&self, job: Job, cancel: Arc<AtomicBool>) {
+        kova_core::applog::write(
+            &self.0.config_dir,
+            "INFO",
+            &format!(
+                "작업 시작: id={} profile={} kind={:?}",
+                job.id, job.profile_id, job.kind
+            ),
+        );
         self.emit(SvcEvent::JobStarted {
             job_id: job.id,
             profile_id: job.profile_id.clone(),
@@ -140,8 +196,17 @@ impl Supervisor {
             Kind::Image(d) => self.run_image_job(&job, d, &cancel),
             Kind::DeleteSnapshot => self.run_delete_snapshot_job(&job),
         };
+        kova_core::applog::write(
+            &self.0.config_dir,
+            if ok { "INFO" } else { "ERROR" },
+            &format!(
+                "작업 종료: id={} profile={} kind={:?} ok={} msg={}",
+                job.id, job.profile_id, job.kind, ok, message
+            ),
+        );
         // 실패·경고는 알림 기록에 남긴다(화면이 없는 서비스는 기록만, 표시는 앱이 한다). 사용자 취소는 알리지 않는다.
-        if message != "취소됨" && (!ok || message.contains("복제 실패")) {
+        let is_alert = message != "취소됨" && (!ok || message.contains("복제 실패"));
+        if is_alert {
             let _ = kova_core::alerts::AlertLog::new(&self.0.config_dir).push(
                 kova_core::alerts::Alert {
                     at: Local::now().timestamp() as f64,
@@ -151,6 +216,29 @@ impl Supervisor {
                     acknowledged: false,
                 },
             );
+        }
+        // 원격 웹훅 알림 발송 (실패·경고 시 기본 발송, notify_on_success가 켜져 있으면 성공 시에도 발송)
+        let st = self.0.store.settings();
+        let should_notify = !st.webhook_url.trim().is_empty()
+            && message != "취소됨"
+            && (is_alert || (st.notify_on_success && ok));
+        if should_notify {
+            let url = st.webhook_url.clone();
+            let level = if !ok {
+                "error"
+            } else if is_alert {
+                "warning"
+            } else {
+                "info"
+            };
+            let title = format!("프로파일 {} ({:?})", job.profile_id, job.kind);
+            let msg = message.clone();
+            let cfg_dir = self.0.config_dir.clone();
+            std::thread::spawn(move || {
+                if let Err(e) = kova_core::notify::send_webhook(&url, level, &title, &msg) {
+                    kova_core::applog::write(&cfg_dir, "WARN", &format!("웹훅 발송 실패: {e}"));
+                }
+            });
         }
         // 이벤트를 먼저 보낸 뒤 큐에서 빼야 "큐가 비었다 = 모든 이벤트가 나갔다"가 성립한다
         self.emit(SvcEvent::JobFinished {
@@ -176,6 +264,18 @@ impl Supervisor {
             exclude: prof.exclude_patterns.clone(),
             profile_id: Some(prof.id.clone()),
             scan_from: None,
+        };
+        // 같은 저장소에 백업·GC·검증·복원이 동시에 쓰지 못하게 OS 파일 잠금을 먼저 잡는다
+        let _repo_lock = match kova_core::lock::RepoLock::acquire_wait(&opts.repo, REPO_LOCK_WAIT) {
+            Ok(l) => l,
+            Err(kova_core::lock::LockError::Busy) => {
+                return (
+                    false,
+                    "다른 작업이 저장소를 사용 중입니다. 잠시 후 다시 시도하세요".into(),
+                    None,
+                );
+            }
+            Err(e) => return (false, format!("저장소 잠금 실패: {e}"), None),
         };
         // 원본이 없으면(드라이브 분리 등) 엔진은 빈 백업을 "성공"으로 끝내므로 여기서 실패로 막는다
         let missing: Vec<String> = opts
@@ -239,7 +339,8 @@ impl Supervisor {
                     .into(),
             ))
         } else if missing.is_empty() || partial_missing {
-            run_backup(&opts, &on_event, cancel)
+            let max_threads = self.0.store.settings().max_cpu_threads as usize;
+            run_backup_with_threads(&opts, max_threads, &on_event, cancel)
         } else {
             Err(EngineError::Msg(format!(
                 "원본 경로를 찾을 수 없음: {}",
@@ -255,6 +356,10 @@ impl Supervisor {
                 prof.last_status = "success".into();
                 prof.last_snapshot_id = Some(s.session_id.clone());
                 prof.extra.insert("retry_count".into(), 0.into());
+                prof.extra
+                    .entry("last_verify_at")
+                    .or_insert_with(|| now.into());
+                prof.extra.entry("last_gc_at").or_insert_with(|| now.into());
                 // 보존 정책: 이 프로파일의 스냅샷에만 적용(방금 만든 최신본은 항상 보호됨)
                 let policy = kova_core::retention::Policy {
                     retention_count: Some(prof.retention_count as usize),
@@ -274,24 +379,18 @@ impl Supervisor {
                 if let Ok(mut h) = History::open(&opts.repo) {
                     let _ = h.sync_snapshots();
                 }
-                // 팩 컨테이너: 1시간 이상 된 낱개 블롭을 묶는다. 실패해도 백업은 성공으로 두고 메시지에 남긴다
+                // 팩 컨테이너: 1시간 이상 된 낱개 블롭을 묶는다(이미 상단에서 _repo_lock 보유 중).
                 let pack_note = if self.0.store.settings().pack_blobs {
-                    // 다른 작업이 저장소를 쓰는 중이면 이번엔 건너뛴다(다음 백업 때 다시 시도)
-                    let _lock = kova_core::lock::RepoLock::try_acquire(&opts.repo);
-                    if _lock.is_err() {
-                        String::new()
-                    } else {
-                        match kova_core::packer::compact(
-                            &opts.repo,
-                            kova_core::gc::DEFAULT_MIN_AGE_SECS,
-                            kova_core::packer::DEFAULT_PACK_BYTES,
-                        ) {
-                            Ok(r) if r.packed_blobs > 0 => {
-                                format!(", 블롭 {}개를 팩 {}개로 묶음", r.packed_blobs, r.packs)
-                            }
-                            Ok(_) => String::new(),
-                            Err(e) => format!(", 팩 묶기 실패: {e}"),
+                    match kova_core::packer::compact(
+                        &opts.repo,
+                        kova_core::gc::DEFAULT_MIN_AGE_SECS,
+                        kova_core::packer::DEFAULT_PACK_BYTES,
+                    ) {
+                        Ok(r) if r.packed_blobs > 0 => {
+                            format!(", 블롭 {}개를 팩 {}개로 묶음", r.packed_blobs, r.packs)
                         }
+                        Ok(_) => String::new(),
+                        Err(e) => format!(", 팩 묶기 실패: {e}"),
                     }
                 } else {
                     String::new()
@@ -342,10 +441,13 @@ impl Supervisor {
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
                 {
-                    match kova_core::offsite::replicate(
+                    let bw_limit = (self.0.store.settings().offsite_bw_limit_mbps as u64)
+                        .saturating_mul(1024 * 1024);
+                    match kova_core::offsite::replicate_with_limit(
                         &opts.repo,
                         std::path::Path::new(dest),
                         cancel,
+                        bw_limit,
                     ) {
                         Ok(r) => msg.push_str(&format!(
                             ", 오프사이트 복제 {}개 스냅샷/{}개 블롭",
@@ -408,22 +510,36 @@ impl Supervisor {
     }
 
     fn run_gc_job(&self, job: &Job) -> (bool, String, Option<String>) {
-        let Some(prof) = self.0.store.get(&job.profile_id) else {
+        let Some(mut prof) = self.0.store.get(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
         };
+        let repo = std::path::Path::new(&prof.repo_dir);
+        let _repo_lock = match kova_core::lock::RepoLock::acquire_wait(repo, REPO_LOCK_WAIT) {
+            Ok(l) => l,
+            Err(kova_core::lock::LockError::Busy) => {
+                return (
+                    false,
+                    "다른 작업이 저장소를 사용 중이라 정리를 건너뛰었습니다".into(),
+                    None,
+                );
+            }
+            Err(e) => return (false, format!("저장소 잠금 실패: {e}"), None),
+        };
         // 1시간 미만의 새 블롭은 진행 중 백업 것일 수 있어 보호된다
-        match kova_core::gc::prune_orphans(
-            std::path::Path::new(&prof.repo_dir),
-            kova_core::gc::DEFAULT_MIN_AGE_SECS,
-        ) {
-            Ok(r) => (
-                true,
-                format!(
-                    "정리 완료: 고아 블롭 {}개, {}바이트 확보",
-                    r.deleted_blobs, r.freed_bytes
-                ),
-                None,
-            ),
+        match kova_core::gc::prune_orphans(repo, kova_core::gc::DEFAULT_MIN_AGE_SECS) {
+            Ok(r) => {
+                let now = Local::now().timestamp() as f64;
+                prof.extra.insert("last_gc_at".into(), now.into());
+                let _ = self.0.store.upsert(prof);
+                (
+                    true,
+                    format!(
+                        "정리 완료: 고아 블롭 {}개, {}바이트 확보",
+                        r.deleted_blobs, r.freed_bytes
+                    ),
+                    None,
+                )
+            }
             Err(e) => (false, e.to_string(), None),
         }
     }
@@ -481,18 +597,55 @@ impl Supervisor {
     }
 
     fn run_verify_job(&self, job: &Job) -> (bool, String, Option<String>) {
-        let Some(prof) = self.0.store.get(&job.profile_id) else {
+        let Some(mut prof) = self.0.store.get(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
         };
-        match kova_core::verify::verify_repo(std::path::Path::new(&prof.repo_dir), false) {
+        let repo = std::path::Path::new(&prof.repo_dir);
+        let _repo_lock = match kova_core::lock::RepoLock::acquire_wait(repo, REPO_LOCK_WAIT) {
+            Ok(l) => l,
+            Err(kova_core::lock::LockError::Busy) => {
+                return (
+                    false,
+                    "다른 작업이 저장소를 사용 중이라 검증을 건너뛰었습니다".into(),
+                    None,
+                );
+            }
+            Err(e) => return (false, format!("저장소 잠금 실패: {e}"), None),
+        };
+        let deep = match job.arg.as_str() {
+            "deep" => true,
+            "quick" => false,
+            _ => self.0.store.settings().verify_deep,
+        };
+        let mode = if deep {
+            "정밀 검증"
+        } else {
+            "빠른 검증"
+        };
+        let res = match kova_core::verify::verify_repo(repo, deep) {
             Ok(r) if r.ok() => (
                 true,
-                format!("검증 통과: 스냅샷 {}개, 파일 {}개", r.snapshots, r.files),
+                format!(
+                    "{mode} 통과: 스냅샷 {}개, 파일 {}개, 청크 {}개",
+                    r.snapshots, r.files, r.unique_chunks
+                ),
                 None,
             ),
-            Ok(r) => (false, format!("검증 문제 {}건", r.problems.len()), None),
+            Ok(r) => (
+                false,
+                format!(
+                    "{mode} 문제 {}건 (첫 항목: {:?})",
+                    r.problems.len(),
+                    r.problems[0]
+                ),
+                None,
+            ),
             Err(e) => (false, e.to_string(), None),
-        }
+        };
+        let now = Local::now().timestamp() as f64;
+        prof.extra.insert("last_verify_at".into(), now.into());
+        let _ = self.0.store.upsert(prof);
+        res
     }
 }
 
@@ -1018,15 +1171,66 @@ mod tests {
 
     #[test]
     fn verify_job_passes_after_backup() {
-        let (_d, s) = setup(true);
+        let (d, s) = setup(true);
         s.tick(Local::now());
         wait_idle(&s);
         let rx = s.subscribe();
         s.enqueue("p1", Kind::Verify);
         wait_idle(&s);
-        assert!(rx
+        assert!(rx.try_iter().any(|e| matches!(
+            e,
+            SvcEvent::JobFinished { ok: true, ref message, .. } if message.contains("정밀 검증 통과")
+        )));
+        let log = fs::read_to_string(kova_core::applog::log_path(&d.path().join("cfg"))).unwrap();
+        assert!(log.contains("작업 시작") && log.contains("작업 종료"));
+    }
+
+    #[test]
+    fn repo_lock_blocks_concurrent_backup_and_verify() {
+        let (d, s) = setup(true);
+        let repo = d.path().join("repo");
+        let _held = kova_core::lock::RepoLock::try_acquire(&repo).unwrap();
+        let rx = s.subscribe();
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        assert!(rx.try_iter().any(|e| matches!(
+            e,
+            SvcEvent::JobFinished { ok: false, ref message, .. } if message.contains("다른 작업이 저장소를 사용 중")
+        )));
+    }
+
+    #[test]
+    fn maintenance_tick_queues_deep_verify_and_gc_after_interval() {
+        let (d, s) = setup(true);
+        let now = Local::now();
+        s.tick(now);
+        wait_idle(&s);
+        let store = ConfigStore::new(d.path().join("cfg"));
+        let mut p = store.get("p1").unwrap();
+        p.auto_backup_enabled = false;
+        let eight_days_ago = now.timestamp() as f64 - 8.0 * 86_400.0;
+        p.extra
+            .insert("last_verify_at".into(), eight_days_ago.into());
+        p.extra.insert("last_gc_at".into(), eight_days_ago.into());
+        store.upsert(p).unwrap();
+
+        let rx = s.subscribe();
+        assert_eq!(s.tick(now), 1);
+        wait_idle(&s);
+        assert!(rx.try_iter().any(|e| matches!(
+            e,
+            SvcEvent::JobStarted {
+                kind: Kind::Verify,
+                ..
+            }
+        )));
+        // 검증이 끝난 직후 다음 틱에서는 밀린 GC가 예약된다
+        let rx2 = s.subscribe();
+        assert_eq!(s.tick(now), 1);
+        wait_idle(&s);
+        assert!(rx2
             .try_iter()
-            .any(|e| matches!(e, SvcEvent::JobFinished { ok: true, .. })));
+            .any(|e| matches!(e, SvcEvent::JobStarted { kind: Kind::Gc, .. })));
     }
 
     #[test]

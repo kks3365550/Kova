@@ -102,6 +102,30 @@ pub struct Settings {
     pub offsite_provider: String,
     #[serde(default)]
     pub offsite_remote_path: String,
+    /// 정기 무결성 검증(Deep Scrub) 주기(일). 0이면 자동 검증 안 함.
+    #[serde(default = "d_maint_days")]
+    pub auto_verify_days: u32,
+    /// 정기 고아 블롭 정리(GC) 주기(일). 0이면 자동 정리 안 함.
+    #[serde(default = "d_maint_days")]
+    pub auto_gc_days: u32,
+    /// 저장소 검증 시 청크 존재 여부뿐 아니라 실제 복호화·해시 일치까지 검사(Deep Scrub).
+    #[serde(default = "d_true")]
+    pub verify_deep: bool,
+    /// 원격 실패·경고 알림 웹훅 URL (비어 있으면 비활성).
+    #[serde(default)]
+    pub webhook_url: String,
+    /// 백업 성공 시에도 웹훅 알림 발송 여부 (기본 false: 실패·경고만 발송).
+    #[serde(default)]
+    pub notify_on_success: bool,
+    /// 백업 엔진 최대 CPU 스레드 수 (0이면 자동/무제한).
+    #[serde(default)]
+    pub max_cpu_threads: u32,
+    /// 오프사이트 복제 대역폭 상한(MB/s). 0이면 무제한.
+    #[serde(default)]
+    pub offsite_bw_limit_mbps: u32,
+    /// 노트북 배터리 구동 시 자동 스케줄 백업 일시정지.
+    #[serde(default)]
+    pub pause_on_battery: bool,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -122,6 +146,9 @@ fn d_free() -> u32 {
 }
 fn d_prov() -> String {
     "local".into()
+}
+fn d_maint_days() -> u32 {
+    7
 }
 
 impl Default for Settings {

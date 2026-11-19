@@ -556,14 +556,77 @@ fn apply_settings(
         Ok("저장했습니다".into())
     } else {
         Ok(format!(
-            "저장했습니다. 아래 복구 코드는 지금만 보입니다. 안전한 곳에 적어 두세요.
-{}",
-            codes.join(
-                "
-"
-            )
+            "저장했습니다. '복구 키트 저장' 버튼으로 파일로 보관하세요.\n{}",
+            codes.join("\n")
         ))
     }
+}
+
+/// 이 PC에 키가 있는 암호화 저장소들의 복구 코드를 모아 복구 키트 파일로 저장한다.
+fn export_recovery_kit_to(
+    store: &kova_core::config::ConfigStore,
+    out_path: &std::path::Path,
+) -> Result<String, String> {
+    let mut entries = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for p in store.profiles() {
+        if p.repo_dir.is_empty() || !seen.insert(p.repo_dir.clone()) {
+            continue;
+        }
+        let repo = std::path::Path::new(&p.repo_dir);
+        if !kova_core::repocrypto::is_enabled(repo) {
+            continue;
+        }
+        let code = kova_core::repocrypto::export_recovery_code(repo)
+            .map_err(|e| format!("{} 키 읽기 실패: {e}", p.name))?;
+        entries.push((p.name, p.repo_dir, code));
+    }
+    if entries.is_empty() {
+        return Err("암호화된 저장소가 없습니다. 먼저 저장소 암호화를 켜고 저장하세요".into());
+    }
+    kova_core::repocrypto::write_recovery_kit(out_path, &entries)?;
+    Ok(format!(
+        "복구 키트 저장 완료 (암호화 저장소 {}곳): {}",
+        entries.len(),
+        out_path.display()
+    ))
+}
+
+/// 운영 자동화 설정(웹훅·CPU 스레드·오프사이트 대역폭·배터리 일시정지)을 검증하고 저장한다.
+fn apply_ops_settings(
+    store: &kova_core::config::ConfigStore,
+    webhook: &str,
+    max_threads_str: &str,
+    bw_limit_str: &str,
+    pause_on_battery: bool,
+) -> Result<String, String> {
+    let wh = webhook.trim();
+    if !wh.is_empty() {
+        kova_core::notify::validate_webhook_url(wh)?;
+    }
+    let threads: u32 = max_threads_str
+        .trim()
+        .parse()
+        .map_err(|_| "CPU 스레드 수는 0 이상의 정수로 입력하세요".to_string())?;
+    if threads > 64 {
+        return Err("CPU 스레드 수는 0~64 범위로 입력하세요".into());
+    }
+    let bw: u32 = bw_limit_str
+        .trim()
+        .parse()
+        .map_err(|_| "전송 속도(MB/s)는 0 이상의 정수로 입력하세요".to_string())?;
+    if bw > 10_000 {
+        return Err("전송 속도(MB/s)는 0~10000 범위로 입력하세요".into());
+    }
+    let mut s = store.settings();
+    s.webhook_url = wh.to_string();
+    s.max_cpu_threads = threads;
+    s.offsite_bw_limit_mbps = bw;
+    s.pause_on_battery = pause_on_battery;
+    store
+        .save_settings(&s)
+        .map_err(|e| format!("운영 설정 저장 실패: {e}"))?;
+    Ok("운영 설정을 저장했습니다".into())
 }
 
 /// 복구 코드로 이 PC의 키 파일을 다시 만든다. 암호화된 프로파일 저장소 중 코드가 맞는 곳마다 복원한다.
@@ -1378,24 +1441,58 @@ fn do_install() -> Result<(String, bool), String> {
     let backup = dir.join("update_backup");
     let r = kova_core::install::apply(&pkg, &dir, &backup, &["kova-app.exe"])
         .map_err(|e| e.to_string())?;
-    // 서비스는 옛 파일로 계속 돌고 있으므로 새 파일로 다시 시작한다(실패해도 설치는 끝난 상태)
+    // 서비스는 옛 파일로 계속 돌고 있으므로 완전히 정지될 때까지 확인한 뒤 새 파일로 다시 시작한다
     let svc = |a: &str| {
         use std::os::windows::process::CommandExt;
-        let _ = std::process::Command::new("sc.exe")
+        std::process::Command::new("sc.exe")
             .args([a, "KovaSvc"])
             .creation_flags(0x0800_0000)
-            .output();
+            .output()
     };
-    svc("stop");
-    std::thread::sleep(std::time::Duration::from_secs(3));
-    svc("start");
+    let _ = svc("stop");
+    let stopped = stop_service_wait("KovaSvc", std::time::Duration::from_secs(30));
+    let _ = svc("start");
+    let svc_note = if stopped {
+        "서비스 재시작"
+    } else {
+        "서비스 정지 대기 초과 후 재시작 시도"
+    };
     Ok((
         format!(
-            "{tag} 설치 완료({}개 파일, 서비스 재시작). 앱을 다시 시작합니다",
+            "{tag} 설치 완료({}개 파일, {svc_note}). 앱을 다시 시작합니다",
             r.files
         ),
         true,
     ))
+}
+
+fn parse_service_stopped(sc_query_out: &str) -> bool {
+    sc_query_out.contains("STOPPED") || sc_query_out.contains("1060")
+}
+
+fn stop_service_wait(service_name: &str, timeout: std::time::Duration) -> bool {
+    use std::os::windows::process::CommandExt;
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let out = std::process::Command::new("sc.exe")
+            .args(["query", service_name])
+            .creation_flags(0x0800_0000)
+            .output();
+        if let Ok(o) = out {
+            let text = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&o.stdout),
+                String::from_utf8_lossy(&o.stderr)
+            );
+            if parse_service_stopped(&text) || o.status.code() == Some(1060) {
+                return true;
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
 }
 
 /// 관리자 권한 도우미가 결과 파일에 적는 형식: 첫 줄 `installed`/`noop`, 이어서 안내 문구.
@@ -1733,8 +1830,26 @@ fn restore_inplace_job(
     };
     show(&weak, "원래 위치로 복원 중…".into());
     std::thread::spawn(move || {
+        let repo_path = std::path::PathBuf::from(&repo);
+        let _lock = match kova_core::lock::RepoLock::acquire_wait(
+            &repo_path,
+            std::time::Duration::from_secs(5),
+        ) {
+            Ok(l) => l,
+            Err(kova_core::lock::LockError::Busy) => {
+                show(
+                    &weak,
+                    "복원 실패: 다른 작업이 저장소를 사용 중입니다. 잠시 후 다시 시도하세요".into(),
+                );
+                return;
+            }
+            Err(e) => {
+                show(&weak, format!("복원 실패: 저장소 잠금 오류({e})"));
+                return;
+            }
+        };
         let opts = kova_engine::ops::RestoreOptions {
-            repo: std::path::PathBuf::from(&repo),
+            repo: repo_path,
             session_id: sid,
             only,
             target: None,
@@ -1776,6 +1891,23 @@ fn restore_snapshot_job(
     };
     show(&weak, "복원 시작…".into());
     std::thread::spawn(move || {
+        let _lock = match kova_core::lock::RepoLock::acquire_wait(
+            &repo_path,
+            std::time::Duration::from_secs(5),
+        ) {
+            Ok(l) => l,
+            Err(kova_core::lock::LockError::Busy) => {
+                show(
+                    &weak,
+                    "복원 실패: 다른 작업이 저장소를 사용 중입니다. 잠시 후 다시 시도하세요".into(),
+                );
+                return;
+            }
+            Err(e) => {
+                show(&weak, format!("복원 실패: 저장소 잠금 오류({e})"));
+                return;
+            }
+        };
         let last =
             std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(5));
         let w2 = weak.clone();
@@ -2107,6 +2239,10 @@ fn main() -> Result<(), slint::PlatformError> {
         w.set_form_encrypt(s.encrypt_backups);
         w.set_form_vss(s.use_vss);
         w.set_form_pack(s.pack_blobs);
+        w.set_form_webhook(s.webhook_url.into());
+        w.set_form_max_threads(s.max_cpu_threads.to_string().into());
+        w.set_form_bw_limit(s.offsite_bw_limit_mbps.to_string().into());
+        w.set_form_pause_battery(s.pause_on_battery);
         w.set_lock_text(lock_status().into());
     }
     {
@@ -2199,6 +2335,67 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_settings_text(msg.into());
                 w.set_form_recovery("".into());
             }
+        });
+        let weak = w.as_weak();
+        w.on_export_recovery_kit(move || {
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let msg = if app_locked() {
+                LOCKED_MSG.to_string()
+            } else {
+                let base = std::env::var_os("USERPROFILE")
+                    .map(|u| std::path::PathBuf::from(u).join("Desktop"))
+                    .filter(|d| d.is_dir())
+                    .unwrap_or_else(std::env::temp_dir);
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let out = base.join(format!("Kova2_Recovery_Kit_{secs}.txt"));
+                match export_recovery_kit_to(&store, &out) {
+                    Ok(m) | Err(m) => m,
+                }
+            };
+            if let Some(w) = weak.upgrade() {
+                w.set_settings_text(msg.into());
+            }
+        });
+        let weak = w.as_weak();
+        w.on_save_ops_settings(move |wh, th, bw, bat| {
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let msg = if app_locked() {
+                LOCKED_MSG.to_string()
+            } else {
+                match apply_ops_settings(&store, &wh, &th, &bw, bat) {
+                    Ok(m) | Err(m) => m,
+                }
+            };
+            if let Some(w) = weak.upgrade() {
+                w.set_settings_text(msg.into());
+            }
+        });
+        let weak = w.as_weak();
+        w.on_test_webhook(move |wh| {
+            let url = wh.to_string();
+            let weak = weak.clone();
+            if let Some(w) = weak.upgrade() {
+                w.set_settings_text("웹훅 테스트 발송 중…".into());
+            }
+            std::thread::spawn(move || {
+                let text = match kova_core::notify::send_webhook(
+                    &url,
+                    "info",
+                    "테스트 알림",
+                    "Kova2 원격 알림이 정상적으로 연결되었습니다.",
+                ) {
+                    Ok(()) => "웹훅 테스트 발송 성공".to_string(),
+                    Err(e) => format!("웹훅 테스트 실패: {e}"),
+                };
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_settings_text(text.into());
+                    }
+                });
+            });
         });
         let weak = w.as_weak();
         w.on_unlock_app(move |pw| {
@@ -2774,7 +2971,46 @@ mod tests {
         assert!(restore_keys(&store, "00000000").is_err());
         assert!(restore_keys(&store, &code).is_ok());
         assert_eq!(std::fs::read_dir(&keys).unwrap().count(), 1);
+        let kit = base.join("kit.txt");
+        let msg = export_recovery_kit_to(&store, &kit).unwrap();
+        assert!(msg.contains("1곳"));
+        let kit_body = std::fs::read_to_string(&kit).unwrap();
+        assert!(kit_body.contains(&code) && kit_body.contains("시험"));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn apply_ops_settings_validates_and_saves() {
+        let dir = std::env::temp_dir().join(format!("kova_ops_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = kova_core::config::ConfigStore::new(&dir);
+        assert!(apply_ops_settings(&store, "ftp://bad", "2", "10", false).is_err());
+        assert!(apply_ops_settings(&store, "", "99", "10", false).is_err());
+        assert!(apply_ops_settings(&store, "", "2", "99999", false).is_err());
+        assert!(apply_ops_settings(&store, "https://hooks.example.com/1", "4", "50", true).is_ok());
+        let s = store.settings();
+        assert_eq!(s.webhook_url, "https://hooks.example.com/1");
+        assert_eq!(s.max_cpu_threads, 4);
+        assert_eq!(s.offsite_bw_limit_mbps, 50);
+        assert!(s.pause_on_battery);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parse_service_stopped_detects_stopped_and_missing() {
+        assert!(parse_service_stopped(
+            "        STATE              : 1  STOPPED"
+        ));
+        assert!(parse_service_stopped(
+            "[SC] EnumQueryServicesStatus:OpenService FAILED 1060:"
+        ));
+        assert!(!parse_service_stopped(
+            "        STATE              : 3  STOP_PENDING"
+        ));
+        assert!(!parse_service_stopped(
+            "        STATE              : 4  RUNNING"
+        ));
     }
 
     #[test]

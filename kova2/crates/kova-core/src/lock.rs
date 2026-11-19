@@ -3,6 +3,7 @@
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 pub const LOCK_FILE_NAME: &str = ".kova.lock";
 
@@ -49,6 +50,20 @@ impl RepoLock {
         Ok(RepoLock { file, path })
     }
 
+    /// 최대 `timeout` 동안 100ms 간격으로 재시도하며 잠금을 획득한다.
+    pub fn acquire_wait(repo: &Path, timeout: Duration) -> Result<RepoLock, LockError> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            match Self::try_acquire(repo) {
+                Ok(lock) => return Ok(lock),
+                Err(LockError::Busy) if Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -82,5 +97,18 @@ mod tests {
         let d2 = tempfile::tempdir().unwrap();
         let _a = RepoLock::try_acquire(d1.path()).unwrap();
         assert!(RepoLock::try_acquire(d2.path()).is_ok());
+    }
+
+    #[test]
+    fn acquire_wait_succeeds_after_holder_drops() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().to_path_buf();
+        let lock = RepoLock::try_acquire(&p).unwrap();
+        let handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(lock);
+        });
+        assert!(RepoLock::acquire_wait(&p, Duration::from_secs(2)).is_ok());
+        handle.join().unwrap();
     }
 }

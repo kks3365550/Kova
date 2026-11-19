@@ -3,9 +3,10 @@
 //! - 파일은 임시 이름으로 쓴 뒤 이름을 바꾸고, 이미 있는 같은 크기의 블롭은 건너뛴다(중단 후 재개).
 //! - 취소 플래그를 블롭 단위로 확인한다. 원본 저장소는 읽기만 한다.
 use std::fs;
-use std::io;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use kova_engine::storage::SnapshotManifest;
 
@@ -45,14 +46,47 @@ fn blob_path(root: &Path, hash: &str) -> PathBuf {
     root.join("blobs").join(prefix).join(format!("{hash}.blob"))
 }
 
-fn copy_atomic(src: &Path, dst: &Path) -> io::Result<u64> {
+fn copy_atomic_throttled(
+    src: &Path,
+    dst: &Path,
+    cancel: &AtomicBool,
+    max_bytes_per_sec: u64,
+) -> Result<u64, OffsiteError> {
     if let Some(p) = dst.parent() {
         fs::create_dir_all(p)?;
     }
     let tmp = dst.with_extension("part");
     // 원본이 읽기 전용(랜섬웨어 보호)이면 복사본도 읽기 전용이 된다. 중단된 이전 시도의 .part 가 남아 있으면 덮어쓸 수 없으므로 먼저 치운다
     let _ = crate::worm::remove_protected(&tmp);
-    let n = fs::copy(src, &tmp)?;
+    let n = if max_bytes_per_sec == 0 {
+        fs::copy(src, &tmp)?
+    } else {
+        let mut r = fs::File::open(src)?;
+        let mut w = fs::File::create(&tmp)?;
+        let mut buf = vec![0u8; 256 * 1024];
+        let mut total = 0u64;
+        let started = Instant::now();
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                drop(w);
+                let _ = fs::remove_file(&tmp);
+                return Err(OffsiteError::Cancelled);
+            }
+            let read_n = r.read(&mut buf)?;
+            if read_n == 0 {
+                break;
+            }
+            w.write_all(&buf[..read_n])?;
+            total += read_n as u64;
+            let expected = Duration::from_secs_f64(total as f64 / max_bytes_per_sec as f64);
+            let elapsed = started.elapsed();
+            if expected > elapsed {
+                std::thread::sleep((expected - elapsed).min(Duration::from_secs(2)));
+            }
+        }
+        w.flush()?;
+        total
+    };
     fs::rename(&tmp, dst)?;
     Ok(n)
 }
@@ -76,6 +110,16 @@ pub fn replicate(
     repo: &Path,
     dest: &Path,
     cancel: &AtomicBool,
+) -> Result<ReplicaReport, OffsiteError> {
+    replicate_with_limit(repo, dest, cancel, 0)
+}
+
+/// `max_bytes_per_sec > 0` 이면 초당 전송 바이트 수를 제한하며 복제한다.
+pub fn replicate_with_limit(
+    repo: &Path,
+    dest: &Path,
+    cancel: &AtomicBool,
+    max_bytes_per_sec: u64,
 ) -> Result<ReplicaReport, OffsiteError> {
     let mut rep = ReplicaReport::default();
     let snaps = repo.join("snapshots");
@@ -125,8 +169,10 @@ pub fn replicate(
                     if have {
                         rep.blobs_skipped += 1;
                     } else {
-                        rep.bytes_copied += copy_atomic(&sp, &dp)?;
-                        rep.bytes_copied += copy_atomic(&si, &di)?;
+                        rep.bytes_copied +=
+                            copy_atomic_throttled(&sp, &dp, cancel, max_bytes_per_sec)?;
+                        rep.bytes_copied +=
+                            copy_atomic_throttled(&si, &di, cancel, max_bytes_per_sec)?;
                         rep.blobs_copied += 1;
                     }
                 }
@@ -136,10 +182,10 @@ pub fn replicate(
                 rep.blobs_skipped += 1;
                 continue;
             }
-            rep.bytes_copied += copy_atomic(&s, &d)?;
+            rep.bytes_copied += copy_atomic_throttled(&s, &d, cancel, max_bytes_per_sec)?;
             rep.blobs_copied += 1;
         }
-        copy_atomic(&mp, &dm)?;
+        copy_atomic_throttled(&mp, &dm, cancel, max_bytes_per_sec)?;
         rep.snapshots_copied += 1;
     }
     Ok(rep)
@@ -212,6 +258,18 @@ mod tests {
             (r2.snapshots_copied, r2.blobs_copied, r2.blobs_skipped),
             (1, 0, 1)
         );
+    }
+
+    #[test]
+    fn throttled_replication_copies_and_verifies() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = make_repo(d.path(), &"throttle-test-payload".repeat(200));
+        let dest = d.path().join("offsite_throttled");
+        let no = AtomicBool::new(false);
+        let r = replicate_with_limit(&repo, &dest, &no, 10 * 1024 * 1024).unwrap();
+        assert_eq!(r.snapshots_copied, 1);
+        assert!(r.bytes_copied > 0);
+        assert!(crate::verify::verify_repo(&dest, true).unwrap().ok());
     }
 
     #[test]

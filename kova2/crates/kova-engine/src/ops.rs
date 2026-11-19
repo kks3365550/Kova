@@ -135,6 +135,31 @@ pub fn run_backup(
     on_event: &(dyn Fn(Event) + Sync),
     cancel: &AtomicBool,
 ) -> Result<BackupSummary, EngineError> {
+    run_backup_with_threads(opts, 0, on_event, cancel)
+}
+
+/// `max_threads > 0` 이면 해당 스레드 수의 전용 Rayon 풀 안에서 병렬 백업을 수행한다(CPU 스로틀링).
+pub fn run_backup_with_threads(
+    opts: &BackupOptions,
+    max_threads: usize,
+    on_event: &(dyn Fn(Event) + Sync),
+    cancel: &AtomicBool,
+) -> Result<BackupSummary, EngineError> {
+    if max_threads > 0 {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(max_threads)
+            .build()
+            .map_err(|e| msg(format!("thread pool init failed: {e}")))?;
+        return pool.install(|| run_backup_inner(opts, on_event, cancel));
+    }
+    run_backup_inner(opts, on_event, cancel)
+}
+
+fn run_backup_inner(
+    opts: &BackupOptions,
+    on_event: &(dyn Fn(Event) + Sync),
+    cancel: &AtomicBool,
+) -> Result<BackupSummary, EngineError> {
     let start_time = Instant::now();
     let sources = &opts.sources;
     if sources.is_empty() {

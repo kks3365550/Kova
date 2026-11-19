@@ -1,6 +1,10 @@
 //! 파일 백업용 VSS(볼륨 섀도 복사): 원본이 있는 드라이브를 잠깐 스냅샷해 열려 있거나 잠긴 파일도 같은 시점으로 읽는다.
 //! 관리자(서비스) 권한과 NTFS 같은 VSS 지원 드라이브가 필요하다. 만들 수 없으면 호출자가 직접 읽기로 되돌아간다.
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+pub const DEFAULT_VSS_ATTEMPTS: usize = 3;
+pub const DEFAULT_VSS_RETRY_DELAY: Duration = Duration::from_secs(2);
 
 /// 만들어 둔 섀도 복사본 묶음. 지워질 때(Drop) 모두 삭제한다.
 pub struct ShadowSet {
@@ -38,20 +42,24 @@ fn join_device(device: &str, p: &Path) -> PathBuf {
 }
 
 impl ShadowSet {
-    /// 경로들이 있는 드라이브마다 섀도 복사본을 하나씩 만든다. 하나라도 실패하면 만든 것을 지우고 오류를 돌려준다.
+    /// 경로들이 있는 드라이브마다 섀도 복사본을 하나씩 만든다. 일시적 VSS 실패 시 기본 3회(2초 간격) 재시도한다.
     pub fn create_for(paths: &[PathBuf]) -> Result<ShadowSet, String> {
+        Self::create_for_with_retry(paths, DEFAULT_VSS_ATTEMPTS, DEFAULT_VSS_RETRY_DELAY)
+    }
+
+    /// 지정된 횟수·간격으로 섀도 복사본 생성을 재시도한다. 하나라도 실패하면 만든 것을 지우고 오류를 돌려준다.
+    pub fn create_for_with_retry(
+        paths: &[PathBuf],
+        attempts: usize,
+        delay: Duration,
+    ) -> Result<ShadowSet, String> {
         let mut drives: Vec<String> = paths.iter().filter_map(|p| drive_of(p)).collect();
         drives.sort();
         drives.dedup();
         if drives.is_empty() {
             return Err("드라이브 문자 경로가 아니어서 섀도 복사를 쓸 수 없음".into());
         }
-        let mut set = ShadowSet { shadows: vec![] };
-        for d in drives {
-            let (id, device) = imp::create(&d)?; // 실패하면 set 이 Drop 되며 앞서 만든 것도 지워진다
-            set.shadows.push((d, id, device));
-        }
-        Ok(set)
+        create_with_retry_fn(&drives, attempts.max(1), delay, imp::create)
     }
 
     /// 원래 경로를 섀도 안의 경로로 바꾼다. 섀도가 없는 드라이브면 그대로 돌려준다.
@@ -73,6 +81,41 @@ impl Drop for ShadowSet {
             imp::delete(id);
         }
     }
+}
+
+fn create_with_retry_fn<F>(
+    drives: &[String],
+    attempts: usize,
+    delay: Duration,
+    mut creator: F,
+) -> Result<ShadowSet, String>
+where
+    F: FnMut(&str) -> Result<(String, String), String>,
+{
+    let mut last_err = String::new();
+    for attempt in 1..=attempts.max(1) {
+        let mut set = ShadowSet { shadows: vec![] };
+        let mut failed = None;
+        for d in drives {
+            match creator(d) {
+                Ok((id, device)) => set.shadows.push((d.clone(), id, device)),
+                Err(e) => {
+                    failed = Some(e);
+                    break;
+                }
+            }
+        }
+        if let Some(err) = failed {
+            drop(set); // 앞서 만든 섀도 복사본 즉시 정리
+            last_err = err;
+            if attempt < attempts {
+                std::thread::sleep(delay);
+            }
+        } else {
+            return Ok(set);
+        }
+    }
+    Err(format!("{last_err} ({attempts}회 시도)"))
 }
 
 #[cfg(windows)]
@@ -159,6 +202,39 @@ mod tests {
         assert_eq!(set.map(Path::new("D:\\q")), PathBuf::from("D:\\q"));
         assert!(ShadowSet::create_for(&[PathBuf::from("\\\\srv\\s")]).is_err());
         std::mem::forget(set); // 가짜 ID 를 지우려고 PowerShell 을 부르지 않게 한다
+    }
+
+    #[test]
+    fn retry_recovers_after_transient_failure() {
+        let mut calls = 0usize;
+        let set = create_with_retry_fn(&["C:".into()], 3, Duration::from_millis(1), |_| {
+            calls += 1;
+            if calls < 3 {
+                Err("transient busy".into())
+            } else {
+                Ok((
+                    "{11111111-1111-1111-1111-111111111111}".into(),
+                    "\\\\?\\GLOBALROOT\\Device\\HarddiskVolumeShadowCopy9".into(),
+                ))
+            }
+        })
+        .unwrap();
+        assert_eq!(calls, 3);
+        assert_eq!(set.count(), 1);
+        std::mem::forget(set);
+    }
+
+    #[test]
+    fn retry_exhaustion_reports_attempt_count() {
+        let mut calls = 0usize;
+        let err = create_with_retry_fn(&["C:".into()], 2, Duration::from_millis(1), |_| {
+            calls += 1;
+            Err("writer error".into())
+        })
+        .err()
+        .unwrap();
+        assert_eq!(calls, 2);
+        assert!(err.contains("writer error") && err.contains("2회 시도"));
     }
 
     /// 실제 섀도 복사본을 만든다(관리자 권한 필요): `cargo test -p kova-core vss -- --ignored`
