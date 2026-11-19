@@ -129,6 +129,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::args().any(|a| a == "--install") {
         return install();
     }
+    if std::env::args().any(|a| a == "--harden") {
+        // 업그레이드 설치에서는 --install 을 건너뛰므로, 자기보호(SDDL·장애 재시작)만 다시 적용한다.
+        harden_service(SERVICE_NAME);
+        return Ok(());
+    }
     if std::env::args().any(|a| a == "--uninstall") {
         return uninstall();
     }

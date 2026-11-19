@@ -3,7 +3,7 @@
 ; =========================================================================
 
 #define MyAppName "Kova2"
-#define MyAppVersion "3.13.0"
+#define MyAppVersion "3.13.1"
 #define MyAppPublisher "kks3365550"
 
 [Setup]
@@ -43,7 +43,7 @@ Name: "{autodesktop}\Kova2"; Filename: "{app}\kova-app.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\kova-service.exe"; Parameters: "--install"; Flags: runhidden waituntilterminated; Check: not IsKovaSvcInstalled
-Filename: "{sys}\sc.exe"; Parameters: "failure KovaSvc reset= 86400 actions= restart/5000/restart/5000/restart/30000"; Flags: runhidden waituntilterminated
+Filename: "{app}\kova-service.exe"; Parameters: "--harden"; Flags: runhidden waituntilterminated
 Filename: "{sys}\sc.exe"; Parameters: "failureflag KovaSvc 1"; Flags: runhidden waituntilterminated
 Filename: "{sys}\sc.exe"; Parameters: "start KovaSvc"; Flags: runhidden waituntilterminated
 Filename: "{app}\kova-app.exe"; Description: "Kova2 앱 실행"; Flags: nowait postinstall skipifsilent
