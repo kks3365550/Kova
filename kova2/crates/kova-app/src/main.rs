@@ -721,6 +721,44 @@ fn run_build_pe_iso(iso_out: &str, drivers_dir: &str) -> String {
     }
 }
 
+/// 모든 프로파일의 저장소를 가로질러 파일명/초성으로 통합 검색하고 시점별 버전 수를 집계한다.
+fn search_all_repos(
+    store: &kova_core::config::ConfigStore,
+    query: &str,
+) -> Vec<(String, String, String, String, usize, String)> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let mut seen_repos = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for p in store.profiles() {
+        if p.repo_dir.is_empty() || !seen_repos.insert(p.repo_dir.clone()) {
+            continue;
+        }
+        let repo = std::path::Path::new(&p.repo_dir);
+        let Ok(items) = kova_engine::search::search_snapshots(repo, q, 50, 40, true) else {
+            continue;
+        };
+        for item in items {
+            let info = format!(
+                "{} · {} · {}",
+                item.latest_size_formatted, item.latest_mtime_formatted, item.latest_snapshot_id
+            );
+            out.push((
+                item.filename,
+                item.rel_path,
+                p.repo_dir.clone(),
+                item.latest_snapshot_id,
+                item.version_count.max(1),
+                info,
+            ));
+        }
+    }
+    out.truncate(60);
+    out
+}
+
 /// 복구 코드로 이 PC의 키 파일을 다시 만든다. 암호화된 프로파일 저장소 중 코드가 맞는 곳마다 복원한다.
 fn restore_keys(store: &kova_core::config::ConfigStore, code: &str) -> Result<String, String> {
     let mut ok = 0;
@@ -1509,6 +1547,23 @@ fn check_update(weak: slint::Weak<MainWindow>) {
                 w.set_update_text(text.into());
             }
         });
+    });
+}
+
+/// 앱 시작 시 1회 백그라운드 업데이트 확인: 새 버전이 있을 때만 조용히 알리고, 최신이거나 오프라인이면 무시한다.
+fn check_update_silent(weak: slint::Weak<MainWindow>) {
+    std::thread::spawn(move || {
+        let current = env!("CARGO_PKG_VERSION");
+        if let Ok(tag) = kova_core::fetch::latest_tag(UPDATE_BASE, UPDATE_REPO) {
+            if kova_core::update::is_newer(&tag, current) {
+                let msg = format!("새 버전 {tag} 이(가) 출시되었습니다 (현재 {current}) — 보호·업데이트 탭에서 설치 가능");
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_update_text(msg.into());
+                    }
+                });
+            }
+        }
     });
 }
 
@@ -2509,6 +2564,67 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         });
         let weak = w.as_weak();
+        w.on_global_search(move |q| {
+            let query = q.trim().to_string();
+            if query.is_empty() {
+                if let Some(w) = weak.upgrade() {
+                    w.set_global_results(slint::ModelRc::new(slint::VecModel::from(Vec::new())));
+                    w.set_global_status("검색어를 입력하세요 (파일명 또는 초성)".into());
+                }
+                return;
+            }
+            if let Some(w) = weak.upgrade() {
+                w.set_global_status("전체 스냅샷 검색 중…".into());
+            }
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+                let found = search_all_repos(&store, &query);
+                let count = found.len();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        let rows: Vec<GlobalFileRow> = found
+                            .into_iter()
+                            .map(|(filename, rel_path, repo, sid, vc, info)| GlobalFileRow {
+                                filename: filename.into(),
+                                rel_path: rel_path.into(),
+                                repo: repo.into(),
+                                snapshot_id: sid.into(),
+                                versions: format!("{vc}개 버전").into(),
+                                info: info.into(),
+                            })
+                            .collect();
+                        w.set_global_results(slint::ModelRc::new(slint::VecModel::from(rows)));
+                        w.set_global_status(
+                            if count == 0 {
+                                format!("'{query}' 에 일치하는 백업 파일이 없습니다")
+                            } else {
+                                format!("'{query}' 검색 결과 {count}건 (최신 시점 기준)")
+                            }
+                            .into(),
+                        );
+                    }
+                });
+            });
+        });
+        let weak = w.as_weak();
+        w.on_global_restore(move |repo, sid, rel_path, target| {
+            let only = Some(vec![rel_path.to_string()]);
+            if target.as_str() == "@원래자리" {
+                restore_inplace_job(weak.clone(), repo.to_string(), sid.to_string(), only);
+            } else {
+                restore_snapshot_job(
+                    weak.clone(),
+                    repo.to_string(),
+                    sid.to_string(),
+                    target.to_string(),
+                    only,
+                );
+            }
+        });
+        // 앱 시작 시 1회 백그라운드로 새 버전 확인(최신이거나 오프라인이면 조용히 무시)
+        check_update_silent(w.as_weak());
+        let weak = w.as_weak();
         w.on_unlock_app(move |pw| {
             let ok = kova_core::applock::verify(&kova_service::default_config_dir(), &pw);
             if ok {
@@ -3124,6 +3240,57 @@ mod tests {
             "C:\\Drivers\\NVMe",
         );
         assert!(b.contains("-DriversDir 'C:\\Drivers\\NVMe'"));
+    }
+
+    #[test]
+    fn search_all_repos_finds_files_across_snapshots_with_chosung() {
+        let base = std::env::temp_dir().join(format!("kova_gsearch_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let src = base.join("src");
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("품질보고서.txt"), "v1").unwrap();
+        let no = std::sync::atomic::AtomicBool::new(false);
+        kova_engine::ops::run_backup(
+            &kova_engine::ops::BackupOptions {
+                sources: vec![src.clone()],
+                repo: repo.clone(),
+                session_id: Some("20261119_010000".into()),
+                zstd_level: 3,
+                exclude: vec![],
+                profile_id: Some("p1".into()),
+                scan_from: None,
+            },
+            &|_| {},
+            &no,
+        )
+        .unwrap();
+        std::fs::write(src.join("품질보고서.txt"), "v2-updated").unwrap();
+        kova_engine::ops::run_backup(
+            &kova_engine::ops::BackupOptions {
+                sources: vec![src],
+                repo: repo.clone(),
+                session_id: Some("20261119_020000".into()),
+                zstd_level: 3,
+                exclude: vec![],
+                profile_id: Some("p1".into()),
+                scan_from: None,
+            },
+            &|_| {},
+            &no,
+        )
+        .unwrap();
+
+        let store = kova_core::config::ConfigStore::new(base.join("cfg"));
+        let mut p = kova_core::config::Profile::new("p1", "문서");
+        p.repo_dir = repo.to_string_lossy().into();
+        store.upsert(p).unwrap();
+
+        let res = search_all_repos(&store, "ㅍㅈㅂㄱㅅ");
+        assert_eq!(res.len(), 1);
+        assert_eq!(res[0].0, "품질보고서.txt");
+        assert_eq!(res[0].4, 2, "2개 시점 버전이 집계되어야 함");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

@@ -10,6 +10,7 @@ export struct BrowseRow { name: string, path: string, is-dir: bool, info: string
 export struct DriveRow { name: string, pct: int, used: string, free: string, repo: bool }
 export struct ImageRow { name: string, path: string, size: string, when: string }
 export struct RunRow { id: int, name: string, pct: int, current: string, cancellable: bool }
+export struct GlobalFileRow { filename: string, rel-path: string, repo: string, snapshot-id: string, versions: string, info: string }
 
 global Theme {
     in-out property <bool> dark: true;
@@ -281,6 +282,11 @@ export component MainWindow inherits Window {
     in-out property <string> pe-drivers-dir: "";
     in property <string> pe-text;
     callback build-pe-iso(string, string);
+    in-out property <string> global-query: "";
+    in property <[GlobalFileRow]> global-results;
+    in property <string> global-status;
+    callback global-search(string);
+    callback global-restore(string, string, string, string);
     in-out property <string> form-lock-cur: "";
     in-out property <string> form-lock-new: "";
     in property <string> lock-text;
@@ -1196,6 +1202,48 @@ export component MainWindow inherits Window {
                                         root.browse-confirm = true;
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // Cross-Snapshot Global Search (Chosung + Version History)
+                if !root.browse-open: Card {
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Field { text <=> root.global-query; placeholder: "전체 스냅샷 통합 파일 검색 (파일명·초성 지원, 예: 보고서 / ㅂㄱㅅ)"; horizontal-stretch: 1; }
+                            Btn { text: "전체 검색"; kind: 1; clicked => { root.global-search(root.global-query); } }
+                        }
+                        if root.global-status != "": Hint { text: root.global-status; }
+                        if root.global-results.length > 0: ListView {
+                            height: min(root.global-results.length * 46px, 210px);
+                            for g in root.global-results: Rectangle {
+                                height: 46px;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    spacing: 10px;
+                                    VerticalLayout {
+                                        horizontal-stretch: 1;
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: "📄 " + g.filename; color: Theme.text; font-size: 13px; font-weight: 600; overflow: elide; }
+                                        Text { text: g.rel-path + " · " + g.info; color: Theme.muted; font-size: 11px; overflow: elide; }
+                                    }
+                                    Badge { text: g.versions; tone: Theme.accent; y: 11px; }
+                                    Btn { text: "이 시점 열기"; height: 28px; y: 9px; clicked => { root.browse-confirm = false; root.browse-open = true; root.open-browse(g.repo, g.snapshot-id, g.snapshot-id); } }
+                                    Btn {
+                                        text: root.restore-orig ? "원래 자리 복원" : "꺼내기";
+                                        kind: 1;
+                                        height: 28px;
+                                        y: 9px;
+                                        clicked => { root.global-restore(g.repo, g.snapshot-id, g.rel-path, root.restore-orig ? "@원래자리" : root.restore-folder); }
+                                    }
+                                }
+                                Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
                             }
                         }
                     }

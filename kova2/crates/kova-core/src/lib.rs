@@ -23,6 +23,7 @@ pub mod profile_form;
 pub mod repocrypto;
 pub mod restore_target;
 pub mod retention;
+pub mod s3;
 pub mod schedule;
 pub mod sign;
 pub mod sysinfo;
