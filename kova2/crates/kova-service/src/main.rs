@@ -16,6 +16,9 @@ use windows_service::{
 };
 
 const SERVICE_NAME: &str = "KovaSvc";
+/// 일반 사용자(AU)는 상태 조회만 허용하고, 서비스 중지·설정 변경·삭제는 SYSTEM(SY)·Administrators(BA)만 허용한다.
+const SERVICE_HARDENED_SDDL: &str =
+    "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWLOCRRC;;;AU)";
 
 define_windows_service!(ffi_service_main, service_main);
 
@@ -83,8 +86,29 @@ fn install() -> Result<(), Box<dyn std::error::Error>> {
     };
     let svc = mgr.create_service(&info, ServiceAccess::CHANGE_CONFIG | ServiceAccess::START)?;
     svc.set_description("Kova 자동 백업·검증·오프사이트 복제 서비스")?;
-    println!("서비스 {SERVICE_NAME} 등록 완료(자동 시작). 시작: sc start {SERVICE_NAME}");
+    harden_service(SERVICE_NAME);
+    println!("서비스 {SERVICE_NAME} 등록 완료(자동 시작·자기보호·장애 자동재시작). 시작: sc start {SERVICE_NAME}");
     Ok(())
+}
+
+fn harden_service(name: &str) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let _ = std::process::Command::new("sc.exe")
+        .args([
+            "failure",
+            name,
+            "reset=",
+            "86400",
+            "actions=",
+            "restart/5000/restart/15000/restart/60000",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
+    let _ = std::process::Command::new("sc.exe")
+        .args(["sdset", name, SERVICE_HARDENED_SDDL])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output();
 }
 
 fn uninstall() -> Result<(), Box<dyn std::error::Error>> {

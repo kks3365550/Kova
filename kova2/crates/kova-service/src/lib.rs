@@ -205,7 +205,8 @@ impl Supervisor {
             ),
         );
         // 실패·경고는 알림 기록에 남긴다(화면이 없는 서비스는 기록만, 표시는 앱이 한다). 사용자 취소는 알리지 않는다.
-        let is_alert = message != "취소됨" && (!ok || message.contains("복제 실패"));
+        let is_alert = message != "취소됨"
+            && (!ok || message.contains("복제 실패") || message.contains("이상 징후"));
         if is_alert {
             let _ = kova_core::alerts::AlertLog::new(&self.0.config_dir).push(
                 kova_core::alerts::Alert {
@@ -353,6 +354,20 @@ impl Supervisor {
         let mut prof = self.0.store.get(&job.profile_id).unwrap_or(prof);
         let out = match res {
             Ok(s) => {
+                let had_previous = prof.last_snapshot_id.is_some();
+                let manifest_path = opts
+                    .repo
+                    .join("snapshots")
+                    .join(format!("{}.json", s.session_id));
+                let suspect_cnt = kova_core::anomaly::count_suspect_in_manifest(&manifest_path);
+                let anomaly = kova_core::anomaly::detect(
+                    s.total_files,
+                    s.new_files,
+                    s.modified_files,
+                    suspect_cnt,
+                    had_previous,
+                    &kova_core::anomaly::AnomalyConfig::default(),
+                );
                 prof.last_status = "success".into();
                 prof.last_snapshot_id = Some(s.session_id.clone());
                 prof.extra.insert("retry_count".into(), 0.into());
@@ -360,22 +375,35 @@ impl Supervisor {
                     .entry("last_verify_at")
                     .or_insert_with(|| now.into());
                 prof.extra.entry("last_gc_at").or_insert_with(|| now.into());
-                // 보존 정책: 이 프로파일의 스냅샷에만 적용(방금 만든 최신본은 항상 보호됨)
-                let policy = kova_core::retention::Policy {
-                    retention_count: Some(prof.retention_count as usize),
-                    retention_days: Some(prof.retention_days),
-                    keep_weekly: prof
-                        .extra
-                        .get("keep_weekly")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32,
-                    keep_monthly: prof
-                        .extra
-                        .get("keep_monthly")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0) as u32,
+                // 보존 정책: 랜섬웨어 이상 징후가 감지되면 정상 옛 스냅샷이 밀려 삭제되지 않도록 자동 보류한다
+                let ret = if let Some(ref a) = anomaly {
+                    kova_core::applog::write(
+                        &self.0.config_dir,
+                        "WARN",
+                        &format!(
+                            "랜섬웨어 이상 징후 감지로 보존 정리 보류: profile={} reason={}",
+                            prof.id,
+                            a.summary()
+                        ),
+                    );
+                    kova_core::retention::RetentionResult::default()
+                } else {
+                    let policy = kova_core::retention::Policy {
+                        retention_count: Some(prof.retention_count as usize),
+                        retention_days: Some(prof.retention_days),
+                        keep_weekly: prof
+                            .extra
+                            .get("keep_weekly")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32,
+                        keep_monthly: prof
+                            .extra
+                            .get("keep_monthly")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0) as u32,
+                    };
+                    kova_core::retention::apply_for_profile(&opts.repo, &prof.id, policy)
                 };
-                let ret = kova_core::retention::apply_for_profile(&opts.repo, &prof.id, policy);
                 if let Ok(mut h) = History::open(&opts.repo) {
                     let _ = h.sync_snapshots();
                 }
@@ -472,6 +500,12 @@ impl Supervisor {
                     msg.push_str(&format!(
                         ", 보존 정책으로 옛 스냅샷 {}개 정리",
                         ret.deleted_snapshots.len()
+                    ));
+                }
+                if let Some(a) = anomaly {
+                    msg.push_str(&format!(
+                        ", 랜섬웨어 이상 징후 감지(보존 정리 보류): {}",
+                        a.summary()
                     ));
                 }
                 (true, msg, Some(s.session_id))
@@ -1239,6 +1273,50 @@ mod tests {
         assert!(rx2
             .try_iter()
             .any(|e| matches!(e, SvcEvent::JobStarted { kind: Kind::Gc, .. })));
+    }
+
+    #[test]
+    fn ransomware_anomaly_pauses_retention_and_emits_alert() {
+        let (d, s) = setup(true);
+        let store = ConfigStore::new(d.path().join("cfg"));
+        let mut st = store.settings();
+        st.enable_ransomware_protection = false;
+        store.save_settings(&st).unwrap();
+        let mut p = store.get("p1").unwrap();
+        p.retention_count = 1;
+        store.upsert(p).unwrap();
+
+        // 1차 정상 백업
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        let first_sid = store.get("p1").unwrap().last_snapshot_id.unwrap();
+
+        // 랜섬웨어 의심 확장자(.locked) 파일 6개 생성 후 2차 백업
+        let src = d.path().join("원본");
+        for i in 0..6 {
+            fs::write(src.join(format!("doc{i}.locked")), "encrypted").unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(1200));
+        let rx = s.subscribe();
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+
+        assert!(rx.try_iter().any(|e| matches!(
+            e,
+            SvcEvent::JobFinished { ok: true, ref message, .. } if message.contains("이상 징후")
+        )));
+        // retention_count=1 이더라도 이상 징후 감지 시 1차 정상 스냅샷이 삭제되지 않고 보존된다
+        let first_manifest = d
+            .path()
+            .join("repo")
+            .join("snapshots")
+            .join(format!("{first_sid}.json"));
+        assert!(first_manifest.exists(), "정상 옛 스냅샷이 보존되어야 함");
+        // 경고 알림도 기록되어야 함
+        let alerts = kova_core::alerts::AlertLog::new(&d.path().join("cfg")).list();
+        assert!(alerts
+            .iter()
+            .any(|a| a.level == "warning" && a.message.contains("이상 징후")));
     }
 
     #[test]
