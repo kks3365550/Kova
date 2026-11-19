@@ -2955,7 +2955,10 @@ dependencies = [
 name = "kova-image"
 version = "0.0.1"
 dependencies = [
+ "aes-gcm",
  "crc32fast",
+ "getrandom 0.2.17",
+ "serde",
  "serde_json",
  "tempfile",
  "zstd",

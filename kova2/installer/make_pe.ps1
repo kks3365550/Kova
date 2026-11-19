@@ -8,7 +8,8 @@
 param(
     [string]$Out  = (Join-Path $PSScriptRoot '..\dist\kova_pe.iso'),
     [string]$Exe  = (Join-Path $PSScriptRoot '..\target\release\kova-pe.exe'),
-    [string]$Work = (Join-Path $env:TEMP 'kova_pe_work')
+    [string]$Work = (Join-Path $env:TEMP 'kova_pe_work'),
+    [string]$DriversDir = ''
 )
 $ErrorActionPreference = 'Stop'
 $kit = 'C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit'
@@ -32,6 +33,11 @@ if ($LASTEXITCODE -ne 0) { throw 'boot.wim 마운트 실패' }
 $ok = $false
 try {
     Copy-Item $Exe (Join-Path $mount 'Windows\System32\kova-pe.exe') -Force
+    if (-not [string]::IsNullOrWhiteSpace($DriversDir) -and (Test-Path $DriversDir)) {
+        Write-Host "드라이버 주입 중: $DriversDir"
+        dism /Image:$mount /Add-Driver /Driver:$DriversDir /Recurse | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "드라이버 주입 실패(종료 코드 $LASTEXITCODE): $DriversDir" }
+    }
     # startnet.cmd: 네트워크 초기화 후 복원 프로그램 실행 (ASCII, CRLF)
     $startnet = "wpeinit`r`nkova-pe.exe`r`n"
     [IO.File]::WriteAllText((Join-Path $mount 'Windows\System32\startnet.cmd'), $startnet, [Text.Encoding]::ASCII)

@@ -580,18 +580,26 @@ impl Supervisor {
             }
         });
         match res {
-            Ok((h, s)) => (
-                true,
-                format!(
-                    "이미지 완료: {} (사용 클러스터 {}, 압축 {}바이트)",
-                    out.display(),
-                    h.used_clusters,
-                    std::fs::metadata(&out)
-                        .map(|m| m.len())
-                        .unwrap_or(s.compressed_bytes)
-                ),
-                None,
-            ),
+            Ok((h, s)) => {
+                let mut worm_note = "";
+                if self.0.store.settings().enable_ransomware_protection
+                    && kova_core::worm::protect_file(&out, true)
+                {
+                    worm_note = ", 랜섬웨어 보호 잠금";
+                }
+                (
+                    true,
+                    format!(
+                        "이미지 완료: {} (사용 클러스터 {}, 압축 {}바이트{worm_note})",
+                        out.display(),
+                        h.used_clusters,
+                        std::fs::metadata(&out)
+                            .map(|m| m.len())
+                            .unwrap_or(s.compressed_bytes)
+                    ),
+                    None,
+                )
+            }
             Err(e) => (false, e.to_string(), None),
         }
     }

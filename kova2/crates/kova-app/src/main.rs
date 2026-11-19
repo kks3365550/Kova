@@ -629,6 +629,98 @@ fn apply_ops_settings(
     Ok("운영 설정을 저장했습니다".into())
 }
 
+fn find_make_pe_script() -> Option<(std::path::PathBuf, std::path::PathBuf)> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let candidates = [
+        (dir.join("make_pe.ps1"), dir.join("kova-pe.exe")),
+        (
+            dir.join("installer").join("make_pe.ps1"),
+            dir.join("kova-pe.exe"),
+        ),
+        (
+            dir.join("..")
+                .join("..")
+                .join("installer")
+                .join("make_pe.ps1"),
+            dir.join("kova-pe.exe"),
+        ),
+    ];
+    candidates
+        .into_iter()
+        .find(|(script, pe)| script.is_file() && pe.is_file())
+}
+
+fn build_pe_ps_args(
+    script: &std::path::Path,
+    out_iso: &std::path::Path,
+    pe_exe: &std::path::Path,
+    drivers_dir: &str,
+) -> String {
+    let q = |s: &str| s.replace('\'', "''");
+    let mut args = format!(
+        "-NoProfile -ExecutionPolicy Bypass -File '{}' -Out '{}' -Exe '{}'",
+        q(&script.to_string_lossy()),
+        q(&out_iso.to_string_lossy()),
+        q(&pe_exe.to_string_lossy()),
+    );
+    if !drivers_dir.trim().is_empty() {
+        args.push_str(&format!(" -DriversDir '{}'", q(drivers_dir.trim())));
+    }
+    args
+}
+
+fn run_build_pe_iso(iso_out: &str, drivers_dir: &str) -> String {
+    let adk = std::path::Path::new(
+        r"C:\Program Files (x86)\Windows Kits\10\Assessment and Deployment Kit\Deployment Tools\DandISetEnv.bat",
+    );
+    if !adk.is_file() {
+        return "Windows ADK(및 WinPE 애드온)가 설치되어 있지 않습니다. Microsoft Windows ADK를 먼저 설치하세요.".into();
+    }
+    let Some((script, pe_exe)) = find_make_pe_script() else {
+        return "make_pe.ps1 또는 kova-pe.exe를 찾지 못했습니다. 릴리즈 패키지에 포함돼 있는지 확인하세요.".into();
+    };
+    let out_iso = if iso_out.is_empty() {
+        std::env::var_os("USERPROFILE")
+            .map(|u| std::path::PathBuf::from(u).join("Desktop"))
+            .filter(|d| d.is_dir())
+            .unwrap_or_else(std::env::temp_dir)
+            .join("Kova2_WinPE_Recovery.iso")
+    } else {
+        std::path::PathBuf::from(iso_out)
+    };
+    if !drivers_dir.is_empty() && !std::path::Path::new(drivers_dir).is_dir() {
+        return format!("추가 드라이버 폴더를 찾을 수 없습니다: {drivers_dir}");
+    }
+    let inner_args = build_pe_ps_args(&script, &out_iso, &pe_exe, drivers_dir);
+    let q = |s: &str| s.replace('\'', "''");
+    let cmd = format!(
+        "Start-Process -FilePath 'powershell.exe' -ArgumentList '{}' -Verb RunAs -Wait",
+        q(&inner_args)
+    );
+    use std::os::windows::process::CommandExt;
+    match std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &cmd])
+        .creation_flags(0x0800_0000)
+        .output()
+    {
+        Ok(o) if o.status.success() && out_iso.is_file() => {
+            let mb = std::fs::metadata(&out_iso)
+                .map(|m| m.len() / (1024 * 1024))
+                .unwrap_or(0);
+            format!(
+                "WinPE 복구 ISO 생성 완료 ({mb}MB): {} — Rufus로 USB에 구워 사용하세요.",
+                out_iso.display()
+            )
+        }
+        Ok(o) if !o.status.success() => {
+            "관리자 권한 승인이 취소되었거나 제작이 중단되었습니다.".into()
+        }
+        Ok(_) => "ISO 파일이 생성되지 않았습니다. ADK WinPE 애드온 설치 상태를 확인하세요.".into(),
+        Err(e) => format!("제작 실행 실패: {e}"),
+    }
+}
+
 /// 복구 코드로 이 PC의 키 파일을 다시 만든다. 암호화된 프로파일 저장소 중 코드가 맞는 곳마다 복원한다.
 fn restore_keys(store: &kova_core::config::ConfigStore, code: &str) -> Result<String, String> {
     let mut ok = 0;
@@ -2398,6 +2490,25 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         });
         let weak = w.as_weak();
+        w.on_build_pe_iso(move |iso_out, drivers_dir| {
+            let iso_out = iso_out.trim().to_string();
+            let drivers_dir = drivers_dir.trim().to_string();
+            let weak = weak.clone();
+            if let Some(w) = weak.upgrade() {
+                w.set_pe_text(
+                    "WinPE 복구 ISO 제작 준비 중… (관리자 권한 승인이 필요합니다)".into(),
+                );
+            }
+            std::thread::spawn(move || {
+                let text = run_build_pe_iso(&iso_out, &drivers_dir);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_pe_text(text.into());
+                    }
+                });
+            });
+        });
+        let weak = w.as_weak();
         w.on_unlock_app(move |pw| {
             let ok = kova_core::applock::verify(&kova_service::default_config_dir(), &pw);
             if ok {
@@ -2995,6 +3106,24 @@ mod tests {
         assert_eq!(s.offsite_bw_limit_mbps, 50);
         assert!(s.pause_on_battery);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn build_pe_ps_args_includes_drivers_only_when_given() {
+        let a = build_pe_ps_args(
+            std::path::Path::new("C:\\Kova2\\make_pe.ps1"),
+            std::path::Path::new("D:\\out.iso"),
+            std::path::Path::new("C:\\Kova2\\kova-pe.exe"),
+            "",
+        );
+        assert!(a.contains("-Out 'D:\\out.iso'") && !a.contains("-DriversDir"));
+        let b = build_pe_ps_args(
+            std::path::Path::new("C:\\Kova2\\make_pe.ps1"),
+            std::path::Path::new("D:\\out.iso"),
+            std::path::Path::new("C:\\Kova2\\kova-pe.exe"),
+            "C:\\Drivers\\NVMe",
+        );
+        assert!(b.contains("-DriversDir 'C:\\Drivers\\NVMe'"));
     }
 
     #[test]

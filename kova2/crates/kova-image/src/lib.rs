@@ -5,6 +5,8 @@
 //! 오류로 보고하고 헤더의 used_clusters 합계와 대조해 끝부분 유실도 잡는다.
 pub mod bitmap;
 pub mod capture;
+pub mod crypto;
+pub mod incremental;
 pub mod qblk;
 pub mod restore;
 pub mod volume;

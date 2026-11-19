@@ -277,6 +277,10 @@ export component MainWindow inherits Window {
     in-out property <bool> form-pause-battery: false;
     callback save-ops-settings(string, string, string, bool);
     callback test-webhook(string);
+    in-out property <string> pe-iso-out: "";
+    in-out property <string> pe-drivers-dir: "";
+    in property <string> pe-text;
+    callback build-pe-iso(string, string);
     in-out property <string> form-lock-cur: "";
     in-out property <string> form-lock-new: "";
     in property <string> lock-text;
@@ -1446,6 +1450,24 @@ export component MainWindow inherits Window {
                             Field { text <=> root.vol-phrase; placeholder: "확인 문구를 정확히 입력해야 잠금이 해제됩니다"; }
                             Btn { text: "⚠️ 드라이브 직접 복원 실행 (영구 파괴)"; kind: 2; clicked => { root.restore-volume(root.vol-img, root.vol-letter, root.vol-phrase); } }
                             if root.volume-text != "": Text { text: root.volume-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
+                        }
+                    }
+
+                    // Step 5: WinPE Recovery Media Builder
+                    Card {
+                        VerticalLayout {
+                            padding: 16px;
+                            spacing: 10px;
+                            Heading { text: "5. 비상 부팅 복구 미디어(WinPE ISO) 제작"; }
+                            Hint { text: "Windows가 부팅되지 않을 때 USB로 부팅해 C: 드라이브를 통째 복원하는 WinPE 복구 ISO를 생성합니다. (Windows ADK 필요, 관리자 권한)"; }
+                            Field { text <=> root.pe-iso-out; placeholder: "출력 ISO 경로 (비우면 바탕화면 Kova2_WinPE_Recovery.iso)"; }
+                            Field { text <=> root.pe-drivers-dir; placeholder: "추가 드라이버 폴더 (선택: NVMe/RAID/네트워크 드라이버 주입)"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: end;
+                                Btn { text: "WinPE 복구 ISO 생성"; kind: 1; clicked => { root.build-pe-iso(root.pe-iso-out, root.pe-drivers-dir); } }
+                            }
+                            if root.pe-text != "": Text { text: root.pe-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
                         }
                     }
                     if root.image-text != "": Text { text: root.image-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
