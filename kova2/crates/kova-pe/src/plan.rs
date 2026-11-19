@@ -70,10 +70,7 @@ pub fn disk_selected_ok(
         ));
     }
     if !disk.status.eq_ignore_ascii_case("online") {
-        return Err(format!(
-            "disk {} is not online ({})",
-            disk.num, disk.status
-        ));
+        return Err(format!("disk {} is not online ({})", disk.num, disk.status));
     }
     // EFI 260MB + MSR 16MB + 여유 = 512MB
     let need = image_bytes + (512 << 20);
@@ -115,7 +112,10 @@ pub fn parse_disk_id(out: &str) -> Option<String> {
 }
 
 pub fn confirm_phrase_id(id: &str) -> String {
-    format!("ERASE DISK ID {}", id.trim_matches(['{', '}']).to_uppercase())
+    format!(
+        "ERASE DISK ID {}",
+        id.trim_matches(['{', '}']).to_uppercase()
+    )
 }
 
 pub fn norm(s: &str) -> String {

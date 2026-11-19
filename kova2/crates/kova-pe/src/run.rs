@@ -112,9 +112,7 @@ fn finish(log: &mut Log, image: Option<&Path>, code: i32, auto: bool) -> i32 {
     if auto {
         let _ = Command::new("wpeutil").arg("shutdown").status();
     } else {
-        let _ = ask(
-            "Press Enter to reboot (on failure, Shift+F10 opens a command prompt).",
-        );
+        let _ = ask("Press Enter to reboot (on failure, Shift+F10 opens a command prompt).");
         let _ = Command::new("wpeutil").arg("reboot").status();
     }
     code
@@ -196,23 +194,31 @@ pub fn main() -> i32 {
         .as_ref()
         .and_then(|m| m.get("disk_mb"))
         .and_then(|s| s.parse().ok());
-    let auto_id: Option<String> = auto.as_ref().and_then(|m| m.get("disk_id")).map(|s| {
-        s.trim_matches(['{', '}']).to_uppercase()
-    });
+    let auto_id: Option<String> = auto
+        .as_ref()
+        .and_then(|m| m.get("disk_id"))
+        .map(|s| s.trim_matches(['{', '}']).to_uppercase());
     let disk_num: u32 = if let Some(id) = &auto_id {
         // 디스크 고유 ID 가 정확히 하나의 디스크와 일치할 때만 선택한다.
         let hits: Vec<u32> = disks
             .iter()
             .filter(|d| {
-                parse_disk_id(&diskpart(&format!("select disk {}
+                parse_disk_id(&diskpart(&format!(
+                    "select disk {}
 detail disk
 exit
-", d.num)))
-                    .is_some_and(|x| x == *id)
+",
+                    d.num
+                )))
+                .is_some_and(|x| x == *id)
             })
             .map(|d| d.num)
             .collect();
-        if hits.len() == 1 { hits[0] } else { u32::MAX }
+        if hits.len() == 1 {
+            hits[0]
+        } else {
+            u32::MAX
+        }
     } else if let Some(mb) = auto_mb {
         find_disk_by_mb(&disks, mb).map_or(u32::MAX, |d| d.num)
     } else if let Some(m) = &auto {
