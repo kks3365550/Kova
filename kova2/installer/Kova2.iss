@@ -3,7 +3,7 @@
 ; =========================================================================
 
 #define MyAppName "Kova2"
-#define MyAppVersion "3.12.1"
+#define MyAppVersion "3.13.0"
 #define MyAppPublisher "kks3365550"
 
 [Setup]
@@ -34,6 +34,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\target\release\kova-service.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
 Source: "..\target\release\kova-app.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+Source: "..\target\release\kova-pe.exe"; DestDir: "{app}"; Flags: ignoreversion restartreplace
+Source: "make_pe.ps1"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Kova2"; Filename: "{app}\kova-app.exe"
