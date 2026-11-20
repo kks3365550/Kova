@@ -484,6 +484,31 @@ impl Supervisor {
                         Err(e) => msg.push_str(&format!(", 오프사이트 복제 실패: {e}")),
                     }
                 }
+                // 구글 드라이브 오프사이트: 앱에서 연결(로그인)돼 있고 제공자가 gdrive 일 때만. 실패해도 로컬 백업은 성공으로 둔다
+                if self.0.store.settings().offsite_provider == "gdrive"
+                    && kova_core::gdrive::is_connected(&self.0.store.dir)
+                {
+                    let r = kova_core::gdrive::load_client(&self.0.store.dir).and_then(|creds| {
+                        let mut c = kova_core::gdrive::DriveClient::open(
+                            &self.0.store.dir,
+                            kova_core::gdrive::Endpoints::default(),
+                            creds,
+                        )?;
+                        kova_core::gdrive::replicate_to_drive(
+                            &opts.repo,
+                            &mut c,
+                            &["Kova2 Backup", prof.id.as_str()],
+                            cancel,
+                        )
+                    });
+                    match r {
+                        Ok(r) => msg.push_str(&format!(
+                            ", 구글 드라이브 복제 {}개 스냅샷/{}개 블롭",
+                            r.snapshots_uploaded, r.blobs_uploaded
+                        )),
+                        Err(e) => msg.push_str(&format!(", 구글 드라이브 복제 실패: {e}")),
+                    }
+                }
                 msg.push_str(&vss_note);
                 msg.push_str(&pack_note);
                 if let Some(n) = protected.filter(|n| *n > 0) {
@@ -1139,6 +1164,39 @@ mod tests {
             .try_iter()
             .any(|e| matches!(e, SvcEvent::JobFinished { ok: true, .. })));
         assert!(young.exists(), "1시간 미만 블롭은 지우지 않는다");
+    }
+
+    /// 실계정 시험(수동): 앱에서 구글 드라이브를 연결한 뒤 `cargo test -p kova-service real_drive -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_drive_backup_replicates_via_service() {
+        let (d, s) = setup(true);
+        let real = std::path::PathBuf::from(std::env::var("ProgramData").unwrap())
+            .join("Kova2")
+            .join("config");
+        let cfg = d.path().join("cfg");
+        for f in ["gdrive_client.json", "gdrive_token.bin"] {
+            std::fs::copy(real.join(f), cfg.join(f)).unwrap();
+        }
+        let store = ConfigStore::new(cfg);
+        let mut st = store.settings();
+        st.offsite_provider = "gdrive".into();
+        store.save_settings(&st).unwrap();
+        let rx = s.subscribe();
+        s.enqueue("p1", Kind::Backup);
+        wait_idle(&s);
+        let msg = rx
+            .try_iter()
+            .find_map(|e| {
+                if let SvcEvent::JobFinished { message, .. } = e {
+                    Some(message)
+                } else {
+                    None
+                }
+            })
+            .expect("완료 이벤트");
+        println!("MSG: {msg}");
+        assert!(msg.contains("구글 드라이브 복제 1개 스냅샷"), "{msg}");
     }
 
     #[test]

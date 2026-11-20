@@ -60,7 +60,7 @@ pub fn is_enabled(repo: &Path) -> bool {
 }
 
 #[cfg(windows)]
-mod dpapi {
+pub(crate) mod dpapi {
     use std::ffi::c_void;
     #[repr(C)]
     struct Blob {
@@ -146,7 +146,7 @@ mod dpapi {
     }
 }
 #[cfg(not(windows))]
-mod dpapi {
+pub(crate) mod dpapi {
     pub fn protect(_: &[u8]) -> Result<Vec<u8>, String> {
         Err("DPAPI 는 Windows 전용".into())
     }

@@ -431,6 +431,23 @@ fn save_offsite(id: &str, dir: &str) {
     }
 }
 
+/// 기본 브라우저로 주소를 연다(셸 해석 없이 rundll32 사용).
+fn open_url(url: &str) {
+    use std::os::windows::process::CommandExt;
+    let _ = std::process::Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
+        .creation_flags(0x0800_0000)
+        .spawn();
+}
+
+/// 오프사이트 제공자를 바꾼다(서비스가 gdrive 일 때만 드라이브로 복제).
+fn set_offsite_provider(p: &str) {
+    let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+    let mut s = store.settings();
+    s.offsite_provider = p.into();
+    let _ = store.save_settings(&s);
+}
+
 /// 홈 화면의 "진행 중" 목록 한 줄(서비스 이벤트로 갱신).
 struct RunInfo {
     id: u64,
@@ -2377,6 +2394,71 @@ fn main() -> Result<(), slint::PlatformError> {
     w.on_run_backup(|id| send("backup", id.to_string()));
     w.on_run_verify(|id| send("verify", id.to_string()));
     w.on_save_offsite(|id, dir| save_offsite(&id, &dir));
+    w.set_gdrive_connected(kova_core::gdrive::is_connected(
+        &kova_service::default_config_dir(),
+    ));
+    {
+        let weak = w.as_weak();
+        w.on_connect_gdrive(move || {
+            let Some(win) = weak.upgrade() else { return };
+            if app_locked() {
+                win.set_gdrive_text(LOCKED_MSG.into());
+                return;
+            }
+            let dir = kova_service::default_config_dir();
+            let creds = match kova_core::gdrive::load_client(&dir) {
+                Ok(c) => c,
+                Err(e) => {
+                    win.set_gdrive_text(e.into());
+                    return;
+                }
+            };
+            win.set_gdrive_text("브라우저에서 구글 로그인을 완료해 주세요(5분 안에).".into());
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                let cancel = std::sync::atomic::AtomicBool::new(false);
+                let r = kova_core::gdrive::login(
+                    &kova_core::gdrive::Endpoints::default(),
+                    &creds,
+                    &dir,
+                    open_url,
+                    &cancel,
+                    std::time::Duration::from_secs(300),
+                );
+                if r.is_ok() {
+                    set_offsite_provider("gdrive");
+                }
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        match r {
+                            Ok(()) => {
+                                w.set_gdrive_connected(true);
+                                w.set_gdrive_text(String::new().into());
+                            }
+                            Err(e) => w.set_gdrive_text(format!("연결 실패: {e}").into()),
+                        }
+                    }
+                });
+            });
+        });
+    }
+    {
+        let weak = w.as_weak();
+        w.on_disconnect_gdrive(move || {
+            let Some(win) = weak.upgrade() else { return };
+            if app_locked() {
+                win.set_gdrive_text(LOCKED_MSG.into());
+                return;
+            }
+            kova_core::gdrive::disconnect(
+                &kova_service::default_config_dir(),
+                &kova_core::gdrive::Endpoints::default(),
+            );
+            set_offsite_provider("local");
+            win.set_gdrive_connected(false);
+            win.set_gdrive_text("연결을 해제했습니다.".into());
+        });
+    }
     w.on_cancel_job(cancel_job);
     {
         let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());

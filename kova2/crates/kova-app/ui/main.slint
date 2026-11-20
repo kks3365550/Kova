@@ -368,6 +368,10 @@ export component MainWindow inherits Window {
     callback install-update();
     in property <string> update-text;
     callback save-offsite(string, string);
+    callback connect-gdrive();
+    callback disconnect-gdrive();
+    in-out property <bool> gdrive-connected: false;
+    in-out property <string> gdrive-text;
     callback run-drill();
     callback export-sysinfo();
     in property <[OffsiteRow]> offsite-rows;
@@ -1579,6 +1583,11 @@ export component MainWindow inherits Window {
                                 Text { text: o.name; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; wrap: word-wrap; }
                                 le := PathField { text: o.dir; placeholder: "예: E:\\백업복사본"; horizontal-stretch: 1; pick(k) => { root.browse(k) } }
                                 Btn { text: "저장"; kind: 1; clicked => { root.save-offsite(o.id, le.text); } }
+                            }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Btn { text: root.gdrive-connected ? "구글 드라이브 연결 해제" : "구글 드라이브 연결"; kind: 1; clicked => { if (root.gdrive-connected) { root.disconnect-gdrive(); } else { root.connect-gdrive(); } } }
+                                Text { text: root.gdrive-connected ? "연결됨: 백업이 끝나면 구글 드라이브의 'Kova2 Backup' 폴더에 자동 복사합니다. " + root.gdrive-text : root.gdrive-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                             }
                         }
                     }

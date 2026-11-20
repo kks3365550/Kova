@@ -12,6 +12,7 @@ pub mod estimate;
 pub mod fetch;
 pub mod filter;
 pub mod gc;
+pub mod gdrive;
 pub mod health;
 pub mod history;
 pub mod install;
