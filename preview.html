@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="ko" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KOVA VaultOS — Windows 11 Fluent Edition (Preview)</title>
+    <!-- Tailwind CSS (Local Bundle with CDN Fallback) -->
+    <script src="web/static/vendor/tailwind.js"></script>
+    <script>
+        if (typeof tailwind === 'undefined') {
+            document.write('<script src="https://cdn.tailwindcss.com"><\/script>');
+        }
+    </script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Segoe UI Variable Display"', '"Segoe UI"', 'Pretendard', '-apple-system', 'sans-serif'],
+                        mono: ['"Consolas"', '"Cascadia Code"', 'monospace']
+                    },
+                    colors: {
+                        win: {
+                            bg: '#f3f4f6',
+                            card: '#ffffff',
+                            border: '#e5e7eb',
+                            hover: '#f8fafc',
+                            accent: '#0067c0',
+                            accentHover: '#005fb8',
+                            textDark: '#1c1c1c',
+                            textMuted: '#5c5c5c',
+                            darkBg: '#202020',
+                            darkSidebar: '#2c2c2c',
+                            darkCard: '#2d2d2d',
+                            darkBorder: '#383838',
+                            darkText: '#f3f3f3',
+                            darkMuted: '#a0a0a0'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- Lucide Icons (Local Bundle with CDN Fallback) -->
+    <script src="web/static/vendor/lucide.min.js"></script>
+    <script>
+        if (typeof lucide === 'undefined') {
+            document.write('<script src="https://unpkg.com/lucide@latest"><\/script>');
+        }
+    </script>
+    <style>
+        /* Smooth Fluent Transitions & Watermark */
+        .watermark-step {
+            font-size: 11rem;
+            font-weight: 300;
+            line-height: 1;
+            user-select: none;
+            pointer-events: none;
+        }
+        /* Custom scrollbar for Windows 11 look */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(150, 150, 150, 0.3);
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(150, 150, 150, 0.5);
+        }
+        .mode-card {
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .mode-card:hover {
+            transform: translateY(-2px);
+        }
+        .mode-card.active {
+            border-color: #0067c0;
+            box-shadow: 0 0 0 2px rgba(0, 103, 192, 0.2), 0 8px 20px -4px rgba(0, 0, 0, 0.08);
+        }
+        .dark .mode-card.active {
+            border-color: #38bdf8;
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25), 0 8px 20px -4px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body class="bg-slate-100 dark:bg-[#1f1f1f] text-slate-800 dark:text-zinc-100 min-h-screen flex items-center justify-center p-3 sm:p-6 antialiased selection:bg-blue-600 selection:text-white">
+
+    <!-- Windows 11 App Window Frame Mockup -->
+    <div class="w-full max-w-[1280px] h-[860px] bg-[#f8f9fa] dark:bg-[#202020] rounded-2xl shadow-2xl border border-slate-300/80 dark:border-zinc-800 flex flex-col overflow-hidden transition-colors duration-200">
+        
+        <!-- 1. Windows Window Titlebar -->
+        <header class="h-10 px-4 flex items-center justify-between border-b border-slate-200 dark:border-zinc-800/80 bg-slate-50/80 dark:bg-zinc-900/50 backdrop-blur select-none">
+            <div class="flex items-center gap-2.5">
+                <div class="w-4 h-4 rounded bg-blue-600 flex items-center justify-center text-white text-[10px] font-bold">
+                    <i data-lucide="shield-check" class="w-3 h-3"></i>
+                </div>
+                <span class="text-xs font-semibold text-slate-700 dark:text-zinc-300 tracking-tight">KOVA VaultOS — Windows 11 Edition (UI Redesign Preview)</span>
+            </div>
+            <!-- Window Control Buttons (Decorative) -->
+            <div class="flex items-center gap-3 text-slate-400 dark:text-zinc-500 text-xs">
+                <span class="hover:text-slate-700 dark:hover:text-zinc-300 cursor-pointer">―</span>
+                <span class="hover:text-slate-700 dark:hover:text-zinc-300 cursor-pointer">□</span>
+                <span class="hover:text-red-500 cursor-pointer">✕</span>
+            </div>
+        </header>
+
+        <!-- 2. Main Window Body (2-Column Grid Layout like Tiny11 Builder) -->
+        <div class="flex-1 flex overflow-hidden">
+            
+            <!-- LEFT SIDEBAR (Stepper & System Status) -->
+            <aside class="w-64 sm:w-72 bg-slate-50/70 dark:bg-[#262626]/60 border-r border-slate-200/90 dark:border-zinc-800/80 p-5 flex flex-col justify-between shrink-0 select-none">
+                
+                <!-- Upper: Brand & Steps -->
+                <div class="space-y-6">
+                    <!-- App Title / Logo -->
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2">
+                            <span class="text-base font-bold text-slate-900 dark:text-white tracking-tight">KOVA VaultOS</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono font-semibold">v3.0</span>
+                        </div>
+                        <p class="text-xs text-slate-500 dark:text-zinc-400 font-medium">원클릭 백업 및 즉시 복구 시스템</p>
+                    </div>
+
+                    <!-- BUILD STEPS / NAVIGATION (Clean 3-Menu Stepper) -->
+                    <div class="space-y-2">
+                        <span class="text-[11px] font-bold tracking-wider uppercase text-slate-400 dark:text-zinc-500 font-mono">CORE MENU</span>
+                        
+                        <nav class="space-y-1.5" id="sidebar-nav">
+                            <!-- Menu 1: Home / Backup -->
+                            <button onclick="switchView('backup')" id="nav-btn-backup" class="nav-item active w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-blue-700 dark:text-blue-400 bg-white dark:bg-zinc-800 shadow-sm border border-slate-200/80 dark:border-zinc-700 transition">
+                                <span class="w-1.5 h-4 rounded-full bg-blue-600 dark:bg-blue-400"></span>
+                                <span class="text-slate-400 dark:text-zinc-500 font-mono text-[11px] font-bold">1</span>
+                                <span class="flex-1 text-left">홈 & 백업 시작</span>
+                                <i data-lucide="play" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-400"></i>
+                            </button>
+
+                            <!-- Menu 2: Restore / History -->
+                            <button onclick="switchView('restore')" id="nav-btn-restore" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium text-slate-600 dark:text-zinc-300 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition">
+                                <span class="w-1.5 h-4 rounded-full bg-transparent"></span>
+                                <span class="text-slate-400 dark:text-zinc-500 font-mono text-[11px] font-bold">2</span>
+                                <span class="flex-1 text-left">되돌리기 (타임머신 복원)</span>
+                                <i data-lucide="history" class="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500"></i>
+                            </button>
+
+                            <!-- Menu 3: Settings & Tools -->
+                            <button onclick="switchView('settings')" id="nav-btn-settings" class="nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium text-slate-600 dark:text-zinc-300 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition">
+                                <span class="w-1.5 h-4 rounded-full bg-transparent"></span>
+                                <span class="text-slate-400 dark:text-zinc-500 font-mono text-[11px] font-bold">3</span>
+                                <span class="flex-1 text-left">환경설정 & 비상 도구</span>
+                                <i data-lucide="settings-2" class="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500"></i>
+                            </button>
+                        </nav>
+                    </div>
+                </div>
+
+                <!-- Lower: Storage Summary Card & Theme Switcher (Tiny11 Style) -->
+                <div class="space-y-4 pt-4 border-t border-slate-200 dark:border-zinc-800">
+                    
+                    <!-- SELECTED REPOSITORY (Tiny11 "Selected Image" Card Style) -->
+                    <div class="bg-white dark:bg-zinc-800/90 rounded-xl p-3.5 border border-slate-200/80 dark:border-zinc-700/80 shadow-sm space-y-1.5">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500 font-mono">저장소 상태</span>
+                            <span class="flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> 안전
+                            </span>
+                        </div>
+                        <div class="text-xs font-bold text-slate-800 dark:text-zinc-200 truncate font-mono">
+                            D:\MyBackup_Repository
+                        </div>
+                        <div class="text-[11px] text-slate-500 dark:text-zinc-400 flex items-center justify-between pt-1 border-t border-slate-100 dark:border-zinc-700/60 font-mono">
+                            <span>여유 공간</span>
+                            <span class="font-semibold text-slate-700 dark:text-zinc-300">1.2 TB 남음</span>
+                        </div>
+                        <div class="text-[10px] text-slate-400 dark:text-zinc-500 pt-0.5">
+                            최근 백업: 오늘 오전 09:00 (성공)
+                        </div>
+                    </div>
+
+                    <!-- Quick Action Buttons -->
+                    <div class="space-y-1.5">
+                        <button onclick="alert('비상 복구 USB 제작기 마법사가 열립니다.')" class="w-full py-1.5 px-3 rounded-lg text-xs font-medium text-slate-700 dark:text-zinc-300 bg-slate-200/60 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition flex items-center justify-center gap-1.5">
+                            <i data-lucide="disc" class="w-3.5 h-3.5 text-slate-500 dark:text-zinc-400"></i>
+                            <span>비상 복구 USB 도구</span>
+                        </button>
+                    </div>
+
+                    <!-- Appearance Selector (Windows 11 System / Dark / Light) -->
+                    <div class="space-y-1">
+                        <label class="text-[11px] font-medium text-slate-500 dark:text-zinc-400">Appearance</label>
+                        <select id="theme-selector" onchange="changeTheme(this.value)" class="w-full py-1 px-2.5 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg text-xs text-slate-700 dark:text-zinc-200 font-sans focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
+                            <option value="light">Light (밝은 모드)</option>
+                            <option value="dark">Dark (어두운 모드)</option>
+                        </select>
+                    </div>
+
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 dark:text-zinc-500 pt-1">
+                        <span>삼영 백업시스템</span>
+                        <a href="#" class="hover:underline flex items-center gap-0.5">도움말 ↗</a>
+                    </div>
+                </div>
+
+            </aside>
+
+            <!-- RIGHT MAIN CANVAS (Tiny11 Builder Card & Hero Canvas) -->
+            <main class="flex-1 bg-white dark:bg-[#1e1e1e] p-8 sm:p-10 flex flex-col justify-between overflow-y-auto relative">
+                
+                <!-- VIEW 1: HOME & BACKUP MODES (DEFAULT) -->
+                <section id="view-backup" class="view-panel flex-1 flex flex-col justify-between">
+                    
+                    <div>
+                        <!-- Header & Giant Subtle Step Watermark -->
+                        <div class="flex items-start justify-between relative">
+                            <div class="space-y-2 max-w-xl z-10">
+                                <h1 class="text-3xl sm:text-4xl font-light text-slate-900 dark:text-white tracking-tight">
+                                    Welcome
+                                </h1>
+                                <p class="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                    컴퓨터의 소중한 파일과 전체 시스템을 초고속으로 안전하게 보관합니다.<br>
+                                    원하는 백업 방식을 선택하고 [백업 시작]을 눌러주세요.
+                                </p>
+                            </div>
+                            <!-- Subtle 1 Watermark -->
+                            <span class="watermark-step text-slate-100 dark:text-zinc-800/40 absolute -top-8 right-4 select-none font-sans font-light">
+                                1
+                            </span>
+                        </div>
+
+                        <!-- 3 Large Mode Selection Cards (Tiny11 Style) -->
+                        <div class="mt-8 space-y-3">
+                            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500 font-mono">
+                                Backup Modes (백업 방식 선택)
+                            </h2>
+
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                                
+                                <!-- CARD 1: SMART INCREMENTAL (RECOMMENDED) -->
+                                <div onclick="selectMode('smart')" id="mode-card-smart" class="mode-card active cursor-pointer bg-white dark:bg-zinc-800/80 rounded-2xl p-6 border-2 border-slate-200 dark:border-zinc-700/80 flex flex-col justify-between h-[300px] relative group hover:border-blue-400 dark:hover:border-blue-500">
+                                    <!-- Checked Radio Icon Top Right -->
+                                    <div class="absolute top-4 right-4 text-blue-600 dark:text-blue-400">
+                                        <i data-lucide="check-circle-2" id="icon-check-smart" class="w-5 h-5"></i>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                                            <i data-lucide="zap" class="w-6 h-6"></i>
+                                        </div>
+                                        <div class="space-y-1.5">
+                                            <h3 class="text-lg font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+                                                스마트 자동 백업
+                                            </h3>
+                                            <p class="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                                변경된 문서, 바탕화면, 작업 파일만 1초 만에 감지하여 초고속으로 저장합니다.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div class="pt-4 border-t border-slate-100 dark:border-zinc-700/60">
+                                        <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                            매일 권장 모드 (소요시간 약 5초)
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- CARD 2: FULL SYSTEM IMAGE -->
+                                <div onclick="selectMode('full')" id="mode-card-full" class="mode-card cursor-pointer bg-white dark:bg-zinc-800/80 rounded-2xl p-6 border-2 border-slate-200 dark:border-zinc-700/80 flex flex-col justify-between h-[300px] relative group hover:border-blue-400 dark:hover:border-blue-500">
+                                    <div class="absolute top-4 right-4 text-slate-300 dark:text-zinc-600">
+                                        <i data-lucide="circle" id="icon-check-full" class="w-5 h-5"></i>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div class="w-12 h-12 rounded-xl bg-slate-100 dark:bg-zinc-700/60 border border-slate-200 dark:border-zinc-600 flex items-center justify-center text-slate-600 dark:text-zinc-300">
+                                            <i data-lucide="hard-drive" class="w-6 h-6"></i>
+                                        </div>
+                                        <div class="space-y-1.5">
+                                            <h3 class="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
+                                                PC 전체 통백업
+                                            </h3>
+                                            <p class="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                                윈도우 OS, 설치된 프로그램, 드라이버까지 컴퓨터 전체를 하나의 이미지로 완벽 복제합니다.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div class="pt-4 border-t border-slate-100 dark:border-zinc-700/60">
+                                        <span class="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-zinc-400">
+                                            SSD 교체 및 고장 대비용 (월 1회 권장)
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- CARD 3: CUSTOM SELECTION -->
+                                <div onclick="selectMode('custom')" id="mode-card-custom" class="mode-card cursor-pointer bg-white dark:bg-zinc-800/80 rounded-2xl p-6 border-2 border-slate-200 dark:border-zinc-700/80 flex flex-col justify-between h-[300px] relative group hover:border-blue-400 dark:hover:border-blue-500">
+                                    <div class="absolute top-4 right-4 text-slate-300 dark:text-zinc-600">
+                                        <i data-lucide="circle" id="icon-check-custom" class="w-5 h-5"></i>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div class="w-12 h-12 rounded-xl bg-slate-100 dark:bg-zinc-700/60 border border-slate-200 dark:border-zinc-600 flex items-center justify-center text-slate-600 dark:text-zinc-300">
+                                            <i data-lucide="folder-cog" class="w-6 h-6"></i>
+                                        </div>
+                                        <div class="space-y-1.5">
+                                            <h3 class="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
+                                                사용자 정의 맞춤
+                                            </h3>
+                                            <p class="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                                내가 원하는 특정 폴더와 파일만 골라서 백업하거나 제외 대상을 직접 지정합니다.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div class="pt-4 border-t border-slate-100 dark:border-zinc-700/60">
+                                        <span class="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-zinc-400">
+                                            맞춤 폴더 3개 지정됨
+                                        </span>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                        <!-- Real-time Progress Simulation Area (Initially Hidden) -->
+                        <div id="progress-area" class="hidden mt-6 p-4 rounded-xl bg-slate-50 dark:bg-zinc-800/50 border border-slate-200 dark:border-zinc-700 space-y-2">
+                            <div class="flex items-center justify-between text-xs font-semibold">
+                                <span id="progress-status-text" class="text-blue-600 dark:text-blue-400 flex items-center gap-2">
+                                    <i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+                                    백업 진행 중... (멀티스레드 Zstd 압축 파이프라인 가동)
+                                </span>
+                                <span id="progress-pct" class="font-mono font-bold text-slate-800 dark:text-zinc-200">0%</span>
+                            </div>
+                            <div class="w-full bg-slate-200 dark:bg-zinc-700 h-2.5 rounded-full overflow-hidden">
+                                <div id="progress-bar-fill" class="bg-blue-600 dark:bg-blue-500 h-full w-0 transition-all duration-300"></div>
+                            </div>
+                            <div class="flex justify-between items-center text-[11px] text-slate-400 dark:text-zinc-400 pt-1">
+                                <span id="progress-file-info">파일 분석 및 무중단 스냅샷 캡처 중...</span>
+                                <button onclick="toggleLogDetail()" class="text-blue-600 dark:text-blue-400 hover:underline">상세 로그 보기 ▾</button>
+                            </div>
+                            <!-- Collapsible Technical Logs (Hidden by default for simplicity!) -->
+                            <div id="tech-log-box" class="hidden mt-2 p-2.5 rounded bg-black/80 text-emerald-400 font-mono text-[10px] h-24 overflow-y-auto">
+                                [INFO] Initializing Hardware-Maximized Zstd Engine (threads=-1)...<br>
+                                [INFO] FastCDC Chunking pipeline active, deduplicating blocks...<br>
+                                [INFO] VSS Snapshot lock acquired. No file locks detected.<br>
+                                [SUCCESS] Verification passed. Exit Code: 0
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- Footer: Bottom Info & Start Button (Tiny11 Navigation) -->
+                    <div class="pt-6 border-t border-slate-100 dark:border-zinc-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                        <div class="space-y-0.5 text-xs text-slate-500 dark:text-zinc-400">
+                            <p class="font-medium text-slate-700 dark:text-zinc-300 flex items-center gap-1.5">
+                                <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-500"></i>
+                                하드웨어 풀코어 가속 활성화 · 랜섬웨어 변조 방지 켜짐
+                            </p>
+                            <p class="text-[11px]">
+                                백업 중에도 컴퓨터를 끄지 않고 평소처럼 자유롭게 작업하실 수 있습니다.
+                            </p>
+                        </div>
+
+                        <!-- Main Action CTA Button -->
+                        <button onclick="startBackupSimulation()" id="btn-start" class="w-full sm:w-auto px-7 py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95">
+                            <span>백업 시작</span>
+                            <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+
+                </section>
+
+
+                <!-- VIEW 2: RESTORE / TIMEMACHINE (CLEAN CALENDAR & CARDS) -->
+                <section id="view-restore" class="view-panel hidden flex-1 flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-start justify-between relative">
+                            <div class="space-y-2 max-w-xl z-10">
+                                <h1 class="text-3xl sm:text-4xl font-light text-slate-900 dark:text-white tracking-tight">
+                                    Restore
+                                </h1>
+                                <p class="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                    컴퓨터에 문제가 생기셨나요? 과거 정상 작동하던 시점으로 1초 만에 되돌립니다.
+                                </p>
+                            </div>
+                            <span class="watermark-step text-slate-100 dark:text-zinc-800/40 absolute -top-8 right-4 select-none font-sans font-light">
+                                2
+                            </span>
+                        </div>
+
+                        <!-- Timeline Point Selection -->
+                        <div class="mt-8 space-y-3">
+                            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500 font-mono">
+                                Select Restore Point (되돌릴 시점 선택)
+                            </h2>
+
+                            <div class="space-y-2.5">
+                                <!-- Point 1: Latest -->
+                                <div class="p-4 rounded-xl border-2 border-blue-500 bg-blue-50/30 dark:bg-blue-950/20 flex items-center justify-between cursor-pointer">
+                                    <div class="flex items-center gap-3.5">
+                                        <div class="w-9 h-9 rounded-lg bg-blue-600 text-white flex items-center justify-center">
+                                            <i data-lucide="clock" class="w-5 h-5"></i>
+                                        </div>
+                                        <div>
+                                            <div class="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                                오늘 오전 09:00 시점 (최신 자동 백업)
+                                                <span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 font-semibold">추천</span>
+                                            </div>
+                                            <div class="text-xs text-slate-500 dark:text-zinc-400">
+                                                총 34.2 GB · 41,200개 파일 완벽 보존됨
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <span class="text-xs font-bold text-blue-600 dark:text-blue-400">선택됨 ✓</span>
+                                </div>
+
+                                <!-- Point 2: Yesterday -->
+                                <div class="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 hover:bg-slate-50 dark:hover:bg-zinc-800/50 flex items-center justify-between cursor-pointer transition">
+                                    <div class="flex items-center gap-3.5">
+                                        <div class="w-9 h-9 rounded-lg bg-slate-100 dark:bg-zinc-700 text-slate-600 dark:text-zinc-300 flex items-center justify-center">
+                                            <i data-lucide="calendar" class="w-5 h-5"></i>
+                                        </div>
+                                        <div>
+                                            <div class="text-sm font-semibold text-slate-800 dark:text-zinc-200">
+                                                어제 오전 09:00 시점
+                                            </div>
+                                            <div class="text-xs text-slate-400 dark:text-zinc-400">
+                                                총 34.1 GB · 정상 완료
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <span class="text-xs text-slate-400">선택하기</span>
+                                </div>
+
+                                <!-- Point 3: 3 days ago -->
+                                <div class="p-4 rounded-xl border border-slate-200 dark:border-zinc-700 hover:bg-slate-50 dark:hover:bg-zinc-800/50 flex items-center justify-between cursor-pointer transition">
+                                    <div class="flex items-center gap-3.5">
+                                        <div class="w-9 h-9 rounded-lg bg-slate-100 dark:bg-zinc-700 text-slate-600 dark:text-zinc-300 flex items-center justify-center">
+                                            <i data-lucide="archive" class="w-5 h-5"></i>
+                                        </div>
+                                        <div>
+                                            <div class="text-sm font-semibold text-slate-800 dark:text-zinc-200">
+                                                3일 전 (시스템 통백업 시점)
+                                            </div>
+                                            <div class="text-xs text-slate-400 dark:text-zinc-400">
+                                                윈도우 OS 무결성 스냅샷 포함
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <span class="text-xs text-slate-400">선택하기</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Footer: Restore Action -->
+                    <div class="pt-6 border-t border-slate-100 dark:border-zinc-800 flex items-center justify-between">
+                        <span class="text-xs text-slate-500 dark:text-zinc-400">
+                            선택한 시점: <b>오늘 오전 09:00</b> (파일 손실 없이 즉시 복구됩니다)
+                        </span>
+                        <button onclick="alert('선택한 시점으로 안전 복원을 진행합니다.')" class="px-7 py-3 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-semibold text-sm shadow-md transition flex items-center gap-2">
+                            <i data-lucide="rotate-ccw" class="w-4 h-4"></i>
+                            <span>이 시점으로 되돌리기</span>
+                        </button>
+                    </div>
+                </section>
+
+
+                <!-- VIEW 3: SETTINGS & TOOLS (SIMPLIFIED & CLEAN) -->
+                <section id="view-settings" class="view-panel hidden flex-1 flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-start justify-between relative">
+                            <div class="space-y-2 max-w-xl z-10">
+                                <h1 class="text-3xl sm:text-4xl font-light text-slate-900 dark:text-white tracking-tight">
+                                    Settings & Tools
+                                </h1>
+                                <p class="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                    기본 백업 일정과 비상 복구 도구를 관리합니다. 복잡한 내부 기술 옵션은 접혀있습니다.
+                                </p>
+                            </div>
+                            <span class="watermark-step text-slate-100 dark:text-zinc-800/40 absolute -top-8 right-4 select-none font-sans font-light">
+                                3
+                            </span>
+                        </div>
+
+                        <!-- 2 Key Setting Sections -->
+                        <div class="mt-8 space-y-6">
+                            
+                            <!-- Card 1: Schedule -->
+                            <div class="p-5 rounded-2xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <div class="space-y-0.5">
+                                        <h3 class="text-sm font-bold text-slate-900 dark:text-white">자동 백업 스케줄</h3>
+                                        <p class="text-xs text-slate-500 dark:text-zinc-400">정해진 시간에 신경 쓰지 않아도 백그라운드에서 자동으로 백업합니다.</p>
+                                    </div>
+                                    <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                                        매일 오전 09:00 활성
+                                    </span>
+                                </div>
+                                <div class="flex gap-3">
+                                    <button class="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white">매일 1회 (오전 09:00)</button>
+                                    <button class="px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-zinc-400 bg-slate-100 dark:bg-zinc-700">실시간 변경 감지</button>
+                                    <button class="px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-zinc-400 bg-slate-100 dark:bg-zinc-700">수동 실행만</button>
+                                </div>
+                            </div>
+
+                            <!-- Card 2: Advanced Hidden Settings Accordion -->
+                            <div class="rounded-2xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 overflow-hidden">
+                                <button onclick="toggleAdvancedSettings()" class="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-zinc-700/40 transition">
+                                    <div class="flex items-center gap-2.5">
+                                        <i data-lucide="sliders" class="w-4 h-4 text-slate-500"></i>
+                                        <span class="text-xs font-bold text-slate-800 dark:text-zinc-200">고급 엔지니어링 설정 (WORM 불변 락, 중복제거 청소, 로그 패키징)</span>
+                                    </div>
+                                    <i data-lucide="chevron-down" id="adv-arrow" class="w-4 h-4 text-slate-400 transition-transform"></i>
+                                </button>
+                                <div id="adv-settings-body" class="hidden p-5 border-t border-slate-100 dark:border-zinc-700 space-y-3 text-xs text-slate-600 dark:text-zinc-300 bg-slate-50/50 dark:bg-zinc-900/30">
+                                    <div class="flex items-center justify-between">
+                                        <span>랜섬웨어 WORM 불변 락 (파일 삭제 방지):</span>
+                                        <span class="font-mono font-bold text-emerald-600">활성화됨 (SYSTEM 보호)</span>
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span>FastCDC 중복 제거 및 가비지 컬렉션(GC):</span>
+                                        <button class="px-2.5 py-1 rounded bg-slate-200 dark:bg-zinc-700 text-[11px] font-semibold">지금 공간 회수</button>
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span>시스템 진단 로그 패키징:</span>
+                                        <button class="px-2.5 py-1 rounded bg-slate-200 dark:bg-zinc-700 text-[11px] font-semibold">ZIP 다운로드</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <div class="pt-6 border-t border-slate-100 dark:border-zinc-800 flex items-center justify-between text-xs text-slate-400">
+                        <span>설정값은 변경 즉시 실시간으로 자동 저장됩니다.</span>
+                        <button onclick="alert('설정이 저장되었습니다.')" class="px-5 py-2 rounded-xl bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-semibold">
+                            저장 완료
+                        </button>
+                    </div>
+                </section>
+
+            </main>
+
+        </div>
+
+    </div>
+
+    <!-- Scripts for Interactive Demo -->
+    <script>
+        // Init Icons
+        lucide.createIcons();
+
+        // View Switching
+        function switchView(viewName) {
+            document.querySelectorAll('.view-panel').forEach(el => el.classList.add('hidden'));
+            document.getElementById('view-' + viewName).classList.remove('hidden');
+
+            document.querySelectorAll('.nav-item').forEach(el => {
+                el.classList.remove('active', 'text-blue-700', 'dark:text-blue-400', 'bg-white', 'dark:bg-zinc-800', 'shadow-sm', 'border', 'border-slate-200/80', 'dark:border-zinc-700');
+                el.classList.add('text-slate-600', 'dark:text-zinc-300');
+                el.querySelector('span:first-child').className = 'w-1.5 h-4 rounded-full bg-transparent';
+            });
+
+            const activeBtn = document.getElementById('nav-btn-' + viewName);
+            activeBtn.classList.add('active', 'text-blue-700', 'dark:text-blue-400', 'bg-white', 'dark:bg-zinc-800', 'shadow-sm', 'border', 'border-slate-200/80', 'dark:border-zinc-700');
+            activeBtn.classList.remove('text-slate-600', 'dark:text-zinc-300');
+            activeBtn.querySelector('span:first-child').className = 'w-1.5 h-4 rounded-full bg-blue-600 dark:bg-blue-400';
+            
+            lucide.createIcons();
+        }
+
+        // Mode Card Selection
+        let selectedMode = 'smart';
+        function selectMode(mode) {
+            selectedMode = mode;
+            ['smart', 'full', 'custom'].forEach(m => {
+                const card = document.getElementById('mode-card-' + m);
+                const icon = document.getElementById('icon-check-' + m);
+                if (m === mode) {
+                    card.classList.add('active');
+                    icon.setAttribute('data-lucide', 'check-circle-2');
+                    icon.parentElement.className = 'absolute top-4 right-4 text-blue-600 dark:text-blue-400';
+                } else {
+                    card.classList.remove('active');
+                    icon.setAttribute('data-lucide', 'circle');
+                    icon.parentElement.className = 'absolute top-4 right-4 text-slate-300 dark:text-zinc-600';
+                }
+            });
+            lucide.createIcons();
+        }
+
+        // Theme Switcher
+        function changeTheme(theme) {
+            if (theme === 'dark') {
+                document.documentElement.classList.add('dark');
+                document.documentElement.classList.remove('light');
+            } else {
+                document.documentElement.classList.remove('dark');
+                document.documentElement.classList.add('light');
+            }
+        }
+
+        // Backup Simulation Interaction
+        let timer = null;
+        function startBackupSimulation() {
+            const btn = document.getElementById('btn-start');
+            const progressArea = document.getElementById('progress-area');
+            const bar = document.getElementById('progress-bar-fill');
+            const pct = document.getElementById('progress-pct');
+            const info = document.getElementById('progress-file-info');
+
+            progressArea.classList.remove('hidden');
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            let p = 0;
+            clearInterval(timer);
+            timer = setInterval(() => {
+                p += Math.floor(Math.random() * 15) + 5;
+                if (p > 100) p = 100;
+                bar.style.width = p + '%';
+                pct.innerText = p + '%';
+
+                if (p < 30) {
+                    info.innerText = 'NVMe 고속 스캔 및 변경 파일 감지 중...';
+                } else if (p < 75) {
+                    info.innerText = '멀티스레드 Zstd 압축 및 안전 보관함 전송 중 (1.4 GB/s)...';
+                } else if (p < 100) {
+                    info.innerText = '무결성 해시 검증 및 스냅샷 등록 중...';
+                } else {
+                    clearInterval(timer);
+                    info.innerText = '✅ 백업 완료! 시스템이 안전하게 보호되었습니다.';
+                    btn.disabled = false;
+                    btn.classList.remove('opacity-50', 'cursor-not-allowed');
+                }
+            }, 250);
+        }
+
+        // Collapsible Advanced Settings & Logs
+        function toggleAdvancedSettings() {
+            const body = document.getElementById('adv-settings-body');
+            const arrow = document.getElementById('adv-arrow');
+            body.classList.toggle('hidden');
+            arrow.classList.toggle('rotate-180');
+        }
+
+        function toggleLogDetail() {
+            const box = document.getElementById('tech-log-box');
+            box.classList.toggle('hidden');
+        }
+    </script>
+</body>
+</html>

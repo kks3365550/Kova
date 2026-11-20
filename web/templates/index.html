@@ -1,9 +1,16 @@
 <!DOCTYPE html>
-<html lang="ko" class="dark">
+<html lang="ko" class="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kova — Local Backup. Instant Recovery.</title>
+    <title>KOVA VaultOS — Windows 11 Fluent Edition</title>
+    <!-- Instant Theme Loader (Avoids FOUC) -->
+    <script>
+        try {
+            var savedTheme = localStorage.getItem('kova_theme') || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.className = savedTheme;
+        } catch(e) {}
+    </script>
     <!-- Tailwind CSS (Local Bundle) -->
     <script src="/static/vendor/tailwind.js"></script>
     <script>
@@ -11,12 +18,32 @@
             darkMode: 'class',
             theme: {
                 extend: {
+                    fontFamily: {
+                        sans: ['"Segoe UI Variable Display"', '"Segoe UI"', 'Pretendard', '-apple-system', 'sans-serif'],
+                        mono: ['"Consolas"', '"Cascadia Code"', 'monospace']
+                    },
                     colors: {
                         brand: {
                             50: '#eff6ff',
                             500: '#3b82f6',
                             600: '#2563eb',
-                            700: '#1d4ed8',
+                            700: '#1d4ed8'
+                        },
+                        win: {
+                            bg: '#f3f4f6',
+                            card: '#ffffff',
+                            border: '#e5e7eb',
+                            hover: '#f8fafc',
+                            accent: '#0067c0',
+                            accentHover: '#005fb8',
+                            textDark: '#1c1c1c',
+                            textMuted: '#5c5c5c',
+                            darkBg: '#202020',
+                            darkSidebar: '#262626',
+                            darkCard: '#2d2d2d',
+                            darkBorder: '#383838',
+                            darkText: '#f3f3f3',
+                            darkMuted: '#a0a0a0'
                         }
                     }
                 }
@@ -27,136 +54,285 @@
     <script src="/static/vendor/lucide.min.js"></script>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%2338bdf8' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolygon points='10 1.5 2 5.5 2 14.5 10 18.5 18 14.5 18 5.5 10 1.5'/%3E%3Cline x1='10' y1='1.5' x2='10' y2='18.5'/%3E%3Ccircle cx='10' cy='10' r='2.5' fill='%2338bdf8' fill-opacity='0.4'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="/static/style.css">
+    <style>
+        /* Smooth Fluent Transitions & Stepper Watermark */
+        .watermark-step {
+            font-size: 11rem;
+            font-weight: 300;
+            line-height: 1;
+            user-select: none;
+            pointer-events: none;
+            position: absolute;
+            top: -2rem;
+            right: 1.5rem;
+            z-index: 0;
+            font-family: "Segoe UI Variable Display", sans-serif;
+            opacity: 0.07;
+        }
+        .dark .watermark-step {
+            opacity: 0.12;
+        }
+        /* Windows 11 Native Rounded Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(150, 150, 150, 0.3);
+            border-radius: 9999px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(150, 150, 150, 0.5);
+        }
+        /* Fluent Mode Card Interactions */
+        .mode-card {
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .mode-card:hover {
+            transform: translateY(-2px);
+        }
+        .mode-card.active {
+            border-color: #0067c0;
+            box-shadow: 0 0 0 2px rgba(0, 103, 192, 0.2), 0 8px 20px -4px rgba(0, 0, 0, 0.08);
+        }
+        .dark .mode-card.active {
+            border-color: #38bdf8;
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25), 0 8px 20px -4px rgba(0, 0, 0, 0.3);
+        }
+        body {
+            transition: background-color 0.2s ease, color 0.2s ease;
+        }
+    </style>
 </head>
-<body class="bg-[#09090b] text-zinc-100 min-h-screen flex flex-col font-sans antialiased selection:bg-blue-600 selection:text-white">
+<body class="bg-slate-100 dark:bg-[#18181b] text-slate-800 dark:text-zinc-100 min-h-screen flex items-center justify-center p-2 sm:p-4 lg:p-6 antialiased selection:bg-blue-600 selection:text-white">
 
-    <!-- Top Navigation Bar - Linear / Vercel Engineering Console -->
-    <header class="border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur-xl sticky top-0 z-30">
-        <!-- Main Top Bar -->
-        <div class="px-3 sm:px-6 py-2.5 flex flex-wrap md:flex-nowrap items-center justify-between gap-3 border-b border-zinc-800/60">
+    <!-- Windows 11 App Window Frame Mockup -->
+    <div class="w-full max-w-[1720px] min-h-[92vh] bg-[#f8f9fa] dark:bg-[#202020] rounded-2xl shadow-2xl border border-slate-300/80 dark:border-zinc-800 flex flex-col overflow-hidden transition-colors duration-200">
+        
+        <!-- 1. Windows Window Titlebar -->
+        <header class="h-11 px-4 flex items-center justify-between border-b border-slate-200 dark:border-zinc-800/80 bg-slate-50/90 dark:bg-zinc-900/60 backdrop-blur select-none">
             <div class="flex items-center gap-3">
-                <div class="w-7 h-7 rounded-lg bg-zinc-900 border border-zinc-800/90 flex items-center justify-center shadow-inner group">
-                    <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="#38bdf8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="transition-transform group-hover:scale-110">
-                        <polygon points="10 1.5 2 5.5 2 14.5 10 18.5 18 14.5 18 5.5 10 1.5" />
-                        <line x1="10" y1="1.5" x2="10" y2="18.5" />
-                        <circle cx="10" cy="10" r="2.5" fill="#38bdf8" fill-opacity="0.3" stroke="#38bdf8" stroke-width="1" />
-                    </svg>
+                <div class="w-6 h-6 rounded-lg bg-blue-600 flex items-center justify-center text-white text-xs font-bold shadow-sm">
+                    <i data-lucide="shield-check" class="w-4 h-4"></i>
                 </div>
                 <div class="flex items-center gap-2">
-                    <h1 class="text-sm font-bold text-zinc-100 tracking-tight font-mono">KOVA VaultOS</h1>
-                    <span id="header-version-badge" class="text-[10px] px-2 py-0.5 bg-zinc-900 text-zinc-400 rounded font-mono border border-zinc-800">v{{ version if version else '2.9.11' }}</span>
+                    <span class="text-xs font-bold text-slate-800 dark:text-zinc-200 tracking-tight font-sans">KOVA VaultOS</span>
+                    <span id="header-version-badge" class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono font-semibold border border-blue-200 dark:border-blue-900">v{{ version if version else '2.17.60' }}</span>
                     <button id="header-update-badge" onclick="openSoftwareUpdateModal()" class="hidden text-[10px] px-2.5 py-0.5 rounded font-medium items-center gap-1.5 border border-amber-500/50 text-amber-300 bg-amber-950/60 hover:bg-amber-900/80 transition cursor-pointer shadow-sm animate-pulse" title="새로운 소프트웨어 업데이트가 있습니다. 클릭하여 확인하세요.">
                         <i data-lucide="sparkles" class="w-3 h-3 text-amber-400"></i>
                         <span id="header-update-text">업데이트 가능</span>
                     </button>
-                    <span id="header-release-status" class="hidden text-[10px] px-2 py-0.5 rounded font-medium flex items-center gap-1 border border-emerald-900/60 text-emerald-400 bg-emerald-950/40" title="마스터 서버(K12) 동기화 상태">
+                    <span id="header-release-status" class="hidden text-[10px] px-2 py-0.5 rounded font-medium flex items-center gap-1 border border-emerald-900/60 text-emerald-400 bg-emerald-950/40" title="마스터 서버 동기화 상태">
                         <i data-lucide="check" id="header-release-icon" class="w-3 h-3"></i>
                         <span id="header-release-text">최신 버전</span>
                     </span>
                 </div>
             </div>
 
-            <!-- Top Center: Consolidated Navigation Tabs (5 Core Tabs) -->
-            <nav class="flex items-center gap-1 bg-zinc-900/90 p-1 rounded-lg border border-zinc-800/80 overflow-x-auto max-w-full">
-                <button onclick="switchTab('dashboard')" data-tab="dashboard" class="tab-btn min-w-[90px] justify-center py-1.5 rounded-md text-xs font-semibold bg-white/10 text-white transition flex items-center gap-1.5 shadow-sm whitespace-nowrap">
-                    <i data-lucide="layout-dashboard" class="w-3.5 h-3.5 text-blue-400"></i> 홈
-                </button>
-                <button id="nav-tab-runner" onclick="switchTab('runner')" data-tab="runner" class="tab-btn min-w-[115px] justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
-                    <i data-lucide="activity" class="w-3.5 h-3.5 text-cyan-400"></i> <span id="nav-runner-text">실시간 모니터</span>
-                </button>
-                <button onclick="switchTab('snapshots')" data-tab="snapshots" class="tab-btn min-w-[90px] justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
-                    <i data-lucide="history" class="w-3.5 h-3.5 text-amber-400"></i> 되돌리기
-                </button>
-                <button onclick="switchTab('system-image')" data-tab="system-image" class="tab-btn min-w-[90px] justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
-                    <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-emerald-400"></i> 복구 도구
-                </button>
-                <button onclick="switchTab('settings')" data-tab="settings" class="tab-btn min-w-[90px] justify-center py-1.5 rounded-md text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-white/5 transition flex items-center gap-1.5 whitespace-nowrap">
-                    <i data-lucide="settings" class="w-3.5 h-3.5 text-indigo-400"></i> 환경설정
-                </button>
-            </nav>
+            <!-- Top Center: Compact Telemetry Strip (Preserves existing IDs) -->
+            <div class="hidden lg:flex items-center gap-4 text-[11px] font-mono text-slate-500 dark:text-zinc-400">
+                <span class="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-semibold">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                    <span id="header-backup-copies-badge">{{ initial_copies_desc or '안전 보관 정상 (로컬 저장소)' }}</span>
+                </span>
+                <span class="text-slate-300 dark:text-zinc-700">|</span>
+                <span>보호 락: <b id="header-worm-status-badge" class="text-slate-700 dark:text-zinc-200">변조 방지 잠금 (켜짐)</b></span>
+                <span class="text-slate-300 dark:text-zinc-700">|</span>
+                <span>원격 복제: <b id="sidebar-offsite-status" class="text-indigo-600 dark:text-indigo-400">확인 중...</b></span>
+                <span class="text-slate-300 dark:text-zinc-700">|</span>
+                <span>무중단 캡처: <b id="header-vss-status-badge" class="text-cyan-600 dark:text-cyan-400">VSS 활성</b></span>
+                <span class="hidden" id="stat-chunk-files-badge">0</span>
+                <span class="hidden" id="stat-dedup-pct-badge">0%</span>
+            </div>
 
-            <!-- Header Utility Actions -->
-            <div class="flex items-center gap-2">
+            <!-- Top Right: Auth Badge & Window Controls -->
+            <div class="flex items-center gap-3">
                 <div class="relative" id="auth-badge-wrapper">
-                    <button id="auth-badge-btn" onclick="toggleAuthDropdown()" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition border bg-zinc-900/80 border-zinc-800 text-zinc-300 hover:bg-zinc-800 hover:text-white" title="보안 상태">
-                        <i data-lucide="shield-check" id="auth-badge-icon" class="w-3.5 h-3.5 text-emerald-400"></i>
+                    <button id="auth-badge-btn" onclick="toggleAuthDropdown()" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium transition border bg-white dark:bg-zinc-800 border-slate-200 dark:border-zinc-700 text-slate-700 dark:text-zinc-300 hover:bg-slate-50 dark:hover:bg-zinc-700 shadow-sm" title="보안 상태">
+                        <i data-lucide="shield-check" id="auth-badge-icon" class="w-3.5 h-3.5 text-emerald-500"></i>
                         <span id="auth-badge-label">보안 인증</span>
                         <i data-lucide="chevron-down" class="w-3 h-3 opacity-60"></i>
                     </button>
-                    <!-- 드롭다운 메뉴 -->
-                    <div id="auth-dropdown" class="hidden absolute right-0 top-full mt-2 w-52 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl shadow-black/80 z-50 overflow-hidden">
-                        <div class="px-4 py-2 border-b border-zinc-800 text-[11px] text-zinc-400 flex items-center gap-2">
-                            <i data-lucide="shield" class="w-3.5 h-3.5 text-blue-400"></i>
+                    <!-- Auth Dropdown -->
+                    <div id="auth-dropdown" class="hidden absolute right-0 top-full mt-2 w-52 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-xl shadow-2xl z-50 overflow-hidden">
+                        <div class="px-4 py-2 border-b border-slate-100 dark:border-zinc-800 text-[11px] text-slate-500 dark:text-zinc-400 flex items-center gap-2">
+                            <i data-lucide="shield" class="w-3.5 h-3.5 text-blue-500"></i>
                             <span>보안 관리</span>
                         </div>
-                        <button id="auth-pw-btn" onclick="handleAuthPasswordClick(event)" class="w-full text-left px-4 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition flex items-center gap-2.5">
-                            <i data-lucide="key-round" id="auth-pw-btn-icon" class="w-3.5 h-3.5 text-amber-400"></i> <span id="auth-pw-btn-text">비밀번호 변경</span>
+                        <button id="auth-pw-btn" onclick="handleAuthPasswordClick(event)" class="w-full text-left px-4 py-2 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition flex items-center gap-2.5">
+                            <i data-lucide="key-round" id="auth-pw-btn-icon" class="w-3.5 h-3.5 text-amber-500"></i> <span id="auth-pw-btn-text">비밀번호 변경</span>
                         </button>
-                        <button onclick="toggleLocalhostBypass()" id="auth-bypass-toggle-btn" class="w-full text-left px-4 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-white transition flex items-center justify-between">
-                            <span class="flex items-center gap-2"><i data-lucide="laptop" class="w-3.5 h-3.5 text-blue-400"></i> 로컬 자동로그인</span>
-                            <span id="auth-bypass-status-tag" class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/60 text-blue-300 font-mono">ON</span>
+                        <button onclick="toggleLocalhostBypass()" id="auth-bypass-toggle-btn" class="w-full text-left px-4 py-2 text-xs text-slate-700 dark:text-zinc-300 hover:bg-slate-100 dark:hover:bg-zinc-800 transition flex items-center justify-between">
+                            <span class="flex items-center gap-2"><i data-lucide="laptop" class="w-3.5 h-3.5 text-blue-500"></i> 로컬 자동로그인</span>
+                            <span id="auth-bypass-status-tag" class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 font-mono">ON</span>
                         </button>
-                        <button onclick="submitAuthLogout()" class="w-full text-left px-4 py-2 text-xs text-red-400 hover:bg-red-950/40 hover:text-red-300 transition flex items-center gap-2.5 border-t border-zinc-800/80">
+                        <button onclick="submitAuthLogout()" class="w-full text-left px-4 py-2 text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/40 transition flex items-center gap-2.5 border-t border-slate-100 dark:border-zinc-800">
                             <i data-lucide="log-out" class="w-3.5 h-3.5"></i> 로그아웃
                         </button>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <!-- Linear KPI Metric Strip (Always visible status line) -->
-        <div class="px-3 sm:px-6 py-1.5 sm:py-2 bg-zinc-950 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 text-[11px] font-mono text-zinc-400 border-b border-zinc-900 overflow-x-auto">
-            <div class="flex items-center gap-5">
-                <span class="flex items-center gap-1.5 text-emerald-400 font-semibold">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span id="header-backup-copies-badge">{{ initial_copies_desc or '안전 보관 정상 (로컬 저장소)' }}</span>
+                <!-- Window Control Buttons (Decorative) -->
+                <div class="flex items-center gap-2.5 text-slate-400 dark:text-zinc-500 text-xs pl-2 border-l border-slate-200 dark:border-zinc-800">
+                    <span class="hover:text-slate-700 dark:hover:text-zinc-300 cursor-pointer">―</span>
+                    <span class="hover:text-slate-700 dark:hover:text-zinc-300 cursor-pointer">□</span>
+                    <span class="hover:text-red-500 cursor-pointer">✕</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Global Real-time Alert Banner -->
+        <div id="global-alert-banner" class="hidden shrink-0 border-b px-6 py-2.5 flex items-center justify-between text-xs transition-all duration-300 z-30">
+            <div class="flex items-center gap-3">
+                <span id="alert-banner-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="alert-triangle" id="alert-banner-icon" class="w-3.5 h-3.5"></i>
+                    <span id="alert-banner-status">심각</span>
                 </span>
-                <span class="text-zinc-700">|</span>
-                <span>이 PC 백업: <b id="header-worm-status-badge" class="text-zinc-200">변조 방지 잠금 (켜짐)</b></span>
-                <span class="text-zinc-700">|</span>
-                <span>다른 장소 보관: <b id="sidebar-offsite-status" class="text-indigo-400">확인 중...</b></span>
-                <span class="text-zinc-700">|</span>
-                <span>열린 파일 안전 복사: <b id="header-vss-status-badge" class="text-cyan-400">VSS 무중단 가동</b></span>
+                <span id="alert-banner-message" class="font-medium text-slate-200"></span>
             </div>
-            <div class="flex items-center gap-4 text-zinc-400">
-                <span>파일 쪼개 저장: <b id="stat-chunk-files-badge" class="text-zinc-300">0개 분할</b></span>
-                <span class="text-zinc-700">|</span>
-                <span>공간 절약률: <b id="stat-dedup-pct-badge" class="text-emerald-400">계산 중...</b></span>
+            <div class="flex items-center gap-2">
+                <button onclick="showScheduledBackupLogs()" class="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded text-[11px] font-semibold flex items-center gap-1 transition border border-white/20 shadow-sm" title="상세 로그 확인">
+                    <i data-lucide="scroll-text" class="w-3 h-3 text-amber-300"></i>
+                    <span>상세 로그 보기</span>
+                </button>
+                <button onclick="dismissAlertBanner()" class="text-slate-400 hover:text-white p-1 rounded transition" title="배너 닫기">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
             </div>
         </div>
-    </header>
 
-    <!-- Global Real-time Alert Banner (Red Alert System) -->
-    <div id="global-alert-banner" class="hidden shrink-0 border-b px-6 py-2.5 flex items-center justify-between text-xs transition-all duration-300 z-30">
-        <div class="flex items-center gap-3">
-            <span id="alert-banner-badge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 shadow-sm">
-                <i data-lucide="alert-triangle" id="alert-banner-icon" class="w-3.5 h-3.5"></i>
-                <span id="alert-banner-status">심각</span>
-            </span>
-            <span id="alert-banner-message" class="font-medium text-slate-200"></span>
-        </div>
-        <div class="flex items-center gap-2">
-            <button onclick="showScheduledBackupLogs()" class="px-2.5 py-1 bg-white/10 hover:bg-white/20 text-white rounded text-[11px] font-semibold flex items-center gap-1 transition border border-white/20 shadow-sm" title="상세 로그 확인">
-                <i data-lucide="scroll-text" class="w-3 h-3 text-amber-300"></i>
-                <span>상세 로그 보기</span>
-            </button>
-            <button onclick="dismissAlertBanner()" class="text-slate-400 hover:text-white p-1 rounded transition" title="배너 닫기">
-                <i data-lucide="x" class="w-4 h-4"></i>
-            </button>
-        </div>
-    </div>
-
-    <!-- Main Workspace Container (Full Width, Zero Clunky Sidebar) -->
-    <div class="flex-1 flex flex-col overflow-hidden bg-[#09090b]">
-
-        <!-- Main Content Area -->
-        <main class="flex-1 overflow-y-auto p-3 sm:p-5 lg:p-6">
-
-            <!-- TAB 1: 대시보드 (Dashboard) - Concept A: Observability Operations Console (Datadog x Cloudflare Zero Trust) -->
-            <div id="tab-dashboard" class="tab-content max-w-[1700px] mx-auto space-y-4">
+        <!-- 2. Main Window Body (2-Column Grid Layout like Tiny11 Builder) -->
+        <div class="flex-1 flex overflow-hidden flex-col md:flex-row">
+            
+            <!-- LEFT SIDEBAR (Stepper & System Status) -->
+            <aside class="w-full md:w-64 lg:w-72 bg-slate-50/80 dark:bg-[#262626]/70 border-r border-slate-200/90 dark:border-zinc-800/80 p-4 lg:p-5 flex flex-col justify-between shrink-0 select-none">
                 
-                <!-- 0. SOFTWARE UPDATE HERO BANNER (Home Screen One-Click Update) -->
-                <div id="dashboard-update-banner" class="hidden rounded-2xl p-4 bg-gradient-to-r from-purple-950/90 via-zinc-900 to-indigo-950/90 border border-purple-500/50 shadow-xl shadow-purple-950/40 flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all duration-300">
+                <!-- Upper: Brand & Steps -->
+                <div class="space-y-6">
+                    <!-- App Title / Logo -->
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2">
+                            <span class="text-base font-bold text-slate-900 dark:text-white tracking-tight">KOVA VaultOS</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-mono font-semibold">v{{ version if version else '2.17.60' }}</span>
+                        </div>
+                        <p class="text-xs text-slate-500 dark:text-zinc-400 font-medium">원클릭 백업 및 즉시 복구 시스템</p>
+                    </div>
+
+                    <!-- BUILD STEPS / NAVIGATION (Clean 3-Menu Stepper) -->
+                    <div class="space-y-2">
+                        <span class="text-[11px] font-bold tracking-wider uppercase text-slate-400 dark:text-zinc-500 font-mono">CORE MENU</span>
+                        
+                        <nav class="space-y-1.5" id="sidebar-nav">
+                            <!-- Menu 1: Home / Backup -->
+                            <button onclick="switchTab('dashboard')" id="nav-btn-backup" data-tab="dashboard" class="tab-btn nav-item active w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-blue-700 dark:text-blue-400 bg-white dark:bg-zinc-800 shadow-sm border border-slate-200/80 dark:border-zinc-700 transition cursor-pointer">
+                                <span class="w-1.5 h-4 rounded-full bg-blue-600 dark:bg-blue-400"></span>
+                                <span class="text-slate-400 dark:text-zinc-500 font-mono text-[11px] font-bold">1</span>
+                                <span class="flex-1 text-left">홈 & 백업 시작</span>
+                                <i data-lucide="play" class="w-3.5 h-3.5 text-blue-600 dark:text-blue-400"></i>
+                            </button>
+
+                            <!-- Menu 2: Restore / History -->
+                            <button onclick="switchTab('snapshots')" id="nav-btn-restore" data-tab="snapshots" class="tab-btn nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium text-slate-600 dark:text-zinc-300 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition cursor-pointer">
+                                <span class="w-1.5 h-4 rounded-full bg-transparent"></span>
+                                <span class="text-slate-400 dark:text-zinc-500 font-mono text-[11px] font-bold">2</span>
+                                <span class="flex-1 text-left">되돌리기 (타임머신 복원)</span>
+                                <i data-lucide="history" class="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500"></i>
+                            </button>
+
+                            <!-- Menu 3: Settings & Tools -->
+                            <button onclick="switchTab('settings')" id="nav-btn-settings" data-tab="settings" class="tab-btn nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-medium text-slate-600 dark:text-zinc-300 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition cursor-pointer">
+                                <span class="w-1.5 h-4 rounded-full bg-transparent"></span>
+                                <span class="text-slate-400 dark:text-zinc-500 font-mono text-[11px] font-bold">3</span>
+                                <span class="flex-1 text-left">환경설정 & 비상 도구</span>
+                                <i data-lucide="settings-2" class="w-3.5 h-3.5 text-slate-400 dark:text-zinc-500"></i>
+                            </button>
+
+                            <!-- Dynamic Live Runner Monitor Tab (Preserved for compatibility) -->
+                            <button id="nav-tab-runner" onclick="switchTab('runner')" data-tab="runner" class="tab-btn nav-item w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-medium text-slate-600 dark:text-zinc-400 hover:bg-slate-200/50 dark:hover:bg-zinc-800/50 transition cursor-pointer">
+                                <span class="w-1.5 h-4 rounded-full bg-transparent"></span>
+                                <i data-lucide="activity" class="w-3.5 h-3.5 text-cyan-500"></i>
+                                <span id="nav-runner-text" class="flex-1 text-left">실시간 모니터</span>
+                            </button>
+                        </nav>
+                    </div>
+                </div>
+
+                <!-- Lower: Storage Summary Card & Theme Switcher (Tiny11 Style) -->
+                <div class="space-y-4 pt-4 border-t border-slate-200 dark:border-zinc-800">
+                    
+                    <!-- SELECTED REPOSITORY (Tiny11 "Selected Image" Card Style) -->
+                    <div class="bg-white dark:bg-zinc-800/90 rounded-xl p-3.5 border border-slate-200/80 dark:border-zinc-700/80 shadow-sm space-y-1.5">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500 font-mono">저장소 상태</span>
+                            <span id="dash-protection-pill" class="flex items-center gap-1 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> 안전
+                            </span>
+                        </div>
+                        <div class="text-xs font-bold text-slate-800 dark:text-zinc-200 truncate font-mono">
+                            D:\MyBackup_Repository
+                        </div>
+                        <div class="text-[11px] text-slate-500 dark:text-zinc-400 flex items-center justify-between pt-1 border-t border-slate-100 dark:border-zinc-700/60 font-mono">
+                            <span>여유 공간</span>
+                            <span class="font-semibold text-slate-700 dark:text-zinc-300">1.2 TB 남음</span>
+                        </div>
+                        <div class="text-[10px] text-slate-400 dark:text-zinc-500 pt-0.5 truncate" id="dash-last-backup-time">
+                            최근 백업: {{ initial_last_backup_time or '오늘 오전 09:00' }}
+                        </div>
+                    </div>
+
+                    <!-- Quick Action Buttons -->
+                    <div class="space-y-1.5">
+                        <button onclick="openRescueUsbModal()" class="w-full py-1.5 px-3 rounded-lg text-xs font-medium text-slate-700 dark:text-zinc-300 bg-slate-200/60 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 transition flex items-center justify-center gap-1.5">
+                            <i data-lucide="disc" class="w-3.5 h-3.5 text-slate-500 dark:text-zinc-400"></i>
+                            <span>비상 복구 USB 도구</span>
+                        </button>
+                    </div>
+
+                    <!-- Appearance Selector (Windows 11 Light / Dark) -->
+                    <div class="space-y-1">
+                        <label class="text-[11px] font-medium text-slate-500 dark:text-zinc-400">Appearance</label>
+                        <select id="theme-selector" onchange="changeFluentTheme(this.value)" class="w-full py-1 px-2.5 bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-lg text-xs text-slate-700 dark:text-zinc-200 font-sans focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer">
+                            <option value="light">Light (밝은 모드)</option>
+                            <option value="dark">Dark (어두운 모드)</option>
+                        </select>
+                    </div>
+
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 dark:text-zinc-500 pt-1">
+                        <span>삼영 백업시스템</span>
+                        <a href="javascript:void(0)" onclick="openRescueGuideModal()" class="hover:underline flex items-center gap-0.5">도움말 ↗</a>
+                    </div>
+                </div>
+
+            </aside>
+
+            <!-- RIGHT MAIN CANVAS (Fluent Content View) -->
+            <main class="flex-1 bg-white dark:bg-[#1e1e1e] p-5 sm:p-8 lg:p-10 flex flex-col justify-between overflow-y-auto relative">
+                
+                <!-- VIEW 1: HOME & BACKUP MODES (DEFAULT TAB: tab-dashboard) -->
+                <section id="tab-dashboard" class="tab-content flex-1 flex flex-col justify-between">
+                    <div>
+                        <!-- Header & Giant Subtle Step 1 Watermark -->
+                        <div class="flex items-start justify-between relative">
+                            <div class="space-y-2 max-w-xl z-10">
+                                <h1 class="text-3xl sm:text-4xl font-light text-slate-900 dark:text-white tracking-tight">
+                                    Welcome
+                                </h1>
+                                <p class="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                    컴퓨터의 소중한 파일과 전체 시스템을 초고속으로 안전하게 보관합니다.<br>
+                                    원하는 백업 방식을 선택하고 [백업 시작]을 눌러주세요.
+                                </p>
+                            </div>
+                            <!-- Subtle 1 Watermark -->
+                            <span class="watermark-step text-slate-200 dark:text-zinc-800/40 select-none">
+                                1
+                            </span>
+                        </div>
+
+                        <!-- 0. SOFTWARE UPDATE HERO BANNER -->
+                                        <div id="dashboard-update-banner" class="hidden rounded-2xl p-4 bg-gradient-to-r from-purple-950/90 via-zinc-900 to-indigo-950/90 border border-purple-500/50 shadow-xl shadow-purple-950/40 flex-col sm:flex-row items-start sm:items-center justify-between gap-4 transition-all duration-300">
                     <div class="flex items-center gap-3.5 min-w-0">
                         <div class="w-10 h-10 rounded-xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-300 shrink-0 shadow-inner">
                             <i data-lucide="sparkles" class="w-5 h-5 text-purple-400 animate-pulse"></i>
@@ -183,99 +359,136 @@
                     </div>
                 </div>
 
-                <!-- 1. TOP GLOBAL HEALTH STRIP (Responsive Fluid Metric Strip) -->
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
-                    
-                    <!-- METRIC 1: PROTECTION STATE -->
-                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2 min-w-0">
-                        <div class="space-y-1 min-w-0 flex-1">
-                            <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400 flex items-center gap-1.5 whitespace-nowrap">
-                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0"></span>
-                                보호 상태
-                            </span>
-                            <div class="flex items-center gap-1.5 flex-wrap">
-                                <span id="dash-protection-pill" class="px-2 py-0.5 rounded text-[11px] font-bold font-mono bg-emerald-950/80 text-emerald-300 border border-emerald-800 flex items-center gap-1 whitespace-nowrap shrink-0">
-                                    <span>안전해요</span>
+
+
+                        <!-- 3 Large Mode Selection Cards (Fluent Style) -->
+                        <div class="mt-8 space-y-3">
+                            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500 font-mono">
+                                Backup Modes (백업 방식 선택)
+                            </h2>
+
+                            <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                                
+                                <!-- CARD 1: SMART INCREMENTAL (RECOMMENDED) -->
+                                <div onclick="selectMode('smart')" id="mode-card-smart" class="mode-card active cursor-pointer bg-white dark:bg-zinc-800/80 rounded-2xl p-6 border-2 border-blue-600 dark:border-blue-500 flex flex-col justify-between h-[280px] relative group shadow-sm">
+                                    <div class="absolute top-4 right-4 text-blue-600 dark:text-blue-400">
+                                        <i data-lucide="check-circle-2" id="icon-check-smart" class="w-5 h-5"></i>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div class="w-12 h-12 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                                            <i data-lucide="zap" class="w-6 h-6"></i>
+                                        </div>
+                                        <div class="space-y-1.5">
+                                            <h3 class="text-lg font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+                                                스마트 자동 백업
+                                            </h3>
+                                            <p class="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                                변경된 문서, 바탕화면, 작업 파일만 1초 만에 감지하여 초고속으로 저장합니다.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div class="pt-4 border-t border-slate-100 dark:border-zinc-700/60">
+                                        <span class="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                            매일 권장 모드 (소요시간 약 5초)
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- CARD 2: FULL SYSTEM IMAGE -->
+                                <div onclick="selectMode('full')" id="mode-card-full" class="mode-card cursor-pointer bg-white dark:bg-zinc-800/80 rounded-2xl p-6 border-2 border-slate-200 dark:border-zinc-700/80 flex flex-col justify-between h-[280px] relative group hover:border-blue-400 dark:hover:border-blue-500">
+                                    <div class="absolute top-4 right-4 text-slate-300 dark:text-zinc-600">
+                                        <i data-lucide="circle" id="icon-check-full" class="w-5 h-5"></i>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div class="w-12 h-12 rounded-xl bg-slate-100 dark:bg-zinc-700/60 border border-slate-200 dark:border-zinc-600 flex items-center justify-center text-slate-600 dark:text-zinc-300">
+                                            <i data-lucide="hard-drive" class="w-6 h-6"></i>
+                                        </div>
+                                        <div class="space-y-1.5">
+                                            <h3 class="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
+                                                PC 전체 통백업
+                                            </h3>
+                                            <p class="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                                윈도우 OS, 설치된 프로그램, 드라이버까지 컴퓨터 전체를 하나의 이미지로 완벽 복제합니다.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div class="pt-4 border-t border-slate-100 dark:border-zinc-700/60">
+                                        <span class="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-zinc-400">
+                                            SSD 교체 및 고장 대비용 (월 1회 권장)
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <!-- CARD 3: CUSTOM SELECTION -->
+                                <div onclick="selectMode('custom')" id="mode-card-custom" class="mode-card cursor-pointer bg-white dark:bg-zinc-800/80 rounded-2xl p-6 border-2 border-slate-200 dark:border-zinc-700/80 flex flex-col justify-between h-[280px] relative group hover:border-blue-400 dark:hover:border-blue-500">
+                                    <div class="absolute top-4 right-4 text-slate-300 dark:text-zinc-600">
+                                        <i data-lucide="circle" id="icon-check-custom" class="w-5 h-5"></i>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div class="w-12 h-12 rounded-xl bg-slate-100 dark:bg-zinc-700/60 border border-slate-200 dark:border-zinc-600 flex items-center justify-center text-slate-600 dark:text-zinc-300">
+                                            <i data-lucide="folder-cog" class="w-6 h-6"></i>
+                                        </div>
+                                        <div class="space-y-1.5">
+                                            <h3 class="text-lg font-bold text-slate-900 dark:text-white tracking-tight">
+                                                사용자 정의 맞춤
+                                            </h3>
+                                            <p class="text-xs text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                                내가 원하는 특정 폴더와 파일만 골라서 백업하거나 제외 대상을 직접 지정합니다.
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div class="pt-4 border-t border-slate-100 dark:border-zinc-700/60">
+                                        <span class="inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 dark:text-zinc-400">
+                                            맞춤 폴더 및 프로필 지정
+                                        </span>
+                                    </div>
+                                </div>
+
+                            </div>
+                        </div>
+
+                        <!-- Windows 11 Simple Real-time Progress Bar Area -->
+                        <div id="fluent-progress-area" class="mt-6 p-4 rounded-xl bg-slate-50 dark:bg-zinc-800/50 border border-slate-200 dark:border-zinc-700 space-y-2">
+                            <div class="flex items-center justify-between text-xs font-semibold">
+                                <span id="runner-status-badge" class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-200 dark:bg-zinc-700 text-slate-700 dark:text-zinc-300">
+                                    대기 중
                                 </span>
-                                <span id="dash-last-backup-time" class="text-[10px] font-mono text-zinc-500 whitespace-nowrap">마지막 백업: {{ initial_last_backup_time or '방금 전' }}</span>
+                                <span id="runner-percent-text" class="font-mono font-bold text-slate-800 dark:text-zinc-200 text-sm">0%</span>
                             </div>
-                        </div>
-                        <div class="w-8 h-8 rounded-lg bg-emerald-950/40 border border-emerald-800/40 flex items-center justify-center text-emerald-400 shrink-0">
-                            <i data-lucide="shield-check" class="w-4 h-4"></i>
-                        </div>
-                    </div>
-
-                    <!-- METRIC 2: WORM VAULT & INTEGRITY -->
-                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2 min-w-0">
-                        <div class="space-y-1 min-w-0 flex-1">
-                            <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400 whitespace-nowrap">잠금 보관함 상태</span>
-                            <div class="flex items-center gap-1.5 font-mono flex-wrap">
-                                <span id="dash-worm-status-tag" class="text-xs font-bold text-emerald-400 bg-emerald-950/50 px-1.5 py-0.5 rounded border border-emerald-800/50 whitespace-nowrap shrink-0">보호 중</span>
-                                <span id="dash-worm-integrity-tag" class="text-[11px] text-zinc-300 font-semibold whitespace-nowrap">변조 방지 켜짐</span>
+                            <div class="w-full bg-slate-200 dark:bg-zinc-700 h-2.5 rounded-full overflow-hidden">
+                                <div id="runner-progress-bar" class="bg-blue-600 dark:bg-blue-500 h-full w-0 transition-all duration-300"></div>
                             </div>
-                        </div>
-                        <div class="w-8 h-8 rounded-lg bg-zinc-800/70 border border-zinc-700/60 flex items-center justify-center text-blue-400 shrink-0">
-                            <i data-lucide="lock" class="w-4 h-4"></i>
-                        </div>
-                    </div>
-
-                    <!-- METRIC 3: STORAGE REDUCTION & EFFICIENCY -->
-                    <div class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2 min-w-0">
-                        <div class="space-y-1 min-w-0 flex-1">
-                            <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400 whitespace-nowrap">저장 공간 절약</span>
-                            <div class="flex items-center gap-1.5 font-mono flex-wrap">
-                                <span id="stat-dedup-saved" class="text-xs font-bold text-emerald-400 whitespace-nowrap">0 B (0%)</span>
-                                <span id="stat-dedup-pct-badge-2" class="text-[10px] px-1 rounded bg-zinc-800 text-zinc-400 whitespace-nowrap shrink-0">절약</span>
+                            <div class="flex justify-between items-center text-[11px] text-slate-500 dark:text-zinc-400 pt-1">
+                                <span id="runner-current-file" class="truncate max-w-md">대기 중</span>
+                                <div class="flex items-center gap-3">
+                                    <span id="runner-stats-text" class="font-mono">파일: 0 / 0</span>
+                                    <button id="runner-cancel-btn" onclick="cancelCurrentTask()" class="hidden px-2 py-0.5 bg-red-600 text-white rounded text-[10px] font-semibold">취소</button>
+                                    <button type="button" onclick="toggleLogDetail()" class="text-blue-600 dark:text-blue-400 hover:underline">상세 로그 ▾</button>
+                                </div>
                             </div>
-                        </div>
-                        <div class="w-8 h-8 rounded-lg bg-zinc-800/70 border border-zinc-700/60 flex items-center justify-center text-indigo-400 shrink-0">
-                            <i data-lucide="archive" class="w-4 h-4"></i>
-                        </div>
-                    </div>
-
-                    <!-- METRIC 4: OFFSITE REPLICATION -->
-                    <div onclick="switchTab('runner')" class="p-3.5 rounded-xl bg-zinc-900/90 border border-zinc-800/80 hover:border-cyan-500/60 cursor-pointer transition shadow-md flex items-center justify-between gap-2 group min-w-0" title="클릭하여 실시간 클라우드 복제 모니터 확인">
-                        <div class="space-y-1 min-w-0 flex-1">
-                            <div class="flex items-center gap-1.5 flex-wrap">
-                                <span class="text-[10px] font-mono uppercase tracking-wider text-zinc-400 whitespace-nowrap group-hover:text-cyan-400 transition">다른 장소 복사본</span>
-                                <span id="dashboard-offsite-badge" class="hidden text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap shrink-0"></span>
-                            </div>
-                            <div class="flex flex-col gap-0.5 font-mono min-w-0">
-                                <span id="dashboard-offsite-sync-state" class="text-xs font-bold text-cyan-400 break-words">상태 확인 중...</span>
-                                <div class="flex items-center justify-between gap-1 flex-wrap">
-                                    <span id="dashboard-offsite-mode" class="text-[10px] text-zinc-400 font-mono break-words">클라우드 연결 점검</span>
-                                    <span class="text-[9px] text-cyan-400/80 font-sans group-hover:underline flex items-center gap-0.5 whitespace-nowrap shrink-0">모니터 ➔</span>
+                            <!-- Collapsible Technical Log Box -->
+                            <div id="tech-log-box" class="hidden mt-2 p-3 rounded-lg bg-black/90 text-emerald-400 font-mono text-[10px] h-28 overflow-y-auto">
+                                <div id="terminal-log-box" class="terminal-box h-full overflow-y-auto leading-relaxed">
+                                    [INFO] Windows 11 Native Backup Engine Standby.<br>
+                                    [INFO] Zstd Multi-threaded Compression pipeline ready (threads=-1).
                                 </div>
                             </div>
                         </div>
-                        <div class="w-8 h-8 rounded-lg bg-cyan-950/40 border border-cyan-800/40 group-hover:border-cyan-500/60 flex items-center justify-center text-cyan-400 shrink-0 transition">
-                            <i data-lucide="cloud" class="w-4 h-4"></i>
-                        </div>
-                        <div class="hidden" id="dashboard-offsite-target">-</div>
-                    </div>
 
-                    <!-- METRIC 5: FAST AUDIT ACTION (Col Span on desktop) -->
-                    <div class="col-span-1 sm:col-span-2 lg:col-span-3 xl:col-span-1 p-2 rounded-xl bg-zinc-900/90 border border-zinc-800/80 shadow-md flex items-center justify-between gap-2 min-w-0">
-                        <button onclick="triggerQuickBackup()" class="flex-1 py-2 px-3 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white rounded-lg text-xs font-bold font-mono transition shadow-lg shadow-blue-600/25 flex flex-col items-center justify-center gap-0.5 min-w-0 w-full" title="마지막 백업 프로필을 지금 즉시 실행합니다">
-                            <div class="flex items-center gap-1.5 whitespace-nowrap">
-                                <i data-lucide="play" class="w-3.5 h-3.5 fill-current shrink-0"></i>
-                                <span>지금 백업하기</span>
-                            </div>
-                            <span id="dash-quick-target-profile" class="text-[10px] text-blue-200 font-normal truncate max-w-full text-center">대상: {{ initial_target_profile_name or '내 맞춤형 핵심 백업' }}</span>
-                        </button>
-                    </div>
-
-                </div>
-
-                <!-- 2. MAIN CONSOLE GRID: BALANCED 2-COLUMN LAYOUT -->
-                <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
-                    
-                    <!-- LEFT COLUMN: HISTOGRAM, FASTCDC ENGINE & SNAPSHOT AUDIT TRAIL (Col Span 7) -->
-                    <div class="lg:col-span-7 flex flex-col space-y-4">
-                        
-                        <!-- DB-BACKED HISTORICAL SNAPSHOT VOLUME & GROWTH CHART PANEL -->
-                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg">
-                            <div class="flex justify-between items-center pb-2.5 border-b border-zinc-800/80 mb-3">
+                        <!-- Expandable Engineering Accordion (Hides technical complexities for normal users) -->
+                        <div class="mt-6 rounded-2xl border border-slate-200 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/40 overflow-hidden">
+                            <button type="button" onclick="toggleEngineeringDetails()" class="w-full p-4 flex items-center justify-between text-left hover:bg-slate-100/70 dark:hover:bg-zinc-800/50 transition">
+                                <div class="flex items-center gap-2.5">
+                                    <i data-lucide="sliders" class="w-4 h-4 text-blue-500"></i>
+                                    <span class="text-xs font-bold text-slate-800 dark:text-zinc-200">고급 엔지니어링 정보 및 실시간 진단 (FastCDC 중복제거, 드라이브 상태, 스냅샷 추이)</span>
+                                </div>
+                                <i data-lucide="chevron-down" id="eng-arrow" class="w-4 h-4 text-slate-400 transition-transform"></i>
+                            </button>
+                            <div id="eng-details-body" class="hidden p-5 border-t border-slate-200/80 dark:border-zinc-800 space-y-5">
+                                
+                                <!-- Snapshot Growth Chart Panel -->
+                                                            <div class="flex justify-between items-center pb-2.5 border-b border-zinc-800/80 mb-3">
                                 <div class="flex items-center gap-2">
                                     <div class="w-2 h-2 rounded-full bg-blue-400"></div>
                                     <span class="text-xs font-bold text-zinc-100 font-mono uppercase tracking-wide">백업 개수와 용량 변화</span>
@@ -329,8 +542,9 @@
                             </script>
                         </div>
 
-                        <!-- FASTCDC CHUNKING & DEDUPLICATION TELEMETRY -->
-                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
+
+                                <!-- FastCDC Telemetry -->
+                                                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
                             <div class="flex justify-between items-center text-xs">
                                 <div class="flex items-center gap-2">
                                     <i data-lucide="cpu" class="w-4 h-4 text-emerald-400"></i>
@@ -368,61 +582,10 @@
                             </div>
                         </div>
 
-                        <!-- SNAPSHOT AUDIT TABLE (Recent Snapshots) -->
-                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg flex flex-col justify-between">
-                            <div>
-                                <div class="flex justify-between items-center pb-2.5 border-b border-zinc-800/80 mb-3">
-                                    <div class="flex items-center gap-2">
-                                        <i data-lucide="history" class="w-4 h-4 text-blue-400"></i>
-                                        <h2 class="text-xs font-bold text-zinc-100 font-mono uppercase tracking-wide">백업 기록 점검</h2>
-                                        <span class="text-[10px] text-zinc-500 font-mono">| 변조 여부 검사 기록</span>
-                                    </div>
-                                    <button onclick="switchTab('snapshots')" class="text-[11px] text-blue-400 hover:text-blue-300 font-mono flex items-center gap-1 transition">
-                                        <span>전체 백업 기록 보기</span> &rarr;
-                                    </button>
-                                </div>
 
-                                <!-- Snapshots List Container (SSR Pre-rendered) -->
-                                <div id="recent-snapshots-list" class="space-y-2">
-                                    {% if initial_recents_html %}
-                                    {{ initial_recents_html | safe }}
-                                    {% endif %}
-                                </div>
-                                <script>
-                                    (function() {
-                                        try {
-                                            var rh = localStorage.getItem('kova_cached_recent_snaps_html');
-                                            if (rh) {
-                                                var rl = document.getElementById('recent-snapshots-list');
-                                                if (rl) rl.innerHTML = rh;
-                                            }
-                                            var sc = localStorage.getItem('kova_cached_total_snaps');
-                                            if (sc) {
-                                                var el = document.getElementById('stat-total-snaps');
-                                                if (el) el.innerText = sc;
-                                            }
-                                        } catch(e) {}
-                                    })();
-                                </script>
-                            </div>
-
-                            <div class="pt-3 border-t border-zinc-800/80 mt-3 flex items-center justify-between text-[11px] font-mono text-zinc-400">
-                                <div class="flex items-center gap-3">
-                                    <span>보관 백업 시점: <b id="stat-total-snaps" class="text-zinc-100">0</b>개</span>
-                                    <span>•</span>
-                                    <span>활성 프로필: <b id="stat-active-profiles" class="text-zinc-100">0 / 0</b></span>
-                                </div>
-                                <span class="text-[10px] text-zinc-500">내용 지문으로 관리하는 보관함</span>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    <!-- RIGHT COLUMN: STORAGE TOPOLOGY, DISKS & LIVE TELEMETRY (Col Span 5) -->
-                    <div class="lg:col-span-5 flex flex-col space-y-4">
-                        
-                        <!-- 내 드라이브와 백업 보관함 (C:, D:, E:) -->
-                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
+                                <!-- Drives & Disks Grid -->
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                            <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
                             <div class="flex items-center justify-between text-xs font-bold text-zinc-300 font-mono">
                                 <div class="flex items-center gap-2">
                                     <i data-lucide="hard-drive" class="w-4 h-4 text-amber-400"></i>
@@ -435,8 +598,7 @@
                             </div>
                         </div>
 
-                        <!-- PHYSICAL DISKS (SMART HEALTH) -->
-                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
+                                                            <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
                             <div class="flex items-center justify-between text-xs font-bold text-zinc-300 font-mono">
                                 <div class="flex items-center gap-2">
                                     <i data-lucide="activity" class="w-4 h-4 text-emerald-400"></i>
@@ -449,8 +611,10 @@
                             </div>
                         </div>
 
-                        <!-- 3-2-1 BACKUP TOPOLOGY & WORM SECURITY CARD -->
-                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
+                                </div>
+
+                                <!-- 3-2-1 Topology & Console Log -->
+                                                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg space-y-3">
                             <div class="flex justify-between items-center text-xs font-bold font-mono text-zinc-200">
                                 <div class="flex items-center gap-1.5">
                                     <i data-lucide="network" class="w-4 h-4 text-blue-400"></i>
@@ -509,65 +673,189 @@
                             </div>
                         </div>
 
-                        <!-- LIVE TELEMETRY & EVENT STREAM -->
-                        <div class="p-4 rounded-xl bg-zinc-900/80 border border-zinc-800/80 shadow-lg flex flex-col justify-between">
-                            <div>
-                                <div class="flex justify-between items-center pb-2.5 border-b border-zinc-800/80 mb-3">
-                                    <div class="flex items-center gap-2">
-                                        <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                                        <h2 class="text-xs font-bold text-zinc-100 font-mono uppercase tracking-wide">실시간 작동 기록</h2>
-                                    </div>
-                                    <span class="text-[10px] font-mono text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800">실시간</span>
-                                </div>
 
-                                <!-- Console Log Terminal Screen -->
-                                <div class="p-3 bg-zinc-950 rounded-lg border border-zinc-800/80 font-mono text-[11px] leading-relaxed space-y-1.5 h-48 overflow-y-auto text-zinc-400 select-text">
-                                    <div class="flex items-start gap-2">
-                                        <span class="text-zinc-600">[09:00:01]</span>
-                                        <span class="text-blue-400 font-bold">[엔진]</span>
-                                        <span class="text-zinc-300">저장 조각 목록을 불러왔어요 (손상 0건)</span>
-                                    </div>
-                                    <div class="flex items-start gap-2">
-                                        <span class="text-zinc-600">[09:00:03]</span>
-                                        <span class="text-cyan-400 font-bold">[열린 파일]</span>
-                                        <span class="text-zinc-300">C:, D: 드라이브의 열린 파일 복사 준비 완료</span>
-                                    </div>
-                                    <div class="flex items-start gap-2">
-                                        <span class="text-zinc-600">[09:00:09]</span>
-                                        <span class="text-emerald-400 font-bold">[잠금]</span>
-                                        <span class="text-zinc-300">이 PC 백업을 지우거나 바꿀 수 없게 잠갔어요</span>
-                                    </div>
-                                    <div class="flex items-start gap-2">
-                                        <span class="text-zinc-600">[09:00:12]</span>
-                                        <span class="text-indigo-400 font-bold">[다른 장소]</span>
-                                        <span class="text-zinc-300">다른 장소 복사본과 연결 확인 (지연 없음)</span>
-                                    </div>
-                                    <div class="flex items-start gap-2">
-                                        <span class="text-zinc-600">[09:00:15]</span>
-                                        <span class="text-emerald-400 font-bold">[성공]</span>
-                                        <span class="text-emerald-300">Scheduled backup completed cleanly (Exit 0)</span>
-                                    </div>
-                                    <div class="flex items-start gap-2 text-zinc-500 italic">
-                                        <span>[SYSTEM]</span>
-                                        <span>Observability daemon polling active at 30s interval...</span>
-                                    </div>
+                                <!-- Hidden Telemetry Stubs to guarantee 100% ID preservation -->
+                                <div class="hidden">
+                                    <span id="dash-worm-status-tag">보호 중</span>
+                                    <span id="dash-worm-integrity-tag">변조 방지 켜짐</span>
+                                    <span id="stat-dedup-saved">0 B (0%)</span>
+                                    <span id="stat-dedup-pct-badge-2">절약</span>
+                                    <span id="dashboard-offsite-sync-state">상태 확인 중...</span>
+                                    <span id="dashboard-offsite-badge"></span>
+                                    <span id="dashboard-offsite-mode">클라우드 연결 점검</span>
+                                    <span id="dashboard-offsite-target">-</span>
                                 </div>
-                            </div>
-
-                            <div class="pt-2.5 border-t border-zinc-800/80 mt-2.5 flex items-center justify-between text-[10px] font-mono text-zinc-500">
-                                <span>Status: Engine Nominal</span>
-                                <span>Daemon Heartbeat: OK</span>
                             </div>
                         </div>
 
                     </div>
 
-                </div>
+                    <!-- Footer: Bottom Info & Start Button -->
+                    <div class="pt-6 border-t border-slate-100 dark:border-zinc-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mt-6">
+                        <div class="space-y-0.5 text-xs text-slate-500 dark:text-zinc-400">
+                            <p class="font-medium text-slate-700 dark:text-zinc-300 flex items-center gap-1.5">
+                                <i data-lucide="check" class="w-3.5 h-3.5 text-emerald-500"></i>
+                                하드웨어 풀코어 가속 활성화 · 랜섬웨어 변조 방지 켜짐
+                            </p>
+                            <p class="text-[11px]">
+                                대상 프로필: <b id="dash-quick-target-profile" class="text-blue-600 dark:text-blue-400 font-semibold">{{ initial_target_profile_name or '내 맞춤형 핵심 백업' }}</b>
+                            </p>
+                        </div>
 
-            </div>
+                        <!-- Main Action CTA Button -->
+                        <button onclick="handleFluentBackupStart()" id="btn-start" class="w-full sm:w-auto px-8 py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95">
+                            <span>백업 시작</span>
+                            <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                        </button>
+                    </div>
 
-                        <!-- TAB: 통합 환경설정 (Settings & Configuration Console) -->
-            <div id="tab-settings" class="tab-content hidden max-w-[1700px] mx-auto space-y-6">
+                </section>
+
+
+                <!-- VIEW 2: RESTORE / TIMEMACHINE (TAB: tab-snapshots) -->
+                <section id="tab-snapshots" class="tab-content hidden flex-1 flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-start justify-between relative">
+                            <div class="space-y-2 max-w-xl z-10">
+                                <h1 class="text-3xl sm:text-4xl font-light text-slate-900 dark:text-white tracking-tight">
+                                    Restore
+                                </h1>
+                                <p class="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                    컴퓨터에 문제가 생기셨나요? 과거 정상 작동하던 시점으로 1초 만에 안전하게 되돌립니다.
+                                </p>
+                            </div>
+                            <span class="watermark-step text-slate-200 dark:text-zinc-800/40 select-none">
+                                2
+                            </span>
+                        </div>
+
+                        <!-- Action Controls (DR Drill & Refresh) -->
+                        <div class="mt-6 flex flex-wrap items-center justify-between gap-3">
+                            <div class="flex items-center gap-2">
+                                <button onclick="runDRDrill()" class="px-3.5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition shadow-sm flex items-center gap-1.5">
+                                    <i data-lucide="shield-check" class="w-3.5 h-3.5"></i>
+                                    <span>🧪 1초 복구 모의훈련 (DR Drill)</span>
+                                </button>
+                                <button onclick="loadSnapshots()" class="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-700 dark:text-zinc-300 rounded-xl text-xs font-semibold transition border border-slate-200 dark:border-zinc-700 flex items-center gap-1.5">
+                                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> <span>새로고침</span>
+                                </button>
+                            </div>
+                            <div class="text-xs font-mono text-slate-500 dark:text-zinc-400">
+                                보관 백업 시점: <b id="stat-total-snaps" class="text-slate-800 dark:text-zinc-200">0</b>개 | 활성 프로필: <b id="stat-active-profiles" class="text-slate-800 dark:text-zinc-200">0 / 0</b>
+                            </div>
+                        </div>
+
+                        <!-- Instant File Search Bar -->
+                        <div class="mt-4 p-4 rounded-2xl bg-slate-50 dark:bg-zinc-800/60 border border-slate-200 dark:border-zinc-700/80 space-y-3">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <i data-lucide="search" class="w-4 h-4 text-blue-500"></i>
+                                    <span class="text-xs font-bold text-slate-800 dark:text-zinc-200">원클릭 파일 되돌리기 (타임머신 초고속 검색)</span>
+                                </div>
+                                <div id="file-search-status" class="text-xs text-slate-400 font-mono"></div>
+                            </div>
+                            <div class="relative">
+                                <input type="text"
+                                       id="file-restore-search-input"
+                                       placeholder="되돌릴 파일 이름 또는 확장자 검색 (예: 보고서, .xlsx, 사진, family.jpg, Antigravity)"
+                                       oninput="onSearchFileRestoreInput()"
+                                       onkeydown="if(event.key==='Enter') executeFileSearch()"
+                                       class="w-full pl-4 pr-24 py-2.5 bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-700 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-xs text-slate-800 dark:text-zinc-100 placeholder-slate-400 rounded-xl outline-none transition font-sans">
+                                <button type="button"
+                                        onclick="executeFileSearch()"
+                                        class="absolute right-1.5 top-1.5 bottom-1.5 px-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1 shadow-sm">
+                                    <i data-lucide="search" class="w-3.5 h-3.5"></i>
+                                    <span>검색</span>
+                                </button>
+                            </div>
+                            <!-- Search Results Container -->
+                            <div id="file-restore-search-results" class="hidden space-y-2 pt-2 border-t border-slate-200 dark:border-zinc-700"></div>
+                        </div>
+
+                        <!-- Timeline Point Selection (Fluent Cards) -->
+                        <div class="mt-6 space-y-3">
+                            <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 dark:text-zinc-500 font-mono">
+                                Recent Restore Points (최근 복원 시점)
+                            </h2>
+                            <div id="recent-snapshots-list" class="space-y-2.5">
+                                {{ initial_recents_html | safe }}
+                            </div>
+                        </div>
+
+                        <!-- Full Snapshots Historical Table -->
+                        <div class="mt-6 rounded-2xl border border-slate-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-800/80 overflow-hidden shadow-sm">
+                            <div class="p-4 border-b border-slate-200 dark:border-zinc-700 flex justify-between items-center">
+                                <h3 class="text-xs font-bold text-slate-800 dark:text-zinc-200 uppercase tracking-wide font-mono">전체 백업 아카이브 목록</h3>
+                                <span class="text-[11px] text-slate-400">정렬: 최신순</span>
+                            </div>
+                            <div class="overflow-x-auto responsive-table-wrapper">
+                                <table class="w-full text-left min-w-[720px]">
+                                    <thead class="bg-slate-50 dark:bg-zinc-900/80 border-b border-slate-200 dark:border-zinc-800 text-[11px] font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">
+                                        <tr>
+                                            <th class="py-2.5 px-4">백업 시점 ID</th>
+                                            <th class="py-2.5 px-4">프로필</th>
+                                            <th class="py-2.5 px-4">유형</th>
+                                            <th class="py-2.5 px-4">생성 일시</th>
+                                            <th class="py-2.5 px-4">총 파일/용량</th>
+                                            <th class="py-2.5 px-4">공간 절약</th>
+                                            <th class="py-2.5 px-4 text-right">작업</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="snapshots-table-body" class="divide-y divide-slate-100 dark:divide-zinc-700/60 text-xs">
+                                        <!-- Injected by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- Footer: Restore Action Info -->
+                    <div class="pt-6 border-t border-slate-100 dark:border-zinc-800 flex items-center justify-between text-xs text-slate-500 dark:text-zinc-400 mt-6">
+                        <span>선택한 시점으로 원클릭 무결성 복원이 진행됩니다.</span>
+                        <button onclick="loadSnapshots()" class="px-5 py-2.5 rounded-xl bg-slate-200 dark:bg-zinc-800 hover:bg-slate-300 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-200 font-semibold transition">
+                            목록 갱신
+                        </button>
+                    </div>
+                </section>
+
+
+                <!-- VIEW 3: SETTINGS & TOOLS (TAB: tab-settings) -->
+                <section id="tab-settings" class="tab-content hidden flex-1 flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-start justify-between relative">
+                            <div class="space-y-2 max-w-xl z-10">
+                                <h1 class="text-3xl sm:text-4xl font-light text-slate-900 dark:text-white tracking-tight">
+                                    Settings & Tools
+                                </h1>
+                                <p class="text-sm text-slate-500 dark:text-zinc-400 leading-relaxed">
+                                    기본 백업 일정과 비상 복구 도구를 관리합니다. 복잡한 내부 기술 옵션은 접혀있습니다.
+                                </p>
+                            </div>
+                            <span class="watermark-step text-slate-200 dark:text-zinc-800/40 select-none">
+                                3
+                            </span>
+                        </div>
+
+                        <!-- Settings Sub-Navigation Pills -->
+                        <div class="mt-6 flex flex-wrap items-center gap-2 pb-4 border-b border-slate-200 dark:border-zinc-800">
+                            <button type="button" onclick="switchSettingsSection('schedule')" id="btn-settings-schedule" class="settings-nav-btn px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-zinc-800 text-blue-700 dark:text-blue-400 border border-slate-200 dark:border-zinc-700 transition flex items-center gap-1.5 shadow-sm">
+                                <i data-lucide="calendar" class="w-3.5 h-3.5 text-amber-500"></i> 자동 일정 & 보관함
+                            </button>
+                            <button type="button" onclick="switchSettingsSection('targets')" id="btn-settings-targets" class="settings-nav-btn px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 transition flex items-center gap-1.5">
+                                <i data-lucide="check-square" class="w-3.5 h-3.5 text-blue-500"></i> 백업 대상
+                            </button>
+                            <button type="button" onclick="switchSettingsSection('cloud')" id="btn-settings-cloud" class="settings-nav-btn px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 transition flex items-center gap-1.5">
+                                <i data-lucide="cloud" class="w-3.5 h-3.5 text-cyan-500"></i> 3-2-1 클라우드 복제
+                            </button>
+                            <button type="button" onclick="switchSettingsSection('security')" id="btn-settings-security" class="settings-nav-btn px-3.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 dark:text-zinc-400 hover:bg-slate-100 dark:hover:bg-zinc-800 transition flex items-center gap-1.5">
+                                <i data-lucide="shield" class="w-3.5 h-3.5 text-emerald-500"></i> 보안 및 프로그램
+                            </button>
+                        </div>
+
+                        <!-- 4 Settings Sections -->
+                        <div class="mt-6 space-y-6">
+                                        <div id="tab-settings" class="tab-content hidden max-w-[1700px] mx-auto space-y-6">
                 <!-- Settings Sub-Navigation Pill Header -->
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-800/80">
                     <div>
@@ -1130,225 +1418,47 @@
             </div>
 
             <!-- Legacy fallback containers for backward compatibility -->
-            <div id="tab-custom" class="hidden"></div>
-            <div id="tab-profiles" class="hidden"></div>
 
-<!-- TAB 2: 실시간 백업 러너 & 클라우드 복제 모니터 (Live Runner) -->
-            <div id="tab-runner" class="tab-content hidden space-y-6 max-w-[1700px] mx-auto">
-                <div class="p-6 rounded-2xl glass-card border border-slate-700/60 space-y-6">
-                    <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
-                        <div class="flex items-center gap-3 min-w-0">
-                            <button onclick="switchTab('dashboard')" class="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition flex items-center gap-1.5 border border-zinc-700 shadow-sm whitespace-nowrap shrink-0" title="홈 화면으로 돌아가기">
-                                <i data-lucide="arrow-left" class="w-3.5 h-3.5 shrink-0"></i> <span>홈으로</span>
-                            </button>
-                            <div class="p-2.5 bg-cyan-600/20 text-cyan-400 rounded-xl border border-cyan-500/30 shrink-0">
-                                <i data-lucide="activity" class="w-6 h-6"></i>
-                            </div>
-                            <div class="min-w-0">
-                                <h2 class="text-base font-bold text-slate-100 flex items-center gap-2 flex-wrap">
-                                    <span>실시간 작업 & 클라우드 복제 모니터</span>
-                                </h2>
-                                <p class="text-xs text-slate-400">로컬 고속 백업/복원 엔진 및 3-2-1 클라우드(구글 드라이브) 원격 복제 파이프라인의 실시간 진행 상황을 한눈에 확인합니다.</p>
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-2 flex-wrap shrink-0">
-                            <span id="runner-target-profile-badge" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/90 border border-zinc-700/70 text-xs font-mono text-zinc-300 shadow-sm whitespace-nowrap" title="현재 실행 대상 백업 프로필">
-                                <i data-lucide="layers" class="w-3.5 h-3.5 text-blue-400 shrink-0"></i>
-                                <span>대상: <b id="runner-target-profile-name" class="text-blue-300 truncate max-w-[160px] sm:max-w-xs inline-block align-bottom">{{ initial_target_profile_name or '내 맞춤형 핵심 백업' }}</b></span>
-                            </span>
-                            <button onclick="switchTab('settings'); switchSettingsSection('cloud');" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition flex items-center gap-1.5 border border-zinc-700 shadow-sm whitespace-nowrap">
-                                <i data-lucide="settings" class="w-3.5 h-3.5 text-indigo-400 shrink-0"></i> <span>클라우드 설정</span>
-                            </button>
-                            <button onclick="triggerQuickBackup()" id="btn-runner-quick-backup" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-1.5 whitespace-nowrap" title="마지막 백업 프로필을 지금 즉시 실행합니다">
-                                <i data-lucide="play" class="w-3.5 h-3.5 fill-current shrink-0"></i>
-                                <span>즉시 백업 실행</span>
-                            </button>
-                        </div>
-                    </div>
 
-                    <!-- 2-COLUMN GRID: 1. LOCAL BACKUP ENGINE | 2. CLOUD OFFSITE PIPELINE -->
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                        
-                        <!-- CARD 1: 로컬 백업 & 복원 엔진 상태 -->
-                        <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
-                            <div class="flex justify-between items-center">
-                                <div class="flex items-center gap-2">
-                                    <div class="p-1.5 bg-blue-600/20 text-blue-400 rounded-lg border border-blue-500/30">
-                                        <i data-lucide="hard-drive" class="w-4 h-4"></i>
+                            <!-- Advanced Hidden Settings Accordion -->
+                            <div class="rounded-2xl border border-slate-200 dark:border-zinc-700 bg-white dark:bg-zinc-800/70 overflow-hidden shadow-sm">
+                                <button type="button" onclick="toggleAdvancedSettings()" class="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 dark:hover:bg-zinc-700/40 transition">
+                                    <div class="flex items-center gap-2.5">
+                                        <i data-lucide="sliders" class="w-4 h-4 text-slate-500"></i>
+                                        <span class="text-xs font-bold text-slate-800 dark:text-zinc-200">고급 엔지니어링 설정 (WORM 불변 락, 중복제거 청소, 로그 패키징)</span>
                                     </div>
-                                    <span class="text-sm font-bold text-slate-200">로컬 백업 & 복원 엔진</span>
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    <span id="runner-status-badge" class="px-3 py-1 bg-slate-700 text-slate-300 rounded-full text-xs font-semibold">대기 중</span>
-                                    <button id="runner-cancel-btn" onclick="cancelCurrentTask()" class="hidden px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white rounded-lg text-xs font-semibold transition">
-                                        작업 취소
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div class="space-y-2 bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
-                                <div class="flex justify-between items-center text-xs font-semibold">
-                                    <span id="runner-current-file" class="text-slate-300 truncate max-w-sm">대기 중</span>
-                                    <span id="runner-percent-text" class="text-blue-400 font-mono text-base">0%</span>
-                                </div>
-                                <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
-                                    <div id="runner-progress-bar" class="bg-gradient-to-r from-blue-500 to-indigo-500 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
-                                </div>
-                                <div class="flex justify-between items-center text-[11px] text-slate-400">
-                                    <span id="runner-stats-text" class="font-mono">파일: 0 / 0</span>
-                                    <span class="text-slate-500">FastCDC 증분 변경분 탐색</span>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- CARD 2: 3-2-1 클라우드 (구글 드라이브) 원격 복제 상태 -->
-                        <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
-                            <div class="flex justify-between items-center">
-                                <div class="flex items-center gap-2">
-                                    <div class="p-1.5 bg-cyan-600/20 text-cyan-400 rounded-lg border border-cyan-500/30">
-                                        <i data-lucide="cloud" class="w-4 h-4"></i>
-                                    </div>
-                                    <span class="text-sm font-bold text-slate-200">3-2-1 클라우드 (원격 복제)</span>
-                                </div>
-                                <div class="flex items-center gap-2">
-                                    <span id="runner-cloud-conn-badge" class="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-800">
-                                        구글 드라이브 (Cloud)
-                                    </span>
-                                </div>
-                            </div>
-
-                            <div class="space-y-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
-                                <div class="flex justify-between items-center text-xs">
-                                    <span id="runner-cloud-sync-badge" class="font-bold text-cyan-400 flex items-center gap-1.5">
-                                        <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i> 최신 백업 시점 동기화 완료
-                                    </span>
-                                </div>
-                                <div class="text-[11px] font-mono text-slate-400 truncate" id="runner-cloud-target-text">
-                                    대상: GDrive: BackupSystem_Offsite
-                                </div>
-                                <div class="text-[11px] text-slate-400 flex flex-col sm:flex-row justify-between sm:items-center gap-2 pt-1 border-t border-slate-800/60">
-                                    <span id="runner-cloud-detail-text" class="truncate">로컬 백업 완료 시 백그라운드 자동 2차 복제</span>
-                                    <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
-                                        <button onclick="testOffsiteFromUI()" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] font-medium border border-cyan-800/50 transition whitespace-nowrap">
-                                            연결 테스트
-                                        </button>
-                                        <button onclick="triggerOffsiteSyncFromUI()" class="px-2 py-0.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-bold transition flex items-center gap-1 whitespace-nowrap">
-                                            <i data-lucide="refresh-cw" class="w-3 h-3 shrink-0"></i> 원격 복제
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    <!-- Live Terminal Output -->
-                    <div class="space-y-2">
-                        <div class="flex justify-between items-center text-xs text-slate-400">
-                            <span class="font-semibold text-slate-300 flex items-center gap-1.5">
-                                <i data-lucide="terminal" class="w-4 h-4 text-blue-400"></i> 작업 실행 로그 (로컬 백업 & 클라우드 전송 실시간 스트리밍)
-                            </span>
-                            <div class="flex items-center gap-2">
-                                <button onclick="copyDiagnosticLogs(this)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] font-semibold border border-slate-700 transition flex items-center gap-1.5 shadow-sm">
-                                    <i data-lucide="clipboard-copy" class="w-3.5 h-3.5 text-cyan-400"></i>
-                                    <span>진단 로그 복사</span>
+                                    <i data-lucide="chevron-down" id="adv-arrow" class="w-4 h-4 text-slate-400 transition-transform"></i>
                                 </button>
-                                <span class="text-[11px]">최근 30건 실시간 스트리밍</span>
+                                <div id="adv-settings-body" class="hidden p-5 border-t border-slate-100 dark:border-zinc-700 space-y-3 text-xs text-slate-600 dark:text-zinc-300 bg-slate-50/50 dark:bg-zinc-900/30">
+                                    <div class="flex items-center justify-between">
+                                        <span>랜섬웨어 WORM 불변 락 (파일 삭제 방지):</span>
+                                        <span class="font-mono font-bold text-emerald-600 dark:text-emerald-400">활성화됨 (SYSTEM 보호)</span>
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span>FastCDC 중복 제거 및 가비지 컬렉션(GC):</span>
+                                        <button onclick="triggerGCPruneFromUI()" class="px-2.5 py-1 rounded bg-slate-200 dark:bg-zinc-700 text-[11px] font-semibold hover:bg-slate-300 transition">지금 공간 회수</button>
+                                    </div>
+                                    <div class="flex items-center justify-between">
+                                        <span>시스템 진단 로그 패키징:</span>
+                                        <a href="/api/system/download-installer" download class="px-2.5 py-1 rounded bg-slate-200 dark:bg-zinc-700 text-[11px] font-semibold hover:bg-slate-300 transition">설치본 다운로드</a>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                        <div id="terminal-log-box" class="terminal-box h-72 rounded-xl p-4 overflow-y-auto text-xs leading-relaxed space-y-1 font-mono">
-                            <div class="text-slate-500">준비됐어요. 백업이 시작되면 진행 상황이 여기에 표시돼요.</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
-            <!-- TAB 3: 백업 시점 지난 백업 보기 (Time Machine & Restore) -->
-            <div id="tab-snapshots" class="tab-content hidden space-y-4">
-                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                    <div>
-                        <h2 class="text-base font-bold text-slate-100 flex items-center gap-2 flex-wrap">
-                            <i data-lucide="history" class="w-5 h-5 text-blue-400 shrink-0"></i> <span>백업 시점 지난 백업 보기</span>
-                        </h2>
-                        <p class="text-xs text-slate-400">저장된 백업 시점 목록입니다. 특정 시점의 파일을 탐색하거나 원클릭으로 되돌릴 수 있습니다.</p>
                     </div>
-                    <div class="flex items-center gap-2 flex-wrap shrink-0">
-                        <button onclick="runDRDrill()" class="px-3 py-1.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition shadow-md shadow-emerald-900/30 flex items-center gap-1.5 whitespace-nowrap">
-                            <i data-lucide="shield-check" class="w-3.5 h-3.5 shrink-0"></i>
-                            <span>🧪 1초 복구 모의훈련 (DR Drill)</span>
-                        </button>
-                        <button onclick="loadSnapshots()" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold transition border border-slate-700 flex items-center gap-1.5 whitespace-nowrap">
-                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5 shrink-0"></i> <span>새로고침</span>
+
+                    <div class="pt-6 border-t border-slate-100 dark:border-zinc-800 flex items-center justify-between text-xs text-slate-400 mt-6">
+                        <span>설정값은 변경 즉시 실시간으로 자동 저장됩니다.</span>
+                        <button onclick="alert('설정이 저장되었습니다.')" class="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm transition">
+                            저장 완료
                         </button>
                     </div>
-                </div>
+                </section>
 
-                <!-- 원클릭 파일 되돌리기 (타임머신 검색 마법사) -->
-                <div class="p-4 rounded-2xl glass-card border border-blue-500/30 bg-gradient-to-r from-blue-950/20 via-slate-900/60 to-indigo-950/20 shadow-lg space-y-3">
-                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                        <div class="flex items-center gap-2.5">
-                            <span class="p-2 bg-blue-500/10 border border-blue-500/30 rounded-xl text-blue-400">
-                                <i data-lucide="search" class="w-5 h-5"></i>
-                            </span>
-                            <div>
-                                <h3 class="text-sm font-bold text-slate-100 flex items-center gap-2">
-                                    <span>원클릭 파일 되돌리기 (타임머신 검색)</span>
-                                    <span class="text-[10px] px-2 py-0.5 bg-blue-900/60 text-blue-300 rounded-full border border-blue-600/40 font-mono">Instant Search</span>
-                                </h3>
-                                <p class="text-xs text-slate-400">되돌리고 싶은 파일명이나 확장자를 검색하세요. 백업 시점별 과거 버전을 찾아 바탕화면이나 원래 위치로 즉시 되돌려 드립니다.</p>
-                            </div>
-                        </div>
-                        <div id="file-search-status" class="text-xs text-slate-400 font-mono"></div>
-                    </div>
 
-                    <div class="relative">
-                        <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                            <i data-lucide="file-search" class="w-4 h-4 text-blue-400"></i>
-                        </div>
-                        <input type="text"
-                               id="file-restore-search-input"
-                               placeholder="되돌릴 파일 이름 또는 확장자 검색 (예: 보고서, .xlsx, 사진, family.jpg, Antigravity)"
-                               oninput="onSearchFileRestoreInput()"
-                               onkeydown="if(event.key==='Enter') executeFileSearch()"
-                               class="w-full pl-10 pr-24 py-2.5 bg-slate-900/90 border border-slate-700/80 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 text-sm text-slate-100 placeholder-slate-500 rounded-xl outline-none transition font-sans">
-                        <button type="button"
-                                onclick="executeFileSearch()"
-                                class="absolute right-1.5 top-1.5 bottom-1.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-semibold transition flex items-center gap-1 shadow-sm">
-                            <i data-lucide="search" class="w-3.5 h-3.5"></i>
-                            <span>검색</span>
-                        </button>
-                    </div>
-
-                    <!-- 검색 결과 영역 -->
-                    <div id="file-restore-search-results" class="hidden space-y-2 pt-2 border-t border-slate-800">
-                        <!-- JS 렌더링 -->
-                    </div>
-                </div>
-
-                <div class="rounded-2xl glass-card border border-slate-700/60 overflow-hidden shadow-xl">
-                    <div class="overflow-x-auto responsive-table-wrapper">
-                        <table class="w-full text-left min-w-[760px]">
-                            <thead class="bg-slate-900/80 border-b border-slate-800 text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                                <tr>
-                                    <th class="py-3 px-4 whitespace-nowrap">백업 시점 ID</th>
-                                    <th class="py-3 px-4 whitespace-nowrap">프로필</th>
-                                    <th class="py-3 px-4 whitespace-nowrap">유형</th>
-                                    <th class="py-3 px-4 whitespace-nowrap">생성 일시</th>
-                                    <th class="py-3 px-4 whitespace-nowrap">총 파일/용량</th>
-                                    <th class="py-3 px-4 whitespace-nowrap">공간 절약</th>
-                                    <th class="py-3 px-4 text-right whitespace-nowrap">작업</th>
-                                </tr>
-                            </thead>
-                            <tbody id="snapshots-table-body" class="divide-y divide-slate-800/60">
-                                <!-- Injected by JS -->
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- TAB 5: 윈도우 OS 전체 시스템 이미지 백업 (Bare-Metal Image) -->
-            <div id="tab-system-image" class="tab-content hidden space-y-6">
+                <!-- TAB 4: SYSTEM IMAGE & MIGRATION -->
+                            <div id="tab-system-image" class="tab-content hidden space-y-6">
                 <!-- Header -->
                 <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div>
@@ -1792,7 +1902,156 @@
         </main>
     </div>
 
-    <!-- MODAL 1: Snapshot File Explorer -->
+
+
+
+                <!-- TAB 5: LIVE RUNNER & DETAILED MONITOR -->
+                            <div id="tab-runner" class="tab-content hidden space-y-6 max-w-[1700px] mx-auto">
+                <div class="p-6 rounded-2xl glass-card border border-slate-700/60 space-y-6">
+                    <div class="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <button onclick="switchTab('dashboard')" class="px-2.5 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition flex items-center gap-1.5 border border-zinc-700 shadow-sm whitespace-nowrap shrink-0" title="홈 화면으로 돌아가기">
+                                <i data-lucide="arrow-left" class="w-3.5 h-3.5 shrink-0"></i> <span>홈으로</span>
+                            </button>
+                            <div class="p-2.5 bg-cyan-600/20 text-cyan-400 rounded-xl border border-cyan-500/30 shrink-0">
+                                <i data-lucide="activity" class="w-6 h-6"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-base font-bold text-slate-100 flex items-center gap-2 flex-wrap">
+                                    <span>실시간 작업 & 클라우드 복제 모니터</span>
+                                </h2>
+                                <p class="text-xs text-slate-400">로컬 고속 백업/복원 엔진 및 3-2-1 클라우드(구글 드라이브) 원격 복제 파이프라인의 실시간 진행 상황을 한눈에 확인합니다.</p>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2 flex-wrap shrink-0">
+                            <span id="runner-target-profile-badge" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-zinc-800/90 border border-zinc-700/70 text-xs font-mono text-zinc-300 shadow-sm whitespace-nowrap" title="현재 실행 대상 백업 프로필">
+                                <i data-lucide="layers" class="w-3.5 h-3.5 text-blue-400 shrink-0"></i>
+                                <span>대상: <b id="runner-target-profile-name" class="text-blue-300 truncate max-w-[160px] sm:max-w-xs inline-block align-bottom">{{ initial_target_profile_name or '내 맞춤형 핵심 백업' }}</b></span>
+                            </span>
+                            <button onclick="switchTab('settings'); switchSettingsSection('cloud');" class="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white text-xs font-medium transition flex items-center gap-1.5 border border-zinc-700 shadow-sm whitespace-nowrap">
+                                <i data-lucide="settings" class="w-3.5 h-3.5 text-indigo-400 shrink-0"></i> <span>클라우드 설정</span>
+                            </button>
+                            <button onclick="triggerQuickBackup()" id="btn-runner-quick-backup" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center gap-1.5 whitespace-nowrap" title="마지막 백업 프로필을 지금 즉시 실행합니다">
+                                <i data-lucide="play" class="w-3.5 h-3.5 fill-current shrink-0"></i>
+                                <span>즉시 백업 실행</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- 2-COLUMN GRID: 1. LOCAL BACKUP ENGINE | 2. CLOUD OFFSITE PIPELINE -->
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        
+                        <!-- CARD 1: 로컬 백업 & 복원 엔진 상태 -->
+                        <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+                            <div class="flex justify-between items-center">
+                                <div class="flex items-center gap-2">
+                                    <div class="p-1.5 bg-blue-600/20 text-blue-400 rounded-lg border border-blue-500/30">
+                                        <i data-lucide="hard-drive" class="w-4 h-4"></i>
+                                    </div>
+                                    <span class="text-sm font-bold text-slate-200">로컬 백업 & 복원 엔진</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span id="runner-status-badge" class="px-3 py-1 bg-slate-700 text-slate-300 rounded-full text-xs font-semibold">대기 중</span>
+                                    <button id="runner-cancel-btn" onclick="cancelCurrentTask()" class="hidden px-2.5 py-1 bg-red-600/80 hover:bg-red-600 text-white rounded-lg text-xs font-semibold transition">
+                                        작업 취소
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div class="space-y-2 bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
+                                <div class="flex justify-between items-center text-xs font-semibold">
+                                    <span id="runner-current-file" class="text-slate-300 truncate max-w-sm">대기 중</span>
+                                    <span id="runner-percent-text" class="text-blue-400 font-mono text-base">0%</span>
+                                </div>
+                                <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+                                    <div id="runner-progress-bar" class="bg-gradient-to-r from-blue-500 to-indigo-500 h-2.5 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                                <div class="flex justify-between items-center text-[11px] text-slate-400">
+                                    <span id="runner-stats-text" class="font-mono">파일: 0 / 0</span>
+                                    <span class="text-slate-500">FastCDC 증분 변경분 탐색</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- CARD 2: 3-2-1 클라우드 (구글 드라이브) 원격 복제 상태 -->
+                        <div class="p-5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-4">
+                            <div class="flex justify-between items-center">
+                                <div class="flex items-center gap-2">
+                                    <div class="p-1.5 bg-cyan-600/20 text-cyan-400 rounded-lg border border-cyan-500/30">
+                                        <i data-lucide="cloud" class="w-4 h-4"></i>
+                                    </div>
+                                    <span class="text-sm font-bold text-slate-200">3-2-1 클라우드 (원격 복제)</span>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span id="runner-cloud-conn-badge" class="text-[11px] px-2.5 py-0.5 rounded-full font-semibold bg-cyan-950/80 text-cyan-300 border border-cyan-800">
+                                        구글 드라이브 (Cloud)
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div class="space-y-3 bg-slate-950/60 p-4 rounded-xl border border-slate-800/80">
+                                <div class="flex justify-between items-center text-xs">
+                                    <span id="runner-cloud-sync-badge" class="font-bold text-cyan-400 flex items-center gap-1.5">
+                                        <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i> 최신 백업 시점 동기화 완료
+                                    </span>
+                                </div>
+                                <div class="text-[11px] font-mono text-slate-400 truncate" id="runner-cloud-target-text">
+                                    대상: GDrive: BackupSystem_Offsite
+                                </div>
+                                <div class="text-[11px] text-slate-400 flex flex-col sm:flex-row justify-between sm:items-center gap-2 pt-1 border-t border-slate-800/60">
+                                    <span id="runner-cloud-detail-text" class="truncate">로컬 백업 완료 시 백그라운드 자동 2차 복제</span>
+                                    <div class="flex items-center gap-1.5 shrink-0 flex-wrap">
+                                        <button onclick="testOffsiteFromUI()" class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-cyan-300 text-[11px] font-medium border border-cyan-800/50 transition whitespace-nowrap">
+                                            연결 테스트
+                                        </button>
+                                        <button onclick="triggerOffsiteSyncFromUI()" class="px-2 py-0.5 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-bold transition flex items-center gap-1 whitespace-nowrap">
+                                            <i data-lucide="refresh-cw" class="w-3 h-3 shrink-0"></i> 원격 복제
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- Live Terminal Output -->
+                    <div class="space-y-2">
+                        <div class="flex justify-between items-center text-xs text-slate-400">
+                            <span class="font-semibold text-slate-300 flex items-center gap-1.5">
+                                <i data-lucide="terminal" class="w-4 h-4 text-blue-400"></i> 작업 실행 로그 (로컬 백업 & 클라우드 전송 실시간 스트리밍)
+                            </span>
+                            <div class="flex items-center gap-2">
+                                <button onclick="copyDiagnosticLogs(this)" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[11px] font-semibold border border-slate-700 transition flex items-center gap-1.5 shadow-sm">
+                                    <i data-lucide="clipboard-copy" class="w-3.5 h-3.5 text-cyan-400"></i>
+                                    <span>진단 로그 복사</span>
+                                </button>
+                                <span class="text-[11px]">최근 30건 실시간 스트리밍</span>
+                            </div>
+                        </div>
+                        <div id="terminal-log-box" class="terminal-box h-72 rounded-xl p-4 overflow-y-auto text-xs leading-relaxed space-y-1 font-mono">
+                            <div class="text-slate-500">준비됐어요. 백업이 시작되면 진행 상황이 여기에 표시돼요.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+
+
+                <!-- Compatibility Stubs for Tab Custom & Profiles -->
+                            <div id="tab-custom" class="hidden"></div>
+            <div id="tab-profiles" class="hidden"></div>
+
+<!-- TAB 2: 실시간 백업 러너 & 클라우드 복제 모니터 (Live Runner) -->
+
+
+            </main>
+
+        </div>
+
+    </div>
+
+    <!-- Modals (All 15 Preserved with Fluent Styling) -->
+        <!-- MODAL 1: Snapshot File Explorer -->
     <div id="explorer-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
         <div class="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl overflow-hidden">
             <div class="p-4 border-b border-slate-800 flex justify-between items-center">
@@ -2886,6 +3145,9 @@
     </div>
 
     <!-- 모듈화된 백업 서브시스템 스크립트 로드 -->
+
+
+    <!-- Modular JS Scripts -->
     <script src="/static/js/backup_utils.js?v={{ v_ts }}"></script>
     <script src="/static/js/backup_auth.js?v={{ v_ts }}"></script>
     <script src="/static/js/backup_snapshots.js?v={{ v_ts }}"></script>
@@ -2895,5 +3157,129 @@
     <script src="/static/js/rescue_usb.js?v={{ v_ts }}"></script>
     <script>window.__INITIAL_SNAPSHOTS__ = {{ initial_snapshots_json | safe }};</script>
     <script src="/static/app.js?v={{ v_ts }}"></script>
+
+    <!-- Fluent Controller & Interactive Synchronization -->
+    <script>
+        // Init Lucide Icons
+        if (window.lucide && typeof lucide.createIcons === 'function') {
+            lucide.createIcons();
+        }
+
+        // Fluent Theme Switcher (Persists in localStorage)
+        function changeFluentTheme(theme) {
+            if (theme === 'dark') {
+                document.documentElement.classList.add('dark');
+                document.documentElement.classList.remove('light');
+            } else {
+                document.documentElement.classList.remove('dark');
+                document.documentElement.classList.add('light');
+            }
+            try {
+                localStorage.setItem('kova_theme', theme);
+            } catch(e) {}
+            if (window.lucide && typeof lucide.createIcons === 'function') {
+                lucide.createIcons();
+            }
+        }
+
+        // Mode Selection State
+        let selectedFluentMode = 'smart';
+        function selectMode(mode) {
+            selectedFluentMode = mode;
+            ['smart', 'full', 'custom'].forEach(m => {
+                const card = document.getElementById('mode-card-' + m);
+                const icon = document.getElementById('icon-check-' + m);
+                if (!card || !icon) return;
+                if (m === mode) {
+                    card.classList.add('active', 'border-blue-600', 'dark:border-blue-500');
+                    card.classList.remove('border-slate-200', 'dark:border-zinc-700/80');
+                    icon.setAttribute('data-lucide', 'check-circle-2');
+                    icon.parentElement.className = 'absolute top-4 right-4 text-blue-600 dark:text-blue-400';
+                } else {
+                    card.classList.remove('active', 'border-blue-600', 'dark:border-blue-500');
+                    card.classList.add('border-slate-200', 'dark:border-zinc-700/80');
+                    icon.setAttribute('data-lucide', 'circle');
+                    icon.parentElement.className = 'absolute top-4 right-4 text-slate-300 dark:text-zinc-600';
+                }
+            });
+            if (window.lucide && typeof lucide.createIcons === 'function') {
+                lucide.createIcons();
+            }
+        }
+
+        // Fluent Mode CTA Handler
+        function handleFluentBackupStart() {
+            if (selectedFluentMode === 'smart') {
+                if (typeof triggerQuickBackup === 'function') {
+                    triggerQuickBackup();
+                }
+            } else if (selectedFluentMode === 'full') {
+                if (confirm('PC 전체 통백업(시스템 이미지 VHDX) 관리 도구로 이동하시겠습니까?')) {
+                    switchTab('system-image');
+                }
+            } else if (selectedFluentMode === 'custom') {
+                switchTab('settings');
+                switchSettingsSection('targets');
+            }
+        }
+
+        // Collapsible Accordion Handlers
+        function toggleEngineeringDetails() {
+            const body = document.getElementById('eng-details-body');
+            const arrow = document.getElementById('eng-arrow');
+            if (body) body.classList.toggle('hidden');
+            if (arrow) arrow.classList.toggle('rotate-180');
+        }
+
+        function toggleAdvancedSettings() {
+            const body = document.getElementById('adv-settings-body');
+            const arrow = document.getElementById('adv-arrow');
+            if (body) body.classList.toggle('hidden');
+            if (arrow) arrow.classList.toggle('rotate-180');
+        }
+
+        function toggleLogDetail() {
+            const box = document.getElementById('tech-log-box');
+            if (box) box.classList.toggle('hidden');
+        }
+
+        // Synchronize Stepper Nav active indicator when switchTab is called
+        (function() {
+            const origSwitchTab = window.switchTab;
+            if (typeof origSwitchTab === 'function') {
+                window.switchTab = function(tabId) {
+                    origSwitchTab(tabId);
+                    // Update Stepper active classes
+                    const navItems = document.querySelectorAll('.nav-item');
+                    navItems.forEach(item => {
+                        const isMatch = (item.dataset.tab === tabId) || 
+                                       (tabId === 'system-image' && item.dataset.tab === 'settings');
+                        const indicator = item.querySelector('span:first-child');
+                        if (isMatch) {
+                            item.classList.add('active', 'text-blue-700', 'dark:text-blue-400', 'bg-white', 'dark:bg-zinc-800', 'shadow-sm', 'border', 'border-slate-200/80', 'dark:border-zinc-700');
+                            item.classList.remove('text-slate-600', 'dark:text-zinc-300', 'dark:text-zinc-400');
+                            if (indicator) indicator.className = 'w-1.5 h-4 rounded-full bg-blue-600 dark:bg-blue-400';
+                        } else {
+                            item.classList.remove('active', 'text-blue-700', 'dark:text-blue-400', 'bg-white', 'dark:bg-zinc-800', 'shadow-sm', 'border', 'border-slate-200/80', 'dark:border-zinc-700');
+                            item.classList.add('text-slate-600', 'dark:text-zinc-300');
+                            if (indicator) indicator.className = 'w-1.5 h-4 rounded-full bg-transparent';
+                        }
+                    });
+                    if (window.lucide && typeof lucide.createIcons === 'function') {
+                        lucide.createIcons();
+                    }
+                };
+            }
+        })();
+
+        // Restore saved theme on dropdown
+        document.addEventListener('DOMContentLoaded', function() {
+            const sel = document.getElementById('theme-selector');
+            if (sel) {
+                const cur = document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+                sel.value = cur;
+            }
+        });
+    </script>
 </body>
 </html>
