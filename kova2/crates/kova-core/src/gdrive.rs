@@ -1119,4 +1119,53 @@ mod tests {
         assert_eq!(r2.snapshots_uploaded, 0);
         assert_eq!(r2.bytes_uploaded, 0);
     }
+
+    /// 수동: Kova2 가 만든 드라이브 폴더 최상위 목록(이름·개수)을 출력한다. 삭제는 하지 않는다.
+    #[test]
+    #[ignore]
+    fn real_drive_list_top() {
+        let dir = PathBuf::from(std::env::var("ProgramData").unwrap())
+            .join("Kova2")
+            .join("config");
+        let mut c =
+            DriveClient::open(&dir, Endpoints::default(), load_client(&dir).unwrap()).unwrap();
+        let top: Vec<(String, Entry)> = c.list("root").unwrap().clone().into_iter().collect();
+        for (n, e) in top {
+            println!("ROOT {n} folder={} id={}", e.folder, e.id);
+            if e.folder {
+                let sub: Vec<(String, Entry)> =
+                    c.list(&e.id).unwrap().clone().into_iter().collect();
+                for (n2, e2) in sub {
+                    let cnt = if e2.folder {
+                        c.list(&e2.id).unwrap().len()
+                    } else {
+                        0
+                    };
+                    println!("  {n2} folder={} children={cnt}", e2.folder);
+                }
+            }
+        }
+    }
+
+    /// 수동: 지정한 폴더 id 들을 휴지통으로 보낸다(복구 가능). KOVA_TRASH_IDS=id1,id2
+    #[test]
+    #[ignore]
+    fn real_drive_trash() {
+        let dir = PathBuf::from(std::env::var("ProgramData").unwrap())
+            .join("Kova2")
+            .join("config");
+        let mut c =
+            DriveClient::open(&dir, Endpoints::default(), load_client(&dir).unwrap()).unwrap();
+        for id in std::env::var("KOVA_TRASH_IDS").unwrap().split(',') {
+            let url = format!("{}/files/{id}", c.ep.api);
+            c.call(|a, t| {
+                a.request("PATCH", &url)
+                    .set("Authorization", &format!("Bearer {t}"))
+                    .set("Content-Type", "application/json")
+                    .send_string(r#"{"trashed":true}"#)
+            })
+            .unwrap();
+            println!("TRASHED {id}");
+        }
+    }
 }

@@ -2200,7 +2200,25 @@ fn restore_volume_job(weak: slint::Weak<MainWindow>, image: String, letter: Stri
 }
 
 fn main() -> Result<(), slint::PlatformError> {
-    kova_core::repocrypto::install_provider(); // 암호화된 저장소의 탐색·복원에 필요
+    std::panic::set_hook(Box::new(|info| {
+        let msg = format!("PANIC: {}\n", info);
+        let _ = std::fs::write("C:\\Users\\kksjmj\\Desktop\\ai\\kova_panic.log", msg);
+    }));
+    let _ = std::fs::write(
+        "C:\\Users\\kksjmj\\Desktop\\ai\\kova_startup.log",
+        format!("main started with args: {:?}\n", std::env::args().collect::<Vec<_>>()),
+    );
+    macro_rules! log_step {
+        ($msg:expr) => {
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open("C:\\Users\\kksjmj\\Desktop\\ai\\kova_startup.log") {
+                use std::io::Write;
+                let _ = writeln!(f, "[STEP] {}", $msg);
+            }
+        };
+    }
+    log_step!("1. before install_provider");
+    kova_core::repocrypto::install_provider();
+    log_step!("2. before MainWindow::new"); // 암호화된 저장소의 탐색·복원에 필요
                                                // 관리자 권한으로 다시 실행된 업데이트 설치 도우미: 설치하고 결과를 파일에 적은 뒤 끝낸다
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--install-update") {
@@ -2213,6 +2231,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
 
     let w = MainWindow::new()?;
+    log_step!("3. after MainWindow::new");
     #[cfg(windows)]
     {
         let weak = w.as_weak();
@@ -3149,19 +3168,28 @@ fn main() -> Result<(), slint::PlatformError> {
         let _ =
             kova_core::alerts::AlertLog::new(&kova_service::default_config_dir()).acknowledge_all();
     });
+    log_step!("4. before spawn_ipc");
     spawn_ipc(w.as_weak());
+    log_step!("5. after spawn_ipc, before menu");
 
     let menu = Menu::new();
     let open = MenuItem::new("열기", true, None);
     let backup_all = MenuItem::new("지금 백업 (모든 프로파일)", true, None);
     let quit = MenuItem::new("종료", true, None);
     menu.append_items(&[&open, &backup_all, &quit]).unwrap();
-    let _tray = TrayIconBuilder::new()
+    let _tray = match TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_tooltip("Kova")
         .with_icon(make_icon())
         .build()
-        .unwrap();
+    {
+        Ok(t) => Some(t),
+        Err(e) => {
+            eprintln!("트레이 아이콘 생성 건너뜀: {e}");
+            None
+        }
+    };
+    log_step!("6. after tray creation");
 
     // 트레이 메뉴 이벤트를 Slint 이벤트 루프에서 주기적으로 처리
     let weak = w.as_weak();
@@ -3197,7 +3225,16 @@ fn main() -> Result<(), slint::PlatformError> {
     if std::env::args().any(|a| a == "--tray") {
         slint::run_event_loop_until_quit()
     } else {
-        w.run()
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open("C:\\Users\\kksjmj\\Desktop\\ai\\kova_startup.log") {
+            let _ = writeln!(f, "showing window and calling w.run()...");
+        }
+        let _ = w.show();
+        let res = w.run();
+        if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open("C:\\Users\\kksjmj\\Desktop\\ai\\kova_startup.log") {
+            let _ = writeln!(f, "w.run() returned: {:?}", res);
+        }
+        res
     }
 }
 
