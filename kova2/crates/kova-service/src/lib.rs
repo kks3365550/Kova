@@ -1362,6 +1362,10 @@ impl kova_ipc::Handler for IpcHandler {
             }]),
             Request::GdriveStoreToken { token } => {
                 let cfg = &self.0 .0.config_dir;
+                // 이미 연결돼 있으면 다른 계정으로 바꾸는 일이므로 관리자만 한다(처음 연결은 누구나)
+                if !caller.privileged && kova_core::gdrive::is_connected(cfg) {
+                    return self.refuse("GdriveStoreToken(연결 교체)");
+                }
                 Reply::Once(vec![match kova_core::gdrive::store_token(cfg, &token.0) {
                     Ok(()) => {
                         kova_core::applog::write(cfg, "INFO", "구글 드라이브 연결: 토큰 저장");
@@ -1373,6 +1377,9 @@ impl kova_ipc::Handler for IpcHandler {
                 }])
             }
             Request::GdriveDisconnect => {
+                if !caller.privileged {
+                    return self.refuse("GdriveDisconnect");
+                }
                 // 토큰 폐기는 네트워크 요청이라 IPC 작업 스레드를 막지 않게 따로 돌린다
                 let cfg = self.0 .0.config_dir.clone();
                 let (tx, rx) = sync_channel(1);
@@ -2386,6 +2393,13 @@ mod tests {
         assert!(
             matches!(ok, kova_ipc::Reply::Once(ref v) if matches!(v[..], [Event::Done { .. }]))
         );
+        assert_eq!(status(&h), vec![Event::GdriveStatus { connected: true }]);
+        // 연결된 뒤 일반 사용자의 교체·해제는 거부된다
+        let again = Request::GdriveStoreToken {
+            token: Secret(tok.into()),
+        };
+        assert!(first_error(h.handle(again, user)).is_some());
+        assert!(first_error(h.handle(Request::GdriveDisconnect, user)).is_some());
         assert_eq!(status(&h), vec![Event::GdriveStatus { connected: true }]);
         // 토큰은 로그에 남지 않는다
         let log = fs::read_to_string(kova_core::applog::log_path(&d.path().join("cfg")))
