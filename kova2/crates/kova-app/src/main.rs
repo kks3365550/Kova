@@ -2575,7 +2575,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_job_completed_show(false);
             }
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let pid = resolve_profile_id(&store, &id.to_string()).unwrap_or_else(|| id.to_string());
+            let pid = resolve_profile_id(&store, id.as_str()).unwrap_or_else(|| id.to_string());
             send("backup", pid);
         });
     }
@@ -2586,7 +2586,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_job_completed_show(false);
             }
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let pid = resolve_profile_id(&store, &id.to_string()).unwrap_or_else(|| id.to_string());
+            let pid = resolve_profile_id(&store, id.as_str()).unwrap_or_else(|| id.to_string());
             send("verify", pid);
         });
     }
@@ -3323,7 +3323,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_job_completed_show(false);
             }
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let pid = resolve_profile_id(&store, &id.to_string()).unwrap_or_else(|| id.to_string());
+            let pid = resolve_profile_id(&store, id.as_str()).unwrap_or_else(|| id.to_string());
             send("gc", pid);
         });
     }

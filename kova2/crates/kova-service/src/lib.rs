@@ -766,7 +766,7 @@ impl Supervisor {
         self.emit(SvcEvent::Progress {
             job_id: job.id,
             percent: 50,
-            current: format!("{mode} 수행 중...").into(),
+            current: format!("{mode} 수행 중..."),
         });
         let res = match kova_core::verify::verify_repo(repo, deep) {
             Ok(r) if r.ok() => {
