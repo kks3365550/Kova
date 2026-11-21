@@ -113,7 +113,7 @@ fn download_if_exists(
 /// 기존 설치본(3.15.x/3.16.0)용으로 `.sig` 도 계속 게시하고, 새 릴리즈부터 `.sig2` 를 함께 게시한다.
 /// 계획: `.sig2` 를 게시한 릴리즈가 한 번 나간 뒤 다음 릴리즈에서 false 로 바꾼다
 /// (`.sig2` 를 지우고 옛 `.sig` 만 남기는 공격은 그때까지 `ensure_package_newer` 가 막는다).
-pub const ALLOW_LEGACY_SIG: bool = true;
+pub const ALLOW_LEGACY_SIG: bool = false;
 
 /// 배포 서명에 쓰는 신뢰 공개키(공개키만 포함). 키를 바꾸면 여기와 릴리즈 서명을 함께 바꾼다.
 pub const TRUSTED_KEYS: &[&str] = &[
