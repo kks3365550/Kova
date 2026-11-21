@@ -1672,6 +1672,66 @@ fn pick_path(kind: &str) -> Result<String, String> {
     Ok(parse_picked(&String::from_utf8_lossy(&out.stdout)))
 }
 
+/// '찾아보기' 결과를 어디에 어떻게 넣을지. 대상 이름(target)은 main.slint 의 browse 호출 쪽에서 정한다.
+#[derive(Debug, PartialEq)]
+enum PickPlan {
+    /// 취소(빈 결과)·대상 없음: 기존 값을 그대로 둔다.
+    Keep,
+    /// 선택 창을 못 열었다: pick-error 에 표시하고 기존 값은 그대로 둔다.
+    Error(String),
+    /// 백업 편집 원본 목록에 더한다(form-add).
+    FormAdd(String),
+    /// target 이 같은 PathField 입력 칸에 넣는다(PickBus).
+    Field(String, String),
+}
+
+/// 선택 결과와 대상 이름으로 반영 방법을 정한다(순수 함수).
+fn pick_plan(target: &str, res: Result<String, String>) -> PickPlan {
+    match res {
+        Err(e) => PickPlan::Error(format!("선택 창을 열지 못했습니다: {e}")),
+        Ok(p) if p.trim().is_empty() => PickPlan::Keep,
+        Ok(p) => match target {
+            "form-add" => PickPlan::FormAdd(p),
+            "" => PickPlan::Keep,
+            t => PickPlan::Field(t.to_string(), p),
+        },
+    }
+}
+
+/// UI 스레드에서 선택 결과를 반영한다. 오류가 아니면 이전 오류 표시는 지운다.
+fn apply_pick(w: &MainWindow, plan: PickPlan) {
+    let err = match &plan {
+        PickPlan::Error(e) => e.clone(),
+        _ => String::new(),
+    };
+    w.set_pick_error(err.into());
+    match plan {
+        PickPlan::FormAdd(p) => w.invoke_form_add(p.into()),
+        PickPlan::Field(t, p) => {
+            let bus = w.global::<PickBus>();
+            bus.set_target(t.into());
+            bus.set_value(p.into());
+            bus.set_seq(bus.get_seq().wrapping_add(1));
+        }
+        PickPlan::Keep | PickPlan::Error(_) => {}
+    }
+}
+
+/// 진행 중 플래그: 선택 창·스캔이 끝나기 전에 같은 동작을 다시 시작하지 않게 한다(스레드 간 공유).
+#[derive(Clone, Default)]
+struct BusyGate(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl BusyGate {
+    /// 비어 있으면 진행 중으로 바꾸고 true, 이미 진행 중이면 false.
+    fn try_begin(&self) -> bool {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.0.compare_exchange(false, true, SeqCst, SeqCst).is_ok()
+    }
+    fn end(&self) {
+        self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 const FOLDER_PICKER_CS: &str = r#"using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -3414,16 +3474,24 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
     {
+        // 선택 창(PowerShell, 첫 실행은 C# 컴파일)은 별도 스레드에서 열어 창이 멈추지 않게 하고, 결과는 UI 스레드에서 넣는다
         let weak = w.as_weak();
-        w.on_browse(move |k| {
-            let (path, err) = match pick_path(k.as_str()) {
-                Ok(p) => (p, String::new()),
-                Err(e) => (String::new(), format!("선택 창을 열지 못했습니다: {e}")),
-            };
-            if let Some(w) = weak.upgrade() {
-                w.set_pick_error(err.into());
+        let gate = BusyGate::default();
+        w.on_browse(move |k, target| {
+            if !gate.try_begin() {
+                return; // 이미 선택 창이 떠 있다
             }
-            path.into()
+            let (weak, gate) = (weak.clone(), gate.clone());
+            let (kind, target) = (k.to_string(), target.to_string());
+            std::thread::spawn(move || {
+                let plan = pick_plan(&target, pick_path(&kind));
+                let _ = slint::invoke_from_event_loop(move || {
+                    gate.end();
+                    if let Some(w) = weak.upgrade() {
+                        apply_pick(&w, plan);
+                    }
+                });
+            });
         });
     }
     {
@@ -3649,6 +3717,41 @@ fn main() -> Result<(), slint::PlatformError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn pick_plan_routes_result_to_target_and_keeps_on_cancel() {
+        use super::{pick_plan, PickPlan};
+        let ok = |s: &str| Ok::<String, String>(s.to_string());
+        assert_eq!(
+            pick_plan("form-add", ok("C:\\a;D:\\b")),
+            PickPlan::FormAdd("C:\\a;D:\\b".into())
+        );
+        for t in ["form-repo", "restore-folder", "offsite:nas1"] {
+            assert_eq!(
+                pick_plan(t, ok("E:\\x")),
+                PickPlan::Field(t.into(), "E:\\x".into())
+            );
+        }
+        // 취소(빈 결과)·대상 없음은 기존 값 유지
+        assert_eq!(pick_plan("form-repo", ok("")), PickPlan::Keep);
+        assert_eq!(pick_plan("form-add", ok("  ")), PickPlan::Keep);
+        assert_eq!(pick_plan("", ok("C:\\a")), PickPlan::Keep);
+        // 오류는 값 대신 pick-error 문구
+        assert_eq!(
+            pick_plan("form-repo", Err("x".into())),
+            PickPlan::Error("선택 창을 열지 못했습니다: x".into())
+        );
+    }
+
+    #[test]
+    fn busy_gate_blocks_second_start_until_end() {
+        let g = super::BusyGate::default();
+        let g2 = g.clone();
+        assert!(g.try_begin());
+        assert!(!g2.try_begin(), "진행 중에는 다시 시작하지 않는다");
+        std::thread::spawn(move || g2.end()).join().unwrap();
+        assert!(g.try_begin(), "끝나면 다시 시작할 수 있다");
+    }
+
     #[test]
     fn source_rows_groups_programs_by_name_and_keeps_folders() {
         let s = "C:\\Users\\a\\Desktop;C:\\Users\\a\\Desktop\\sub;C:\\Users\\a\\AppData\\Local\\Temp\\keep;\

@@ -11,6 +11,12 @@ export struct DriveRow { name: string, pct: int, used: string, free: string, rep
 export struct ImageRow { name: string, path: string, size: string, when: string }
 export struct RunRow { id: int, name: string, pct: int, current: string, cancellable: bool, kind: string }
 export struct GlobalFileRow { filename: string, rel-path: string, repo: string, snapshot-id: string, versions: string, info: string }
+// '찾아보기' 결과 전달: 선택 창은 별도 스레드에서 열고, 끝나면 앱이 target 이 같은 PathField 에 값을 넣는다(seq 증가로 알림).
+export global PickBus {
+    in-out property <int> seq;
+    in-out property <string> target;
+    in-out property <string> value;
+}
 
 global Theme {
     in-out property <bool> dark: true;
@@ -143,17 +149,19 @@ component PathField inherits HorizontalLayout {
     in property <string> placeholder;
     in property <string> kind: "folder";
     in property <bool> append: false;
-    callback pick(string) -> string;
+    in property <string> target;
+    callback pick(string, string);
+    property <int> bus-seq: PickBus.seq;
+    changed bus-seq => {
+        if (root.target != "" && PickBus.target == root.target) {
+            f.text = (root.append && f.text != "") ? f.text + ";" + PickBus.value : PickBus.value;
+        }
+    }
     spacing: 8px;
     f := Field { placeholder: root.placeholder; horizontal-stretch: 1; }
     Btn {
         text: "찾아보기";
-        clicked => {
-            let r = root.pick(root.kind);
-            if (r != "") {
-                f.text = (root.append && f.text != "") ? f.text + ";" + r : r;
-            }
-        }
+        clicked => { root.pick(root.kind, root.target); }
     }
 }
 
@@ -538,7 +546,7 @@ export component MainWindow inherits Window {
     in property <int> browse-selected;
     in property <[BrowseRow]> browse-items;
     in property <string> restore-text;
-    callback browse(string) -> string;
+    callback browse(string, string);
     callback make-diag();
     in property <string> diag-text;
     callback save-profile(string, string, string, string, string, string, bool, bool, string, string, string, string);
@@ -1269,7 +1277,7 @@ export component MainWindow inherits Window {
                             HorizontalLayout {
                                 alignment: start;
                                 spacing: 8px;
-                                Btn { text: "📁 + 폴더 추가"; kind: 1; clicked => { root.form-add(root.browse("folders")); } }
+                                Btn { text: "📁 + 폴더 추가"; kind: 1; clicked => { root.browse("folders", "form-add"); } }
                                 Btn { text: "💻 + 프로그램 추가"; kind: 1; clicked => { root.prog-open(); } }
                                 if root.form-missing > 0: Btn { text: "없는 항목 " + root.form-missing + "개 정리"; kind: 2; clicked => { root.form-clean(); } }
                             }
@@ -1308,7 +1316,7 @@ export component MainWindow inherits Window {
                                 }
                             }
 
-                            PathField { text <=> root.form-repo; placeholder: "백업 저장소 대상 폴더 전체 경로"; pick(k) => { root.browse(k) } }
+                            PathField { text <=> root.form-repo; target: "form-repo"; placeholder: "백업 저장소 대상 폴더 전체 경로"; pick(k, t) => { root.browse(k, t); } }
 
                             // Schedule Settings
                             Card {
@@ -1485,7 +1493,7 @@ export component MainWindow inherits Window {
                             }
                         }
                         if root.restore-orig: Hint { text: "백업했던 원래 경로로 파일을 복원합니다. 동일한 파일이 존재하는 경우 덮어쓰기 전에 최종 확인합니다."; }
-                        if !root.restore-orig: PathField { text <=> root.restore-folder; placeholder: "복원할 파일을 안전하게 보관할 새 폴더 경로"; pick(k) => { root.browse(k) } }
+                        if !root.restore-orig: PathField { text <=> root.restore-folder; target: "restore-folder"; placeholder: "복원할 파일을 안전하게 보관할 새 폴더 경로"; pick(k, t) => { root.browse(k, t); } }
                     }
                 }
 
@@ -2227,7 +2235,7 @@ export component MainWindow inherits Window {
                                 for o in root.offsite-rows: HorizontalLayout {
                                     spacing: 8px;
                                     Text { text: o.name; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; wrap: word-wrap; }
-                                    le := PathField { text: o.dir; placeholder: "예: E:\\백업복사본"; horizontal-stretch: 1; pick(k) => { root.browse(k) } }
+                                    le := PathField { text: o.dir; target: "offsite:" + o.id; placeholder: "예: E:\\백업복사본"; horizontal-stretch: 1; pick(k, t) => { root.browse(k, t); } }
                                     Btn { text: "저장"; kind: 1; clicked => { root.save-offsite(o.id, le.text); } }
                                 }
                                 HorizontalLayout {
