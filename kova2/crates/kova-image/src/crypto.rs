@@ -189,6 +189,11 @@ pub fn decrypt_stream<R: Read, W: Write>(
     Ok(total)
 }
 
+/// 출력 파일을 새로 만든다. 이미 있으면 덮어쓰지 않고 오류(기존 파일은 그대로 둔다).
+fn create_new(p: &Path) -> io::Result<File> {
+    fs::OpenOptions::new().write(true).create_new(true).open(p)
+}
+
 /// 파일 단위 암호화. 실패·취소 시 불완전한 출력 파일을 삭제한다.
 pub fn encrypt_file(
     src_path: &Path,
@@ -197,7 +202,7 @@ pub fn encrypt_file(
     cancel: &AtomicBool,
 ) -> Result<u64, ImageCryptoError> {
     let r = BufReader::with_capacity(DEFAULT_ENC_CHUNK, File::open(src_path)?);
-    let w = BufWriter::with_capacity(DEFAULT_ENC_CHUNK, File::create(dst_path)?);
+    let w = BufWriter::with_capacity(DEFAULT_ENC_CHUNK, create_new(dst_path)?);
     match encrypt_stream(r, w, key, DEFAULT_ENC_CHUNK, cancel) {
         Ok(n) => Ok(n),
         Err(e) => {
@@ -215,7 +220,7 @@ pub fn decrypt_file(
     cancel: &AtomicBool,
 ) -> Result<u64, ImageCryptoError> {
     let r = BufReader::with_capacity(DEFAULT_ENC_CHUNK, File::open(src_path)?);
-    let w = BufWriter::with_capacity(DEFAULT_ENC_CHUNK, File::create(dst_path)?);
+    let w = BufWriter::with_capacity(DEFAULT_ENC_CHUNK, create_new(dst_path)?);
     match decrypt_stream(r, w, key, cancel) {
         Ok(n) => Ok(n),
         Err(e) => {
@@ -299,5 +304,18 @@ mod tests {
         assert!(is_encrypted_image(&enc));
         decrypt_file(&enc, &dec, &key, &no).unwrap();
         assert_eq!(fs::read(&dec).unwrap(), payload);
+    }
+
+    #[test]
+    fn existing_output_is_never_overwritten_or_deleted() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("a.qblk");
+        let dst = d.path().join("a.qblk.enc");
+        fs::write(&src, b"QBLKSTRM-data").unwrap();
+        fs::write(&dst, b"keep me").unwrap();
+        let no = AtomicBool::new(false);
+        assert!(encrypt_file(&src, &dst, &[1u8; 32], &no).is_err());
+        assert!(decrypt_file(&src, &dst, &[1u8; 32], &no).is_err());
+        assert_eq!(fs::read(&dst).unwrap(), b"keep me");
     }
 }

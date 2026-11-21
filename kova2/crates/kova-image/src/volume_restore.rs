@@ -124,14 +124,37 @@ pub fn restore_verified<W: Write + Seek, F: FnOnce(&Header) -> Result<W, VolumeE
     cancel: &AtomicBool,
     progress: &dyn Fn(&Stats),
 ) -> Result<(Header, Stats), VolumeError> {
-    let (header, _) = verify(
-        BufReader::with_capacity(8 << 20, File::open(image)?),
-        cancel,
-        &|_| {},
-    )?;
+    // 검증·복원에 같은 핸들을 쓴다: 검증 뒤 파일이 바뀌는 틈을 없애고, 이미지가 대상 볼륨에 있으면
+    // 열린 핸들 때문에 잠금이 실패해(마운트 해제 전에) 중단된다.
+    let mut f = File::open(image)?;
+    let (header, _) = verify(BufReader::with_capacity(8 << 20, &f), cancel, &|_| {})?;
+    f.rewind()?;
     let mut dev = open(&header)?;
-    let src = BufReader::with_capacity(8 << 20, File::open(image)?);
+    let src = BufReader::with_capacity(8 << 20, &f);
     Ok(restore_to(src, &mut dev, cancel, progress)?)
+}
+
+/// `\\?\E:\x` → `E:\x`, `\\?\UNC\srv\s` → `\\srv\s` (canonicalize 결과를 드라이브 문자로 비교할 수 있게).
+fn normalize_path(s: &str) -> String {
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s.to_string()
+    }
+}
+
+/// 정규화한 경로의 드라이브 문자(대문자). UNC·상대 경로는 None.
+fn drive_letter_of(p: &Path) -> Option<char> {
+    let s = normalize_path(&p.to_string_lossy());
+    let b = s.as_bytes();
+    (b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic())
+        .then(|| (b[0] as char).to_ascii_uppercase())
+}
+
+fn is_unc(p: &Path) -> bool {
+    normalize_path(&p.to_string_lossy()).starts_with(r"\\")
 }
 
 #[cfg(windows)]
@@ -165,6 +188,8 @@ mod win {
             fs_len: u32,
         ) -> i32;
         fn GetDriveTypeW(root: *const u16) -> u32;
+        fn GetVolumePathNameW(file: *const u16, out: *mut u16, len: u32) -> i32;
+        fn GetVolumeNameForVolumeMountPointW(mp: *const u16, out: *mut u16, len: u32) -> i32;
     }
     const FSCTL_LOCK_VOLUME: u32 = 0x00090018;
     const FSCTL_DISMOUNT_VOLUME: u32 = 0x00090020;
@@ -231,11 +256,66 @@ mod win {
         })
     }
 
-    fn drive_letter_of(p: &Path) -> Option<char> {
-        let s = p.to_string_lossy();
-        let b = s.as_bytes();
-        (b.len() >= 2 && b[1] == b':' && b[0].is_ascii_alphabetic())
-            .then(|| (b[0] as char).to_ascii_uppercase())
+    fn from_wide(buf: &[u16]) -> String {
+        let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+        String::from_utf16_lossy(&buf[..n])
+    }
+
+    /// 마운트 지점(`E:\` 또는 폴더 마운트)의 볼륨 GUID 경로(`\\?\Volume{..}\`).
+    fn guid_of_mount_point(mp: &str) -> Option<String> {
+        let w = wide(mp);
+        let mut out = [0u16; 128];
+        let ok = unsafe {
+            GetVolumeNameForVolumeMountPointW(w.as_ptr(), out.as_mut_ptr(), out.len() as u32)
+        };
+        (ok != 0).then(|| from_wide(&out).to_ascii_uppercase())
+    }
+
+    /// 파일이 실제로 들어 있는 볼륨의 GUID. 링크·폴더 마운트를 따라간다(canonicalize → GetVolumePathName).
+    pub(super) fn volume_guid_of(p: &Path) -> Option<String> {
+        let c = std::fs::canonicalize(p).ok()?;
+        let w = wide(&c.to_string_lossy());
+        let mut out = [0u16; 1024];
+        let ok = unsafe { GetVolumePathNameW(w.as_ptr(), out.as_mut_ptr(), out.len() as u32) };
+        if ok == 0 {
+            return None;
+        }
+        let mut mp = normalize_path(&from_wide(&out));
+        if !mp.ends_with('\\') {
+            mp.push('\\');
+        }
+        guid_of_mount_point(&mp)
+    }
+
+    /// 대상 볼륨이 이미지·실행 파일이 실제로 있는 볼륨과 같은지 GUID로 확인한다(문자 비교로 못 잡는 폴더 마운트·링크 대비).
+    fn check_not_source_volume(letter: char, image: &Path) -> Result<(), VolumeError> {
+        let target = guid_of_mount_point(&format!("{letter}:\\")).ok_or_else(|| {
+            VolumeError::Refused(format!("{letter}: 의 볼륨 ID를 확인할 수 없음"))
+        })?;
+        match volume_guid_of(image) {
+            Some(g) if g == target => {
+                return Err(VolumeError::Refused(format!(
+                    "이미지가 대상 볼륨 {letter}: 안에 있음"
+                )))
+            }
+            None if !is_unc(image) => {
+                return Err(VolumeError::Refused(
+                    "이미지가 있는 볼륨을 확인할 수 없음".into(),
+                ))
+            }
+            _ => {}
+        }
+        if let Some(g) = std::env::current_exe()
+            .ok()
+            .and_then(|e| volume_guid_of(&e))
+        {
+            if g == target {
+                return Err(VolumeError::Refused(format!(
+                    "실행 중인 프로그램이 대상 볼륨 {letter}: 에 있음"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// `letter` 볼륨에 image 를 직접 쓴다. `typed` 는 `confirmation_phrase(volume_info(letter))` 와 같아야 한다.
@@ -256,16 +336,20 @@ mod win {
                     .and_then(|s| s.chars().next())
                     .unwrap_or('C');
                 let mut prot: Vec<char> = protected.to_vec();
-                prot.extend(drive_letter_of(image));
+                // 상대 경로·`\\?\` 경로도 잡히게 실제 경로로 바꾼 뒤 드라이브 문자를 본다
+                let real = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+                prot.extend(drive_letter_of(&real(image)));
                 prot.extend(
                     std::env::current_exe()
                         .ok()
+                        .map(|e| real(&e))
                         .as_deref()
                         .and_then(drive_letter_of),
                 );
                 // 문자만으로 거부할 수 있는 건 장치를 열기 전에 거부한다
                 check_letter(letter, system, &prot)?;
                 let info = volume_info(letter)?;
+                check_not_source_volume(info.letter, image)?;
                 let dev_path = format!(r"\\.\{}:", info.letter);
                 // 크기·확인 문구를 통과하기 전에는 쓰기 권한 핸들을 만들지 않는다(읽기 전용으로 크기만 조회)
                 let probe = OpenOptionsExt::share_mode(
@@ -370,6 +454,37 @@ mod tests {
                 "{l} {sys} {prot:?} {size}"
             );
         }
+    }
+
+    #[test]
+    fn protected_paths_are_normalized_before_taking_the_drive_letter() {
+        for (p, want) in [
+            (r"E:\images\a.qblk", Some('E')),
+            (r"e:\a.qblk", Some('E')),
+            (r"\\?\E:\images\a.qblk", Some('E')),
+            (r"\\?\d:\x", Some('D')),
+            (r"\\?\UNC\srv\share\a.qblk", None),
+            (r"\\srv\share\a.qblk", None),
+            (r"images\a.qblk", None),
+        ] {
+            assert_eq!(drive_letter_of(Path::new(p)), want, "{p}");
+        }
+        assert!(is_unc(Path::new(r"\\?\UNC\srv\share\a")));
+        assert!(is_unc(Path::new(r"\\srv\share\a")));
+        assert!(!is_unc(Path::new(r"\\?\E:\a")));
+        assert_eq!(normalize_path(r"\\?\UNC\srv\s\a"), r"\\srv\s\a");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn file_volume_guid_matches_its_drive_root() {
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("x.qblk");
+        fs::write(&f, b"x").unwrap();
+        let l = drive_letter_of(&fs::canonicalize(&f).unwrap()).unwrap();
+        let g = win::volume_guid_of(&f).expect("볼륨 GUID");
+        assert!(g.starts_with(r"\\?\VOLUME{"), "{g}");
+        assert_eq!(Some(g), win::volume_guid_of(Path::new(&format!("{l}:\\"))));
     }
 
     #[test]
