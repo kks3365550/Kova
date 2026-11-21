@@ -377,6 +377,80 @@ impl DriveClient {
         self.workers = n.clamp(1, 16);
     }
 
+    /// 드라이브 저장 용량: (한도 바이트, 사용 바이트). 한도가 없는 계정이면 한도는 None.
+    pub fn storage_quota(&self) -> Result<(Option<u64>, u64), String> {
+        let url = format!("{}/about", self.ep.api);
+        let resp = self.call(|a, t| {
+            a.get(&url)
+                .set("Authorization", &format!("Bearer {t}"))
+                .query("fields", "storageQuota")
+                .call()
+        })?;
+        let v: serde_json::Value =
+            serde_json::from_str(&resp.into_string().map_err(|e| e.to_string())?)
+                .map_err(|e| format!("용량 응답 오류: {e}"))?;
+        let q = &v["storageQuota"];
+        let num = |k: &str| q[k].as_str().and_then(|s| s.parse::<u64>().ok());
+        Ok((num("limit"), num("usage").unwrap_or(0)))
+    }
+
+    fn trash_id(&self, id: &str) -> Result<(), String> {
+        let url = format!("{}/files/{id}", self.ep.api);
+        self.call(|a, t| {
+            a.request("PATCH", &url)
+                .set("Authorization", &format!("Bearer {t}"))
+                .set("Content-Type", "application/json")
+                .send_string(r#"{"trashed":true}"#)
+        })?;
+        Ok(())
+    }
+
+    /// 안쪽 파일부터 하나씩 휴지통으로 보낸 뒤 폴더를 보낸다(폴더째 보내기는 드라이브가 403 으로 거절한다).
+    fn trash_tree(&mut self, id: &str) -> Result<(), String> {
+        let kids: Vec<Entry> = self.list(id)?.values().cloned().collect();
+        for k in kids {
+            if k.folder {
+                self.trash_tree(&k.id)?;
+            } else {
+                self.trash_id(&k.id)?;
+            }
+        }
+        self.trash_id(id)
+    }
+
+    fn find_folder(&mut self, path: &[&str]) -> Result<Option<String>, String> {
+        let mut parent = "root".to_string();
+        for name in path {
+            match self.list(&parent)?.get(*name).filter(|e| e.folder).cloned() {
+                Some(e) => parent = e.id,
+                None => return Ok(None),
+            }
+        }
+        Ok(Some(parent))
+    }
+
+    /// 폴더(경로) 바로 아래 하위 폴더 이름들.
+    pub fn child_folder_names(&mut self, path: &[&str]) -> Result<Vec<String>, String> {
+        let Some(id) = self.find_folder(path)? else {
+            return Ok(Vec::new());
+        };
+        Ok(self
+            .list(&id)?
+            .iter()
+            .filter(|(_, e)| e.folder)
+            .map(|(n, _)| n.clone())
+            .collect())
+    }
+
+    /// Kova2 가 만든 폴더(경로)를 내용째 휴지통으로 보낸다(시험 자료 정리용). 없으면 false.
+    pub fn trash_path(&mut self, path: &[&str]) -> Result<bool, String> {
+        let Some(id) = self.find_folder(path)? else {
+            return Ok(false);
+        };
+        self.trash_tree(&id)?;
+        Ok(true)
+    }
+
     /// 토큰 잠금을 쥔 채로 갱신한다(여러 작업자가 동시에 갱신하거나 토큰 파일을 덮어쓰지 않게).
     fn refresh_locked(&self, tok: &mut Token) -> Result<(), String> {
         let r = self.agent.post(&self.ep.token).send_form(&[
