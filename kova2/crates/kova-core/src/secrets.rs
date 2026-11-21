@@ -147,6 +147,25 @@ pub fn write_private(path: &Path, data: &[u8]) -> Result<(), String> {
     })
 }
 
+/// 시작할 때마다 `setup` 을 부르는 전용 스레드 풀 안에서 `f` 를 돌린다(그 안의 병렬 작업도 이 풀에서 돈다).
+/// 서비스가 복원 파일 쓰기를 요청한 사용자 권한(가장)으로 하게 할 때 쓴다. `setup` 이 false 면 그 스레드가
+/// 서비스(SYSTEM) 권한으로 일하는 일이 없도록 프로세스를 즉시 끝낸다(장애 재시작 설정으로 다시 뜬다).
+pub fn run_in_setup_pool<R: Send>(
+    setup: impl Fn() -> bool + Send + Sync + 'static,
+    f: impl FnOnce() -> R + Send,
+) -> Result<R, String> {
+    let pool = rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("kova-as-caller-{i}"))
+        .start_handler(move |_| {
+            if !setup() {
+                std::process::abort();
+            }
+        })
+        .build()
+        .map_err(|e| format!("작업 스레드 풀 만들기 실패: {e}"))?;
+    Ok(pool.install(f))
+}
+
 /// 서비스 시작 시: 이전 버전이 남긴 토큰 파일·키 폴더를 제한 ACL 로 옮긴다(내용은 그대로라 업그레이드 뒤에도 읽힌다).
 /// 돌려주는 문구에는 경로만 있다.
 pub fn migrate(config_dir: &Path) -> Vec<Result<String, String>> {
@@ -179,6 +198,23 @@ mod tests {
         let e = fs::read(&f).unwrap_err();
         assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied);
         fs::remove_file(&f).unwrap();
+    }
+
+    /// 풀 안의 병렬 작업은 모두 setup 을 거친 스레드에서 돈다.
+    #[test]
+    fn setup_pool_runs_all_parallel_work_on_prepared_threads() {
+        use rayon::prelude::*;
+        thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        let all = run_in_setup_pool(
+            || {
+                READY.with(|r| r.set(true));
+                true
+            },
+            || (0..2000).into_par_iter().all(|_| READY.with(|r| r.get())),
+        )
+        .unwrap();
+        assert!(all);
+        assert!(!READY.with(|r| r.get()), "호출한 스레드는 바뀌지 않는다");
     }
 
     /// 일반 권한 프로세스에서는 harden 이 아무것도 바꾸지 않고, write_private 는 그대로 쓴다.

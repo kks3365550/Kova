@@ -158,7 +158,58 @@ pub(crate) mod dpapi {
 fn store_key(repo_id: &str, key: &[u8; 32]) -> Result<(), String> {
     let enc = dpapi::protect(key)?;
     fs::create_dir_all(key_dir()).map_err(|e| format!("키 폴더 만들기: {e}"))?;
+    // 키 폴더를 SYSTEM·Administrators 전용으로 잠근 뒤 쓴다(새 키 파일은 이 제한을 상속한다. 서비스에서만 적용)
+    crate::secrets::harden(&key_dir()).map_err(|e| format!("키 폴더 접근 제한: {e}"))?;
     fs::write(key_file(repo_id), enc).map_err(|e| format!("키 저장: {e}"))
+}
+
+/// 서비스가 사용자를 가장(impersonate)해 복원하는 동안 쓸 키(가장 중에는 키 파일을 열 수 없다).
+/// 저장소 ID → (키, 잡고 있는 수). `hold_key` 가 넣고 `KeyHold` 가 놓을 때 뺀다.
+type HeldKeys = std::collections::HashMap<String, ([u8; 32], usize)>;
+static HELD: std::sync::Mutex<Option<HeldKeys>> = std::sync::Mutex::new(None);
+
+/// 키를 미리 읽어 메모리에 잡아 둔다(SYSTEM 으로 부른다). 돌려준 값이 살아 있는 동안 이 저장소의 키 제공자는
+/// 키 파일 대신 이 키를 쓴다.
+pub struct KeyHold(String);
+
+pub fn hold_key(repo: &Path) -> Result<KeyHold, String> {
+    let m = read_marker(repo)?;
+    let key = load_key(repo)?;
+    let mut g = HELD.lock().unwrap();
+    let e = g
+        .get_or_insert_with(Default::default)
+        .entry(m.repo_id.clone())
+        .or_insert((key, 0));
+    e.1 += 1;
+    Ok(KeyHold(m.repo_id))
+}
+
+impl Drop for KeyHold {
+    fn drop(&mut self) {
+        let mut g = HELD.lock().unwrap();
+        if let Some(map) = g.as_mut() {
+            if let Some(e) = map.get_mut(&self.0) {
+                e.1 -= 1;
+                if e.1 == 0 {
+                    map.remove(&self.0);
+                }
+            }
+        }
+    }
+}
+
+/// 키 제공자용: 잡아 둔 키가 이 저장소 표식과 맞으면 그것을, 아니면 키 파일을 읽는다.
+fn key_for(repo: &Path) -> Result<[u8; 32], String> {
+    let m = read_marker(repo)?;
+    let held = HELD
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|map| map.get(&m.repo_id).map(|e| e.0));
+    match held {
+        Some(k) if key_check(&k) == m.key_check => Ok(k),
+        _ => load_key(repo),
+    }
 }
 
 fn load_key(repo: &Path) -> Result<[u8; 32], String> {
@@ -357,12 +408,96 @@ pub fn write_recovery_kit(path: &Path, entries: &[(String, String, String)]) -> 
     fs::write(path, body).map_err(|e| format!("복구 키트 저장 실패: {e}"))
 }
 
-/// 엔진이 암호화 저장소를 열 때 쓸 키 제공자를 등록한다(여러 번 호출해도 된다).
+/// 엔진이 암호화 저장소를 열 때 쓸 키 제공자를 등록한다(여러 번 호출해도 된다). 서비스용.
 pub fn install_provider() {
     codec::set_provider(Arc::new(|repo: &Path| {
-        let key = load_key(repo)?;
+        let key = key_for(repo)?;
         Ok(Arc::new(EngineCodec(CryptoEngine::new(&key))) as Arc<dyn BlobCodec>)
     }));
+}
+
+/// 일반 권한 앱용: 키 파일을 읽지 않는다. 암호화 저장소도 열 수 있어 매니페스트(목록·탐색·검색)는 보이지만,
+/// 블롭을 읽고 쓰는 일(복원·훈련)은 실패하므로 서비스에 맡겨야 한다.
+pub const SERVICE_ONLY: &str =
+    "암호화된 저장소의 내용은 Kova 서비스가 읽습니다(복원·복구 훈련은 서비스에 요청하세요)";
+
+struct ServiceOnlyCodec;
+
+impl BlobCodec for ServiceOnlyCodec {
+    fn encode(&self, _: &[u8], _: &str, _: i32) -> Result<Vec<u8>, String> {
+        Err(SERVICE_ONLY.into())
+    }
+    fn decode(&self, _: &[u8], _: &str) -> Result<Vec<u8>, String> {
+        Err(SERVICE_ONLY.into())
+    }
+}
+
+pub fn install_service_only_provider() {
+    codec::set_provider(Arc::new(|_: &Path| {
+        Ok(Arc::new(ServiceOnlyCodec) as Arc<dyn BlobCodec>)
+    }));
+}
+
+/// 프로파일 저장소마다 암호화를 켠다(서비스가 실행). 새로 켠 곳의 "이름 복구 코드: …" 줄을 돌려준다.
+/// 하나라도 실패하면 오류(이미 켠 저장소는 다시 불러도 건너뛴다).
+pub fn enable_all(store: &crate::config::ConfigStore) -> Result<Vec<String>, String> {
+    let mut codes = Vec::new();
+    let mut done = std::collections::HashSet::new();
+    for p in store.profiles() {
+        if p.repo_dir.is_empty() || !done.insert(p.repo_dir.clone()) {
+            continue;
+        }
+        match enable(Path::new(&p.repo_dir)) {
+            Ok(Some(code)) => codes.push(format!("{} 복구 코드: {}", p.name, code)),
+            Ok(None) => {}
+            Err(e) => return Err(format!("{} 저장소 암호화 실패: {}", p.name, e)),
+        }
+    }
+    Ok(codes)
+}
+
+/// 복구 코드로 이 PC의 키 파일을 다시 만든다. 암호화된 프로파일 저장소 중 코드가 맞는 곳마다 복원한다(서비스가 실행).
+pub fn restore_keys(store: &crate::config::ConfigStore, code: &str) -> Result<String, String> {
+    let mut ok = 0;
+    let mut seen = std::collections::HashSet::new();
+    for p in store.profiles() {
+        let repo = Path::new(&p.repo_dir);
+        if p.repo_dir.is_empty() || !seen.insert(p.repo_dir.clone()) || !is_enabled(repo) {
+            continue;
+        }
+        if restore_key(repo, code).is_ok() {
+            ok += 1;
+        }
+    }
+    if ok == 0 {
+        Err("맞는 암호화 저장소를 찾지 못했습니다. 코드를 다시 확인하고, 저장소 드라이브가 연결돼 있는지 보세요".into())
+    } else {
+        Ok(format!("키를 복원했습니다 (저장소 {ok}곳)"))
+    }
+}
+
+/// 이 PC에 키가 있는 암호화 저장소들의 `(프로파일 이름, 저장소 경로, 복구 코드)`(서비스가 관리자 요청에만 실행).
+pub fn recovery_entries(
+    store: &crate::config::ConfigStore,
+) -> Result<Vec<(String, String, String)>, String> {
+    let mut entries = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for p in store.profiles() {
+        if p.repo_dir.is_empty() || !seen.insert(p.repo_dir.clone()) {
+            continue;
+        }
+        let repo = Path::new(&p.repo_dir);
+        if !is_enabled(repo) {
+            continue;
+        }
+        let code =
+            export_recovery_code(repo).map_err(|e| format!("{} 키 읽기 실패: {e}", p.name))?;
+        entries.push((p.name, p.repo_dir, code));
+    }
+    if entries.is_empty() {
+        return Err("암호화된 저장소가 없습니다. 먼저 저장소 암호화를 켜고 저장하세요".into());
+    }
+    Ok(entries)
 }
 
 #[cfg(test)]
@@ -500,6 +635,87 @@ mod tests {
             .unwrap()
             .flatten()
             .any(|e| e.file_name().to_string_lossy().ends_with(".tmp")));
+    }
+
+    /// (앱 시험에서 옮김) 복구 코드는 맞는 저장소의 키만 되살리고, 복구 키트에 담긴다. 암호화 켜기는 프로파일 저장소마다 한 번.
+    #[test]
+    fn restore_keys_rebuilds_the_key_file_only_for_the_matching_repo() {
+        let _g = TEST_KEY_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let base = tempfile::tempdir().unwrap();
+        let keys = base.path().join("keys");
+        fs::create_dir_all(&keys).unwrap();
+        std::env::set_var("KOVA2_KEY_DIR", &keys);
+        let repo = base.path().join("repo");
+        let store = crate::config::ConfigStore::new(base.path().join("cfg"));
+        let mut p = crate::config::Profile::new("p1", "시험");
+        p.repo_dir = repo.to_string_lossy().into();
+        store.upsert(p).unwrap();
+        assert!(
+            recovery_entries(&store).is_err(),
+            "암호화 전에는 내보낼 것이 없다"
+        );
+        let codes = enable_all(&store).unwrap();
+        assert_eq!(codes.len(), 1);
+        assert!(codes[0].starts_with("시험 복구 코드: "));
+        let code = codes[0]["시험 복구 코드: ".len()..].to_string();
+        assert!(
+            enable_all(&store).unwrap().is_empty(),
+            "이미 켠 저장소는 건너뜀"
+        );
+        for f in fs::read_dir(&keys).unwrap() {
+            fs::remove_file(f.unwrap().path()).unwrap();
+        }
+        assert!(restore_keys(&store, "00000000").is_err());
+        assert!(restore_keys(&store, &code).is_ok());
+        assert_eq!(fs::read_dir(&keys).unwrap().count(), 1);
+        let entries = recovery_entries(&store).unwrap();
+        let kit = base.path().join("kit.txt");
+        write_recovery_kit(&kit, &entries).unwrap();
+        let kit_body = fs::read_to_string(&kit).unwrap();
+        assert!(kit_body.contains(&code) && kit_body.contains("시험"));
+    }
+
+    /// 서비스가 사용자를 가장하는 동안(키 파일을 못 여는 상황)에는 잡아 둔 키로 열고, 놓으면 다시 키 파일이 필요하다.
+    #[test]
+    fn held_key_opens_repo_without_key_file_until_released() {
+        let _g = TEST_KEY_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let keys = tempfile::tempdir().unwrap();
+        std::env::set_var("KOVA2_KEY_DIR", keys.path());
+        install_provider();
+        let src = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        fs::write(src.path().join("a.txt"), "held").unwrap();
+        let code = enable(repo.path()).unwrap().unwrap();
+        backup(src.path(), repo.path());
+        let hold = hold_key(repo.path()).unwrap();
+        let hold2 = hold_key(repo.path()).unwrap();
+        for f in fs::read_dir(keys.path()).unwrap() {
+            fs::remove_file(f.unwrap().path()).unwrap();
+        }
+        let out = tempfile::tempdir().unwrap();
+        restore(repo.path(), out.path());
+        assert_eq!(find_restored(out.path(), "a.txt"), "held");
+        drop(hold);
+        assert!(
+            kova_engine::storage::CasStorage::new(repo.path()).is_ok(),
+            "아직 하나 잡혀 있음"
+        );
+        drop(hold2);
+        assert!(kova_engine::storage::CasStorage::new(repo.path()).is_err());
+        restore_key(repo.path(), &code).unwrap();
+        assert!(kova_engine::storage::CasStorage::new(repo.path()).is_ok());
+    }
+
+    #[test]
+    fn service_only_codec_never_reads_or_writes_blobs() {
+        assert_eq!(
+            ServiceOnlyCodec.decode(b"x", "h").unwrap_err(),
+            SERVICE_ONLY
+        );
+        assert_eq!(
+            ServiceOnlyCodec.encode(b"x", "h", 3).unwrap_err(),
+            SERVICE_ONLY
+        );
     }
 
     #[test]
