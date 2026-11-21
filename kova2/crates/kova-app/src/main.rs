@@ -55,7 +55,10 @@ const DEFAULT_EXCLUDES: &str =
     "*.tmp;*.temp;~$*;Thumbs.db;desktop.ini;$RECYCLE.BIN;node_modules;__pycache__;.venv";
 
 /// 마법사: 이름·보존 기본값으로 프로파일을 만들고 매일 02:00 자동 백업을 켠 뒤 바로 한 번 백업한다.
-fn quick_start(srcs: &str, repo: &str) -> Result<String, String> {
+fn quick_start(weak: slint::Weak<MainWindow>, srcs: &str, repo: &str) -> Result<String, String> {
+    if app_locked() {
+        return Err(LOCKED_MSG.into());
+    }
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
     let all = store.profiles();
     let id = format!(
@@ -73,7 +76,7 @@ fn quick_start(srcs: &str, repo: &str) -> Result<String, String> {
     store
         .upsert(p.clone())
         .map_err(|e| format!("저장 실패: {e}"))?;
-    send("backup", p.id.clone());
+    send(weak, "backup", p.id.clone());
     Ok(p.id)
 }
 
@@ -422,17 +425,22 @@ fn offsite_rows() -> Vec<OffsiteRow> {
 }
 
 /// 해당 프로파일의 오프사이트 폴더만 바꾼다(다른 필드는 최신 파일을 다시 읽어 보존). 빈 값이면 설정을 지운다.
-fn save_offsite(id: &str, dir: &str) {
+fn save_offsite(id: &str, dir: &str) -> Result<String, String> {
     let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-    if let Some(mut p) = store.get(id) {
-        let dir = dir.trim();
-        if dir.is_empty() {
-            p.extra.remove("offsite_dir");
-        } else {
-            p.extra.insert("offsite_dir".into(), dir.into());
-        }
-        let _ = store.upsert(p);
+    let Some(mut p) = store.get(id) else {
+        return Err("없는 프로파일입니다".into());
+    };
+    let dir = dir.trim();
+    if dir.is_empty() {
+        p.extra.remove("offsite_dir");
+    } else {
+        p.extra.insert("offsite_dir".into(), dir.into());
     }
+    let name = p.name.clone();
+    store
+        .upsert(p)
+        .map(|()| format!("오프사이트 폴더를 저장했습니다: {name}"))
+        .map_err(|e| format!("오프사이트 폴더 저장 실패: {e}"))
 }
 
 /// 기본 브라우저로 주소를 연다(셸 해석 없이 rundll32 사용).
@@ -472,6 +480,14 @@ fn profile_name(id: &str) -> String {
         .unwrap_or_else(|| id.to_string())
 }
 
+/// 이력 DB 가 이미 있을 때만 연다(조회만 하므로 없는 저장소 폴더·DB 를 새로 만들지 않는다).
+fn open_history_if_exists(repo: &std::path::Path) -> Option<kova_core::history::History> {
+    if !repo.join("metadata.db").is_file() {
+        return None;
+    }
+    kova_core::history::History::open(repo).ok()
+}
+
 /// 프로파일 ID, 저장소 경로, 스냅샷 ID, 또는 "default"로부터 올바른 프로파일 ID를 찾는다.
 fn resolve_profile_id(store: &kova_core::config::ConfigStore, target: &str) -> Option<String> {
     let t = target.trim();
@@ -502,7 +518,7 @@ fn resolve_profile_id(store: &kova_core::config::ConfigStore, target: &str) -> O
                     }
                 }
             }
-            if let Ok(h) = kova_core::history::History::open(&repo) {
+            if let Some(h) = open_history_if_exists(&repo) {
                 if let Ok(snaps) = h.list_snapshots() {
                     if let Some(s) = snaps.iter().find(|s| s.id == t) {
                         if !s.profile_id.is_empty() && store.get(&s.profile_id).is_some() {
@@ -513,7 +529,7 @@ fn resolve_profile_id(store: &kova_core::config::ConfigStore, target: &str) -> O
             }
             return Some(p.id.clone());
         }
-        if let Ok(h) = kova_core::history::History::open(&repo) {
+        if let Some(h) = open_history_if_exists(&repo) {
             if let Ok(snaps) = h.list_snapshots() {
                 if let Some(s) = snaps.iter().find(|s| s.id == t) {
                     if !s.profile_id.is_empty() && store.get(&s.profile_id).is_some() {
@@ -529,6 +545,21 @@ fn resolve_profile_id(store: &kova_core::config::ConfigStore, target: &str) -> O
         return profiles.first().map(|p| p.id.clone());
     }
     None
+}
+
+/// 저장소 정리 버튼이 넘긴 값(프로파일 ID, 저장소 경로, 빈 값=첫 프로파일)을 실제 프로파일 ID로 바꾼다.
+/// 잠겨 있거나 해당 프로파일이 없으면 서비스에 보내지 않고 이유를 돌려준다.
+fn gc_target(
+    locked: bool,
+    store: &kova_core::config::ConfigStore,
+    target: &str,
+) -> Result<String, String> {
+    if locked {
+        return Err(LOCKED_MSG.into());
+    }
+    resolve_profile_id(store, target).ok_or_else(|| {
+        "정리할 백업 프로파일을 찾지 못했습니다. 먼저 홈에서 백업을 설정하세요".to_string()
+    })
 }
 
 /// 이벤트 하나를 진행 중 목록에 반영한다. 완료 이벤트인 경우 완료된 작업의 RunInfo를 반환한다.
@@ -588,7 +619,17 @@ fn cancel_job(id: i32) {
 
 /// 이번 실행에서 마스터 비밀번호로 잠금을 푼 상태인가.
 static UNLOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-const LOCKED_MSG: &str = "마스터 비밀번호로 잠겨 있습니다. 설정 화면에서 잠금을 먼저 해제하세요";
+const LOCKED_MSG: &str =
+    "마스터 비밀번호로 잠겨 있습니다. 환경설정 > '보안 & 보호' 탭에서 잠금을 먼저 해제하세요";
+
+/// 구글 드라이브 로그인·연결 해제가 진행 중이면 true(중복 클릭 방지).
+static GDRIVE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 꺼져 있으면 켜고 true, 이미 켜져 있으면(진행 중) false.
+fn try_begin(flag: &std::sync::atomic::AtomicBool) -> bool {
+    use std::sync::atomic::Ordering::SeqCst;
+    flag.compare_exchange(false, true, SeqCst, SeqCst).is_ok()
+}
 
 /// 마스터 비밀번호가 설정돼 있고 아직 풀지 않았으면 true.
 fn app_locked() -> bool {
@@ -1279,6 +1320,14 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                     }
                 }
                 let (alerts, lines, off) = (alert_rows(), setting_lines(), offsite_rows());
+                // 사이드바·'저장소 열기'가 쓰는 실제 저장소 경로(첫 프로파일). 없으면 빈 값
+                let main_repo: slint::SharedString =
+                    kova_core::config::ConfigStore::new(kova_service::default_config_dir())
+                        .profiles()
+                        .first()
+                        .map(|p| p.repo_dir.clone())
+                        .unwrap_or_default()
+                        .into();
                 // 입력 중인 칸이 2초마다 초기화되지 않도록, 내용이 바뀐 때만 모델을 교체한다
                 let key: Vec<(String, String, String)> = off
                     .iter()
@@ -1305,6 +1354,9 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                 };
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = w.upgrade() {
+                        if w.get_main_repo() != main_repo {
+                            w.set_main_repo(main_repo);
+                        }
                         w.set_service_ok(text.starts_with("서비스 연결됨"));
                         w.set_service_status(text.into());
                         w.set_alert_text(alert.into());
@@ -1373,6 +1425,9 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                             .collect();
                         (rows, fin)
                     };
+                    let finished_kind = finished_info
+                        .map(|f| f.kind)
+                        .unwrap_or_else(|| "backup".into());
                     {
                         let w = w.clone();
                         let _ = slint::invoke_from_event_loop(move || {
@@ -1399,16 +1454,7 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                     } = e
                     {
                         let p_name = profile_name(profile_id);
-                        let kind = finished_info
-                            .map(|f| f.kind)
-                            .unwrap_or_else(|| "backup".into());
-                        let action = match kind.as_str() {
-                            "verify" => "무결성 검사",
-                            "gc" => "저장소 정리",
-                            s if s.starts_with("image") => "디스크 이미지 백업",
-                            "delsnap" => "스냅샷 삭제",
-                            _ => "백업",
-                        };
+                        let action = kind_label(&finished_kind);
                         let title = if ok {
                             format!("{action} 완료: {p_name}")
                         } else if message == "취소됨" {
@@ -1419,28 +1465,28 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                         let is_ok = ok;
                         let msg_text = message.clone();
                         let w_done = w.clone();
+                        // 설정·이력 DB 읽기는 화면 스레드가 멈추지 않게 이 백그라운드 스레드에서 미리 해 둔다
+                        let profiles = rows();
+                        let snapshots = snaps();
+                        let alerts = alert_rows();
+                        let n =
+                            kova_core::alerts::AlertLog::new(&kova_service::default_config_dir())
+                                .unacknowledged();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = w_done.upgrade() {
                                 w.set_job_completed_ok(is_ok);
                                 w.set_job_completed_title(title.into());
                                 w.set_job_completed_msg(msg_text.into());
                                 w.set_job_completed_show(true);
-                                let profiles = rows();
-                                let snapshots = snaps();
                                 w.set_profiles(
                                     std::rc::Rc::new(slint::VecModel::from(profiles)).into(),
                                 );
                                 w.set_snapshots(
                                     std::rc::Rc::new(slint::VecModel::from(snapshots)).into(),
                                 );
-                                let alerts = alert_rows();
                                 w.set_alerts(
                                     std::rc::Rc::new(slint::VecModel::from(alerts)).into(),
                                 );
-                                let n = kova_core::alerts::AlertLog::new(
-                                    &kova_service::default_config_dir(),
-                                )
-                                .unacknowledged();
                                 if n > 0 {
                                     w.set_alert_text(
                                         format!("확인하지 않은 알림 {n}건 (백업 실패 등)").into(),
@@ -1465,7 +1511,7 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                     let line = match e {
                         kova_ipc::Event::JobStarted {
                             profile_id, kind, ..
-                        } => format!("시작: {profile_id} ({kind})"),
+                        } => format!("시작: {profile_id} ({})", kind_label(&kind)),
                         kova_ipc::Event::Progress {
                             percent, current, ..
                         } => format!("진행 {percent}% {current}"),
@@ -1477,7 +1523,7 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                         } => {
                             if !ok && message != "취소됨" {
                                 toast(
-                                    "Kova 백업 실패",
+                                    &format!("Kova {} 실패", kind_label(&finished_kind)),
                                     &format!("{}: {message}", profile_name(&profile_id)),
                                 );
                             }
@@ -1723,20 +1769,57 @@ $n.Item(1).AppendChild($x.CreateTextNode($b))|Out-Null;\
     });
 }
 
-fn send(kind: impl Into<String>, id: String) {
+/// 작업 종류(서비스 kind 문자열)를 화면에 보일 이름으로 바꾼다. "image:C" 같은 내부 표기를 그대로 보이지 않는다.
+fn kind_label(kind: &str) -> String {
+    match kind {
+        "verify" => "무결성 검사".into(),
+        "gc" => "저장소 정리".into(),
+        k if k.starts_with("delsnap") => "스냅샷 삭제".into(),
+        k if k.starts_with("image") => match k.strip_prefix("image:") {
+            Some(d) if !d.is_empty() => format!("{d}: 드라이브 이미지 백업"),
+            _ => "디스크 이미지 백업".into(),
+        },
+        _ => "백업".into(),
+    }
+}
+
+/// 서비스 요청 결과에서 실패 사유를 찾는다(연결 실패 또는 서비스가 돌려준 Error). 성공이면 None.
+fn send_failure(res: &std::io::Result<Vec<kova_ipc::Event>>) -> Option<String> {
+    match res {
+        Err(e) => Some(format!(
+            "Kova 서비스에 연결할 수 없습니다. 서비스가 켜져 있는지 확인하세요 ({e})"
+        )),
+        Ok(evs) => evs.iter().find_map(|e| match e {
+            kova_ipc::Event::Error { message } => Some(message.clone()),
+            _ => None,
+        }),
+    }
+}
+
+/// 서비스에 작업을 요청한다. 요청이 거절되거나 서비스에 닿지 못하면 화면의 완료 카드에 실패를 띄운다.
+fn send(weak: slint::Weak<MainWindow>, kind: impl Into<String>, id: String) {
     let kind: String = kind.into();
     std::thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        let _ = rt.block_on(kova_ipc::request(
+        let res = rt.block_on(kova_ipc::request(
             kova_ipc::PIPE_NAME,
             &kova_ipc::Request::RunNow {
                 profile_id: id,
-                kind,
+                kind: kind.clone(),
             },
         ));
+        if let Some(why) = send_failure(&res) {
+            let title = format!("{} 요청 실패", kind_label(&kind));
+            let _ = weak.upgrade_in_event_loop(move |w| {
+                w.set_job_completed_ok(false);
+                w.set_job_completed_title(title.into());
+                w.set_job_completed_msg(why.into());
+                w.set_job_completed_show(true);
+            });
+        }
     });
 }
 
@@ -1768,7 +1851,7 @@ fn check_update_silent(weak: slint::Weak<MainWindow>) {
         let current = env!("CARGO_PKG_VERSION");
         if let Ok(tag) = kova_core::fetch::latest_tag(UPDATE_BASE, UPDATE_REPO) {
             if kova_core::update::is_newer(&tag, current) {
-                let msg = format!("새 버전 {tag} 이(가) 출시되었습니다 (현재 {current}) — 보호·업데이트 탭에서 설치 가능");
+                let msg = format!("새 버전 {tag} 이(가) 출시되었습니다 (현재 {current}) — 환경설정 > '클라우드 & 알림' 탭에서 설치 가능");
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
                         w.set_update_text(msg.into());
@@ -2094,12 +2177,7 @@ fn browse_render(weak: &slint::Weak<MainWindow>, st: &Browse, status: String) {
             .items
             .iter()
             .map(|it| BrowseRow {
-                name: if it.is_dir {
-                    format!("▸ {}", it.name)
-                } else {
-                    it.name.clone()
-                }
-                .into(),
+                name: it.name.clone().into(),
                 path: it.path.clone().into(),
                 is_dir: it.is_dir,
                 info: browse_info(it).into(),
@@ -2348,6 +2426,10 @@ fn volume_check(weak: &slint::Weak<MainWindow>, letter: &str) {
 /// 볼륨 직접 복원: 검증·정책·확인 문구·잠금을 모두 통과해야 쓴다. 오래 걸리므로 별도 스레드에서 진행률을 흘린다.
 #[cfg(windows)]
 fn restore_volume_job(weak: slint::Weak<MainWindow>, image: String, letter: String, typed: String) {
+    if app_locked() {
+        show_volume(&weak, LOCKED_MSG.into());
+        return;
+    }
     let Some(c) = letter.trim().chars().next() else {
         show_volume(&weak, "드라이브 문자를 입력하세요.".into());
         return;
@@ -2575,7 +2657,7 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = w.as_weak();
         w.on_quick_start(move |srcs, repo| {
-            let text = match quick_start(srcs.trim(), repo.trim()) {
+            let text = match quick_start(weak.clone(), srcs.trim(), repo.trim()) {
                 Ok(_) => {
                     "설정했습니다. 백업을 시작합니다. 진행 상황은 아래에 표시됩니다.".to_string()
                 }
@@ -2594,7 +2676,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
             let pid = resolve_profile_id(&store, id.as_str()).unwrap_or_else(|| id.to_string());
-            send("backup", pid);
+            send(weak.clone(), "backup", pid);
         });
     }
     {
@@ -2605,26 +2687,52 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
             let pid = resolve_profile_id(&store, id.as_str()).unwrap_or_else(|| id.to_string());
-            send("verify", pid);
+            send(weak.clone(), "verify", pid);
         });
     }
-    w.on_open_repo_dir(|dir| {
-        let dir_str = dir.to_string();
-        std::thread::spawn(move || {
-            let target = if dir_str.is_empty() {
-                ".".to_string()
+    {
+        let weak = w.as_weak();
+        w.on_open_repo_dir(move |dir| {
+            // 빈 값(아직 백업 설정 전)이나 없는 폴더는 열지 않는다: 엉뚱한 폴더(작업 폴더·문서)가 열리지 않게
+            let target = dir.trim().to_string();
+            if target.is_empty() || !std::path::Path::new(&target).is_dir() {
+                if let Some(w) = weak.upgrade() {
+                    w.set_pick_error(
+                        if target.is_empty() {
+                            "아직 백업 저장소가 없습니다. 먼저 백업을 설정하세요".to_string()
+                        } else {
+                            format!("저장소 폴더가 아직 없습니다: {target}")
+                        }
+                        .into(),
+                    );
+                }
+                return;
+            }
+            std::thread::spawn(move || {
+                #[cfg(windows)]
+                {
+                    let _ = std::process::Command::new("explorer.exe")
+                        .arg(&target)
+                        .spawn();
+                }
+            });
+        });
+    }
+    {
+        let weak = w.as_weak();
+        w.on_save_offsite(move |id, dir| {
+            let msg = if app_locked() {
+                LOCKED_MSG.to_string()
             } else {
-                dir_str
+                match save_offsite(&id, &dir) {
+                    Ok(m) | Err(m) => m,
+                }
             };
-            #[cfg(windows)]
-            {
-                let _ = std::process::Command::new("explorer.exe")
-                    .arg(&target)
-                    .spawn();
+            if let Some(w) = weak.upgrade() {
+                w.set_settings_text(msg.into());
             }
         });
-    });
-    w.on_save_offsite(|id, dir| save_offsite(&id, &dir));
+    }
     w.set_gdrive_connected(kova_core::gdrive::is_connected(
         &kova_service::default_config_dir(),
     ));
@@ -2636,10 +2744,18 @@ fn main() -> Result<(), slint::PlatformError> {
                 win.set_gdrive_text(LOCKED_MSG.into());
                 return;
             }
+            // 로그인 대기(최대 5분) 중에 다시 누르면 로그인 창·대기 스레드가 겹치므로 하나만 허용한다
+            if !try_begin(&GDRIVE_BUSY) {
+                win.set_gdrive_text(
+                    "이미 구글 로그인을 기다리는 중입니다. 브라우저 창을 확인하세요.".into(),
+                );
+                return;
+            }
             let dir = kova_service::default_config_dir();
             let creds = match kova_core::gdrive::load_client(&dir) {
                 Ok(c) => c,
                 Err(e) => {
+                    GDRIVE_BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
                     win.set_gdrive_text(e.into());
                     return;
                 }
@@ -2659,6 +2775,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if r.is_ok() {
                     set_offsite_provider("gdrive");
                 }
+                GDRIVE_BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
                         match r {
@@ -2681,13 +2798,27 @@ fn main() -> Result<(), slint::PlatformError> {
                 win.set_gdrive_text(LOCKED_MSG.into());
                 return;
             }
-            kova_core::gdrive::disconnect(
-                &kova_service::default_config_dir(),
-                &kova_core::gdrive::Endpoints::default(),
-            );
-            set_offsite_provider("local");
-            win.set_gdrive_connected(false);
-            win.set_gdrive_text("연결을 해제했습니다.".into());
+            if !try_begin(&GDRIVE_BUSY) {
+                win.set_gdrive_text(
+                    "구글 드라이브 작업이 진행 중입니다. 잠시 뒤 다시 누르세요.".into(),
+                );
+                return;
+            }
+            win.set_gdrive_text("연결 해제 중…".into());
+            // 토큰 폐기는 네트워크 요청이라 화면이 멈추지 않게 별도 스레드에서 한다
+            let weak = weak.clone();
+            std::thread::spawn(move || {
+                kova_core::gdrive::disconnect(
+                    &kova_service::default_config_dir(),
+                    &kova_core::gdrive::Endpoints::default(),
+                );
+                set_offsite_provider("local");
+                GDRIVE_BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
+                let _ = weak.upgrade_in_event_loop(|w| {
+                    w.set_gdrive_connected(false);
+                    w.set_gdrive_text("연결을 해제했습니다.".into());
+                });
+            });
         });
     }
     w.on_cancel_job(cancel_job);
@@ -2943,6 +3074,13 @@ fn main() -> Result<(), slint::PlatformError> {
         w.on_global_restore(move |repo, sid, rel_path, target| {
             let only = Some(vec![rel_path.to_string()]);
             if target.as_str() == "@원래자리" {
+                // 원래 자리 복원은 덮어쓰므로 다른 복원 버튼과 같이 잠금을 확인한다(화면에서 두 번 확인한 뒤에만 온다)
+                if app_locked() {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_restore_text(LOCKED_MSG.into());
+                    }
+                    return;
+                }
                 restore_inplace_job(weak.clone(), repo.to_string(), sid.to_string(), only);
             } else {
                 restore_snapshot_job(
@@ -3093,6 +3231,12 @@ fn main() -> Result<(), slint::PlatformError> {
                   exclude,
                   weekly,
                   monthly| {
+                if app_locked() {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_form_text(LOCKED_MSG.into());
+                    }
+                    return;
+                }
                 let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
                 let all = store.profiles();
                 let base = all.iter().find(|p| p.id == id.as_str());
@@ -3143,7 +3287,19 @@ fn main() -> Result<(), slint::PlatformError> {
             };
             if let Some(w) = weak.upgrade() {
                 if !locked && w.get_form_id() == id {
+                    // 지운 프로파일 내용이 폼에 남아 '저장'하면 되살아나지 않도록 '입력 초기화'와 같은 값으로 비운다
                     w.set_form_id("".into());
+                    w.set_form_name("".into());
+                    w.set_form_sources("".into());
+                    w.set_form_repo("".into());
+                    w.set_form_count("30".into());
+                    w.set_form_days("60".into());
+                    w.set_form_auto(false);
+                    w.set_form_daily(false);
+                    w.set_form_sched("12".into());
+                    w.set_form_exclude("".into());
+                    w.set_form_weekly("0".into());
+                    w.set_form_monthly("0".into());
                 }
                 w.set_form_text(msg.into());
             }
@@ -3155,7 +3311,15 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     {
         let weak = w.as_weak();
-        w.on_install_update(move || install_update(weak.clone()));
+        w.on_install_update(move || {
+            if app_locked() {
+                if let Some(w) = weak.upgrade() {
+                    w.set_update_text(LOCKED_MSG.into());
+                }
+                return;
+            }
+            install_update(weak.clone())
+        });
     }
     {
         let weak = w.as_weak();
@@ -3175,7 +3339,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     None => {
                         if let Some(w) = weak.upgrade() {
                             w.set_image_text(
-                                "프로파일이 없어 저장 위치를 정할 수 없습니다. 프로파일 탭에서 먼저 만드세요".into(),
+                                "프로파일이 없어 저장 위치를 정할 수 없습니다. 홈 화면에서 먼저 백업을 설정하세요".into(),
                             );
                         }
                         return;
@@ -3206,9 +3370,9 @@ fn main() -> Result<(), slint::PlatformError> {
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
             let text = match (d.len() == 1 && d.as_bytes()[0].is_ascii_alphabetic(), store.profiles().first()) {
                 (false, _) => "드라이브 문자 한 글자를 입력하세요 (예: F)".to_string(),
-                (_, None) => "프로파일이 없습니다. 프로파일 탭에서 먼저 만드세요".to_string(),
+                (_, None) => "프로파일이 없습니다. 홈 화면에서 먼저 백업을 설정하세요".to_string(),
                 (true, Some(p)) => {
-                    send(format!("image:{}", d.to_ascii_uppercase()), p.id.clone());
+                    send(weak.clone(), format!("image:{}", d.to_ascii_uppercase()), p.id.clone());
                     format!("{}: 이미지 작업을 서비스에 요청했습니다. 진행·결과는 홈의 작업 기록에 표시됩니다", d.to_ascii_uppercase())
                 }
             };
@@ -3337,12 +3501,13 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = w.as_weak();
         w.on_run_gc(move |id| {
-            if let Some(w) = weak.upgrade() {
-                w.set_job_completed_show(false);
-            }
+            let Some(w) = weak.upgrade() else { return };
+            w.set_job_completed_show(false);
             let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-            let pid = resolve_profile_id(&store, id.as_str()).unwrap_or_else(|| id.to_string());
-            send("gc", pid);
+            match gc_target(app_locked(), &store, id.as_str()) {
+                Ok(pid) => send(weak.clone(), "gc", pid),
+                Err(e) => w.set_restore_text(e.into()),
+            }
         });
     }
     {
@@ -3462,7 +3627,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let store =
                         kova_core::config::ConfigStore::new(kova_service::default_config_dir());
                     for p in store.profiles() {
-                        send("backup", p.id);
+                        send(weak.clone(), "backup", p.id);
                     }
                 } else if ev.id == quit_id {
                     let _ = slint::quit_event_loop();
@@ -3850,5 +4015,87 @@ mod tests {
         let f = build_pick_script("qblk-open");
         assert!(f.contains("OpenFileDialog") && f.contains("*.qblk"));
         assert!(build_pick_script("qblk-save").contains("SaveFileDialog"));
+    }
+
+    #[test]
+    fn kind_label_hides_internal_kinds() {
+        assert_eq!(kind_label("backup"), "백업");
+        assert_eq!(kind_label("verify"), "무결성 검사");
+        assert_eq!(kind_label("gc"), "저장소 정리");
+        assert_eq!(kind_label("image:C"), "C: 드라이브 이미지 백업");
+        assert_eq!(kind_label("image"), "디스크 이미지 백업");
+        assert_eq!(kind_label("delsnap:20261121_000000"), "스냅샷 삭제");
+    }
+
+    #[test]
+    fn send_failure_reports_ipc_and_service_errors() {
+        use kova_ipc::Event as E;
+        let down: std::io::Result<Vec<E>> = Err(std::io::Error::other("pipe"));
+        assert!(send_failure(&down)
+            .unwrap()
+            .contains("서비스에 연결할 수 없습니다"));
+        let refused: std::io::Result<Vec<E>> = Ok(vec![E::Error {
+            message: "프로파일 없음".into(),
+        }]);
+        assert_eq!(send_failure(&refused).as_deref(), Some("프로파일 없음"));
+        let queued: std::io::Result<Vec<E>> = Ok(vec![E::Queued {
+            job_id: 1,
+            merged: false,
+        }]);
+        assert_eq!(send_failure(&queued), None);
+    }
+
+    #[test]
+    fn gc_target_resolves_real_profile_and_honours_lock() {
+        let dir = std::env::temp_dir().join(format!("kova_test_gc_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = kova_core::config::ConfigStore::new(&dir);
+        // 프로파일이 없으면 가짜 경로를 서비스에 보내지 않는다
+        assert!(gc_target(false, &store, "").is_err());
+        assert!(gc_target(false, &store, "C:\\Kova백업").is_err());
+        let mut p = kova_core::config::Profile::new("prof_gc", "정리");
+        p.repo_dir = dir.join("repo").to_string_lossy().to_string();
+        store.upsert(p).unwrap();
+        // 빈 값(편집 중인 프로파일 없음)은 첫 프로파일, 저장소 경로는 그 프로파일
+        assert_eq!(gc_target(false, &store, ""), Ok("prof_gc".into()));
+        assert_eq!(
+            gc_target(false, &store, &dir.join("repo").to_string_lossy()),
+            Ok("prof_gc".into())
+        );
+        assert_eq!(gc_target(false, &store, "prof_gc"), Ok("prof_gc".into()));
+        // 잠겨 있으면 무엇이든 거절
+        assert_eq!(
+            gc_target(true, &store, "prof_gc"),
+            Err(LOCKED_MSG.to_string())
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_profile_id_does_not_create_missing_repo() {
+        let dir = std::env::temp_dir().join(format!("kova_test_nocreate_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = kova_core::config::ConfigStore::new(&dir);
+        let mut p = kova_core::config::Profile::new("prof_x", "없는 저장소");
+        let repo = dir.join("no_such_repo");
+        p.repo_dir = repo.to_string_lossy().to_string();
+        store.upsert(p).unwrap();
+        assert_eq!(resolve_profile_id(&store, "20990101_000000"), None);
+        assert!(
+            !repo.exists(),
+            "조회만으로 저장소 폴더·metadata.db 를 만들면 안 된다"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn try_begin_allows_only_one_at_a_time() {
+        let f = std::sync::atomic::AtomicBool::new(false);
+        assert!(try_begin(&f));
+        assert!(!try_begin(&f));
+        f.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(try_begin(&f));
     }
 }

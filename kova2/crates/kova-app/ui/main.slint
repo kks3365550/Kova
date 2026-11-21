@@ -507,7 +507,8 @@ export component MainWindow inherits Window {
     in property <string> lock-text;
     callback unlock-app(string);
     callback set-master(string, string);
-    in property <string> settings-text;
+    in-out property <string> settings-text;
+    in property <string> main-repo;
     callback verify-image(string);
     callback restore-image(string, string);
     callback capture-image(string, string);
@@ -759,7 +760,7 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             spacing: 6px;
                             Text {
-                                text: root.form-repo != "" ? root.form-repo : (root.eff-drive != "" ? root.eff-drive + "\\Kova백업" : "D:\\MyBackup");
+                                text: root.form-repo != "" ? root.form-repo : (root.main-repo != "" ? root.main-repo : "아직 백업 설정 전");
                                 color: Theme.text;
                                 font-size: 12px;
                                 font-weight: 600;
@@ -771,7 +772,7 @@ export component MainWindow inherits Window {
                                 text: "📂 열기";
                                 height: 24px;
                                 clicked => {
-                                    root.open-repo-dir(root.form-repo != "" ? root.form-repo : (root.eff-drive != "" ? root.eff-drive + "\\Kova백업" : "D:\\MyBackup"));
+                                    root.open-repo-dir(root.form-repo != "" ? root.form-repo : root.main-repo);
                                 }
                             }
                         }
@@ -932,7 +933,7 @@ export component MainWindow inherits Window {
                                     font-weight: 600;
                                 }
                                 Text {
-                                    text: r.current != "" ? r.current : (r.kind == "verify" ? "스냅샷 및 데이터 블롭 무결성 검증 중..." : (r.kind == "gc" ? "고아 블롭 및 저장소 데이터 정리 중..." : "파일 분석 및 백업 준비 중..."));
+                                    text: r.current != "" ? r.current : (r.kind == "verify" ? "스냅샷 및 데이터 블롭 무결성 검증 중..." : (r.kind == "gc" ? "고아 블롭 및 저장소 데이터 정리 중..." : (r.kind == "backup" ? "파일 분석 및 백업 준비 중..." : "작업 준비 중...")));
                                     color: Theme.muted;
                                     font-size: 12px;
                                     overflow: elide;
@@ -1072,7 +1073,7 @@ export component MainWindow inherits Window {
                             badge-text: "전체 디스크";
                             icon-text: "🖥️";
                             title: "PC 전체 통백업";
-                            desc: "윈도우 OS, 프로그램, 설정까지 C: 드라이브 전체를 VHDX 이미지로 통째로 보관합니다.";
+                            desc: "윈도우 OS, 프로그램, 설정까지 C: 드라이브 전체를 .qblk 이미지로 통째로 보관합니다.";
                             f1: "Windows C: 드라이브 전체 이미지";
                             f2: "OS, 프로그램, 드라이버 통째로 보관";
                             f3: "부팅 불가 시 WinPE 비상 복원 지원";
@@ -1101,7 +1102,9 @@ export component MainWindow inherits Window {
                     }
                     
                     Rectangle { vertical-stretch: 1; }
-                    
+
+                    if root.wz-text != "": Text { text: root.wz-text; color: Theme.warn; font-size: 13px; wrap: word-wrap; }
+
                     // Bottom Service Status & Giant CTA Button
                     Card {
                         vertical-stretch: 0;
@@ -1463,7 +1466,7 @@ export component MainWindow inherits Window {
                                 text: "🧹 저장소 정리 (GC / 조각 모음)";
                                 height: 32px;
                                 clicked => {
-                                    root.run-gc(root.form-repo != "" ? root.form-repo : (root.eff-drive != "" ? root.eff-drive + "\\Kova백업" : "default"));
+                                    root.run-gc(root.form-id);
                                 }
                             }
                         }
@@ -1613,11 +1616,22 @@ export component MainWindow inherits Window {
                                     Badge { text: g.versions; tone: Theme.accent; y: 11px; }
                                     Btn { text: "이 시점 열기"; height: 28px; y: 9px; clicked => { root.browse-confirm = false; root.browse-open = true; root.open-browse(g.repo, g.snapshot-id, g.snapshot-id); } }
                                     Btn {
-                                        text: root.restore-orig ? "원래 자리 복원" : "꺼내기";
-                                        kind: 1;
+                                        // 원래 자리 복원은 현재 파일을 덮어쓰므로 두 번 눌러야 실행한다(스냅샷 목록의 '정말 덮어쓰기'와 같은 방식)
+                                        text: !root.restore-orig ? "꺼내기" : root.snap-pending == "G" + g.repo + g.snapshot-id + g.rel-path ? "정말 덮어쓰기" : "원래 자리 복원";
+                                        kind: root.restore-orig && root.snap-pending == "G" + g.repo + g.snapshot-id + g.rel-path ? 2 : 1;
                                         height: 28px;
                                         y: 9px;
-                                        clicked => { root.global-restore(g.repo, g.snapshot-id, g.rel-path, root.restore-orig ? "@원래자리" : root.restore-folder); }
+                                        clicked => {
+                                            if (!root.restore-orig) {
+                                                root.snap-pending = "";
+                                                root.global-restore(g.repo, g.snapshot-id, g.rel-path, root.restore-folder);
+                                            } else if (root.snap-pending == "G" + g.repo + g.snapshot-id + g.rel-path) {
+                                                root.snap-pending = "";
+                                                root.global-restore(g.repo, g.snapshot-id, g.rel-path, "@원래자리");
+                                            } else {
+                                                root.snap-pending = "G" + g.repo + g.snapshot-id + g.rel-path;
+                                            }
+                                        }
                                     }
                                 }
                                 Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
@@ -1657,16 +1671,16 @@ export component MainWindow inherits Window {
                                 VerticalLayout {
                                     alignment: center;
                                     horizontal-stretch: 0;
-                                    Badge { 
-                                        text: s.verified == "미검증" || s.verified == "" ? "미검증" : "무결성 검증"; 
-                                        tone: s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok; 
+                                    Badge {
+                                        text: s.verified == "오류 있음" ? "오류 있음" : s.verified == "미검증" || s.verified == "" ? "미검증" : "무결성 검증";
+                                        tone: s.verified == "오류 있음" ? Theme.danger : s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok;
                                     }
                                 }
-                                
-                                if s.verified == "미검증" || s.verified == "": VerticalLayout {
+
+                                if s.verified == "미검증" || s.verified == "" || s.verified == "오류 있음": VerticalLayout {
                                     alignment: center;
-                                    Btn { 
-                                        text: "🔍 무결성 검사"; 
+                                    Btn {
+                                        text: s.verified == "오류 있음" ? "🔍 다시 검사" : "🔍 무결성 검사";
                                         height: 32px; 
                                         clicked => { root.run-verify(s.profile-id != "" ? s.profile-id : s.id); } 
                                     }
@@ -1801,7 +1815,7 @@ export component MainWindow inherits Window {
                             spacing: 12px;
                             alignment: start;
                             Btn { text: "← 홈으로 돌아가기"; clicked => { root.page = 0; } }
-                            Heading { text: "PC 디스크 전체 백업 (VHDX 이미지 / 베어메탈)"; vertical-alignment: center; }
+                            Heading { text: "PC 디스크 전체 백업 (.qblk 이미지 / 베어메탈)"; vertical-alignment: center; }
                         }
                         
                     
@@ -2031,25 +2045,25 @@ export component MainWindow inherits Window {
                                     text: "⚙ 일반 & 스케줄";
                                     kind: root.settings-tab == 0 ? 1 : 0;
                                     horizontal-stretch: 1;
-                                    clicked => { root.settings-tab = 0; }
+                                    clicked => { root.settings-tab = 0; root.settings-text = ""; }
                                 }
                                 Btn {
                                     text: "🔒 보안 & 보호";
                                     kind: root.settings-tab == 1 ? 1 : 0;
                                     horizontal-stretch: 1;
-                                    clicked => { root.settings-tab = 1; }
+                                    clicked => { root.settings-tab = 1; root.settings-text = ""; }
                                 }
                                 Btn {
                                     text: "☁ 클라우드 & 알림";
                                     kind: root.settings-tab == 2 ? 1 : 0;
                                     horizontal-stretch: 1;
-                                    clicked => { root.settings-tab = 2; }
+                                    clicked => { root.settings-tab = 2; root.settings-text = ""; }
                                 }
                                 Btn {
                                     text: "🚨 비상복구 & 도구";
                                     kind: root.settings-tab == 3 ? 1 : 0;
                                     horizontal-stretch: 1;
-                                    clicked => { root.settings-tab = 3; }
+                                    clicked => { root.settings-tab = 3; root.settings-text = ""; }
                                 }
                             }
                         }
@@ -2062,45 +2076,17 @@ export component MainWindow inherits Window {
                                 spacing: 14px;
                                 alignment: start;
                                 Heading { text: "기본 백업 주기 및 스케줄"; }
-                                
+                                // 주기·보관·저장소는 백업(프로파일)마다 따로 저장된다. 여기 칸은 저장되지 않으므로 두지 않고 편집 화면으로 보낸다
+                                Hint { text: "자동 백업 주기, 보관 개수·일수, 저장소 위치는 백업(프로파일)마다 따로 정합니다. 아래 버튼으로 백업 설정 화면을 여세요."; }
                                 HorizontalLayout {
-                                    spacing: 12px;
-                                    Text { text: "자동 백업 실행"; color: Theme.text; font-size: 13px; font-weight: 600; width: 140px; vertical-alignment: center; }
-                                    Btn { text: root.form-auto ? "켜짐" : "꺼짐"; kind: root.form-auto ? 1 : 0; clicked => { root.form-auto = !root.form-auto; } }
-                                    Btn { text: root.form-daily ? "매일 지정 시각" : "주기적 시간 간격"; clicked => { root.form-daily = !root.form-daily; root.form-sched = root.form-daily ? "02:00" : "12"; } }
-                                    Field { text <=> root.form-sched; placeholder: "12 또는 02:00"; width: 100px; }
-                                    Text { text: root.form-daily ? "실행 (HH:MM)" : "시간마다 실행"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                    alignment: start;
+                                    Btn { text: "백업 주기·보관·저장소 설정 열기"; clicked => { root.page = 1; } }
                                 }
-                                
-                                HorizontalLayout {
-                                    spacing: 12px;
-                                    Text { text: "보관 정책"; color: Theme.text; font-size: 13px; font-weight: 600; width: 140px; vertical-alignment: center; }
-                                    Text { text: "보관 개수:"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
-                                    Field { text <=> root.form-count; placeholder: "30"; width: 60px; }
-                                    Text { text: "보관 일수:"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
-                                    Field { text <=> root.form-days; placeholder: "60"; width: 60px; }
-                                    Text { text: "주 단위:"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
-                                    Field { text <=> root.form-weekly; placeholder: "0"; width: 50px; }
-                                    Text { text: "월 단위:"; color: Theme.muted; font-size: 12px; vertical-alignment: center; }
-                                    Field { text <=> root.form-monthly; placeholder: "0"; width: 50px; }
-                                }
-                                
-                                HorizontalLayout {
-                                    spacing: 12px;
-                                    Text { text: "저장소 위치"; color: Theme.text; font-size: 13px; font-weight: 600; width: 140px; vertical-alignment: center; }
-                                    PathField {
-                                        text <=> root.form-repo;
-                                        placeholder: "백업 저장 폴더 (예: D:\\MyBackup_Repository)";
-                                        kind: "folder";
-                                        pick(k) => { return root.browse(k); }
-                                        horizontal-stretch: 1;
-                                    }
-                                }
-                                
+
                                 HorizontalLayout {
                                     spacing: 12px;
                                     Btn {
-                                        text: "기본 설정 저장";
+                                        text: "잔여 공간·패킹 설정 저장";
                                         kind: 1;
                                         clicked => {
                                             root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt, root.form-vss, root.form-pack);
@@ -2264,6 +2250,7 @@ export component MainWindow inherits Window {
                                     Btn { text: "테스트 발송"; clicked => { root.test-webhook(root.form-webhook); } }
                                 }
                                 Hint { text: "백업 실패·경고 시 Slack/Discord/HTTP 웹훅으로 즉시 알림을 보냅니다. 비워두면 끕니다."; }
+                                if root.settings-text != "": Text { text: root.settings-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
                             }
                         }
 
@@ -2296,6 +2283,7 @@ export component MainWindow inherits Window {
                                     Btn { text: "키 복원"; clicked => { root.restore-key(root.form-recovery); } }
                                 }
                                 Hint { text: "암호화 키 분실 시 내보내 둔 복구 코드를 입력하여 복구 마스터 키를 복원합니다."; }
+                                if root.settings-text != "": Text { text: root.settings-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
                                 
                                 HorizontalLayout {
                                     spacing: 8px;
@@ -2306,7 +2294,7 @@ export component MainWindow inherits Window {
                                     Btn { 
                                         text: "📂 백업 저장소 탐색기로 열기"; 
                                         clicked => { 
-                                            root.open-repo-dir(root.form-repo != "" ? root.form-repo : (root.eff-drive != "" ? root.eff-drive + "\\Kova백업" : "D:\\MyBackup")); 
+                                            root.open-repo-dir(root.form-repo != "" ? root.form-repo : root.main-repo); 
                                         } 
                                     }
                                     Rectangle { horizontal-stretch: 1; }
