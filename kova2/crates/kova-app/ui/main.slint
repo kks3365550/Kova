@@ -236,7 +236,7 @@ component NavStepItem inherits Rectangle {
         padding-left: 12px;
         padding-right: 12px;
         spacing: 12px;
-        alignment: center;
+        alignment: stretch;
         
         Rectangle {
             width: 32px;
@@ -974,9 +974,9 @@ export component MainWindow inherits Window {
                                 border-radius: 11px;
                                 background: root.job-completed-ok ? Theme.ok : Theme.danger;
                                 Text {
-                                    text: root.job-completed-ok ? "✓" : "!";
+                                    text: root.job-completed-ok ? "OK" : "!";
                                     color: #ffffff;
-                                    font-size: 13px;
+                                    font-size: root.job-completed-ok ? 9px : 13px;
                                     font-weight: 900;
                                     horizontal-alignment: center;
                                     vertical-alignment: center;
@@ -1303,7 +1303,7 @@ export component MainWindow inherits Window {
                                             padding-right: 12px;
                                             spacing: 8px;
                                             Text { text: p.name; color: Theme.text; font-size: 13px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
-                                            Text { text: p.checked ? "✓ 선택됨" : p.sub; color: p.checked ? Theme.accent : Theme.muted; font-size: 12px; vertical-alignment: center; }
+                                            Text { text: p.checked ? "선택됨" : p.sub; color: p.checked ? Theme.accent : Theme.muted; font-size: 12px; vertical-alignment: center; }
                                         }
                                         TouchArea { clicked => { root.prog-toggle(i); } }
                                     }
@@ -1471,7 +1471,7 @@ export component MainWindow inherits Window {
                             Heading { text: "파일 되돌리기 (복원 모드)"; }
                             Rectangle { horizontal-stretch: 1; }
                             Btn {
-                                text: "🧹 저장소 정리 (GC / 조각 모음)";
+                                text: "저장소 정리 (GC / 조각 모음)";
                                 height: 32px;
                                 clicked => {
                                     root.run-gc(root.form-id);
@@ -1535,7 +1535,7 @@ export component MainWindow inherits Window {
                                         border-width: 1px;
                                         border-color: it.selected ? Theme.accent : Theme.line;
                                         background: it.selected ? Theme.accent : transparent;
-                                        Text { text: it.selected ? "✓" : ""; color: #ffffff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
+                                        Text { text: it.selected ? "●" : ""; color: #ffffff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; }
                                         TouchArea { clicked => { root.browse-toggle(it.path); } }
                                     }
                                     
@@ -1755,7 +1755,7 @@ export component MainWindow inherits Window {
                         Btn { text: "← 돌아가기"; clicked => { root.page = 0; } }
                         Heading { text: "시스템 알림 및 경고 내역"; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
-                        Btn { text: "✓ 알림 모두 확인 완료"; kind: 1; clicked => { root.ack-alerts(); } }
+                        Btn { text: "알림 모두 확인 완료"; kind: 1; clicked => { root.ack-alerts(); } }
                     }
                     
                 Card {
@@ -2298,6 +2298,10 @@ export component MainWindow inherits Window {
                                     Btn { text: "🔄 복구 훈련 시뮬레이션"; clicked => { root.run-drill(); } }
                                     Btn { text: "📋 시스템 정보 내보내기"; clicked => { root.export-sysinfo(); } }
                                     Btn { text: "⚡ 드라이버 자동 수집 (DISM)"; clicked => { root.export-drivers(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
                                     Btn { text: "🩺 진단 로그 덤프 생성"; clicked => { root.make-diag(); } }
                                     Btn { 
                                         text: "📂 백업 저장소 탐색기로 열기"; 
