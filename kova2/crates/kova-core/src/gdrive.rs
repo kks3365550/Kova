@@ -664,6 +664,7 @@ pub fn replicate_to_drive(
             }
         }
         let mut seen = HashSet::new();
+        let mut snapshot_healthy = true;
         for h in hashes {
             if !seen.insert(h.clone()) {
                 continue;
@@ -706,8 +707,13 @@ pub fn replicate_to_drive(
                     }
                 }
             } else {
-                return Err(format!("원본에 블롭이 없음: {h}"));
+                eprintln!("[KOVA-GDRIVE-WARN] 스냅샷 {name} 복제 중 블롭 누락 발견 ({h}) -> 스냅샷 업로드 건너뜀");
+                snapshot_healthy = false;
+                break;
             }
+        }
+        if !snapshot_healthy {
+            continue;
         }
         let n = client
             .put_file(&snap_dir_ref, &name, &mp)?

@@ -441,6 +441,14 @@ impl CasStorage {
     }
 
     pub fn get_recent_manifests(&self, limit: usize) -> Vec<SnapshotManifest> {
+        self.get_recent_manifests_for_profile(limit, None)
+    }
+
+    pub fn get_recent_manifests_for_profile(
+        &self,
+        limit: usize,
+        profile_id: Option<&str>,
+    ) -> Vec<SnapshotManifest> {
         let snapshots_dir = self.repo_root.join("snapshots");
         if !snapshots_dir.is_dir() || limit == 0 {
             return Vec::new();
@@ -466,7 +474,12 @@ impl CasStorage {
         use rayon::prelude::*;
         let paths: Vec<PathBuf> = entries.into_iter().map(|(_, p)| p).collect();
         let mut manifests: Vec<SnapshotManifest> = Vec::new();
-        for batch in paths.chunks(limit) {
+        let batch_size = if profile_id.is_some() {
+            limit.max(16)
+        } else {
+            limit
+        };
+        for batch in paths.chunks(batch_size) {
             let parsed: Vec<Option<SnapshotManifest>> = batch
                 .par_iter()
                 .map(|path| match File::open(path) {
@@ -476,7 +489,19 @@ impl CasStorage {
                                 let count = m.files.as_ref().map_or(0, |f| f.len())
                                     + m.entries.as_ref().map_or(0, |e| e.len());
                                 if count > 0 {
-                                    Some(m)
+                                    if let Some(pid) = profile_id {
+                                        if !pid.is_empty() {
+                                            if m.profile_id.as_deref() == Some(pid) {
+                                                Some(m)
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            Some(m)
+                                        }
+                                    } else {
+                                        Some(m)
+                                    }
                                 } else {
                                     None
                                 }
@@ -631,5 +656,36 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn get_recent_manifests_for_profile_filtering() {
+        use std::time::Duration;
+        let d = tempfile::tempdir().unwrap();
+        let cas = CasStorage::new(d.path()).unwrap();
+        let snaps = d.path().join("snapshots");
+        fs::create_dir_all(&snaps).unwrap();
+        fs::write(
+            snaps.join("s1.json"),
+            r#"{"id":"s1","profile_id":"prof_a","files":[{"path":"a.txt","size":1}]}"#,
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        fs::write(
+            snaps.join("s2.json"),
+            r#"{"id":"s2","profile_id":"prof_b","files":[{"path":"b.txt","size":1}]}"#,
+        )
+        .unwrap();
+
+        let a = cas.get_recent_manifests_for_profile(10, Some("prof_a"));
+        assert_eq!(a.len(), 1);
+        assert_eq!(a[0].id.as_deref(), Some("s1"));
+
+        let b = cas.get_recent_manifests_for_profile(10, Some("prof_b"));
+        assert_eq!(b.len(), 1);
+        assert_eq!(b[0].id.as_deref(), Some("s2"));
+
+        let all = cas.get_recent_manifests_for_profile(10, None);
+        assert_eq!(all.len(), 2);
     }
 }

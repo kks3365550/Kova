@@ -234,7 +234,7 @@ fn run_backup_inner(
 
     // 가장 최근 스냅샷으로 증분 빠른 경로 지도를 만든다
     let mut prev_files_map: HashMap<String, FileEntry> = HashMap::new();
-    for manifest in cas.get_recent_manifests(1) {
+    for manifest in cas.get_recent_manifests_for_profile(1, opts.profile_id.as_deref()) {
         for mut entry in manifest.files() {
             if entry.is_dir {
                 continue;

@@ -268,17 +268,28 @@ impl Supervisor {
         }
         for p in &profiles {
             let repo = std::path::PathBuf::from(&p.repo_dir);
-            if repo.join("snapshots").join(format!("{t}.json")).exists()
-                || repo
-                    .join("snapshots")
-                    .join(format!("{t}.json.enc"))
-                    .exists()
-            {
+            let snap_json = repo.join("snapshots").join(format!("{t}.json"));
+            let snap_enc = repo.join("snapshots").join(format!("{t}.json.enc"));
+            if snap_json.exists() || snap_enc.exists() {
+                if let Ok(cas) = kova_engine::storage::CasStorage::new(&repo) {
+                    if let Ok(m) = cas.load_manifest(t) {
+                        if let Some(ref pid) = m.profile_id {
+                            if let Some(target) = profiles.iter().find(|pr| pr.id == *pid) {
+                                return Some(target.clone());
+                            }
+                        }
+                    }
+                }
                 return Some(p.clone());
             }
             if let Ok(h) = History::open(&repo) {
                 if let Ok(snaps) = h.list_snapshots() {
-                    if snaps.iter().any(|s| s.id == t) {
+                    if let Some(s) = snaps.iter().find(|s| s.id == t) {
+                        if !s.profile_id.is_empty() {
+                            if let Some(target) = profiles.iter().find(|pr| pr.id == s.profile_id) {
+                                return Some(target.clone());
+                            }
+                        }
                         return Some(p.clone());
                     }
                 }
@@ -1607,5 +1618,24 @@ mod tests {
         assert!(rx.try_iter().any(
             |e| matches!(e, SvcEvent::JobFinished { ref message, .. } if message.contains("정리"))
         ));
+    }
+
+    #[test]
+    fn resolve_profile_disambiguates_shared_repo_by_manifest_profile_id() {
+        let (d, s) = setup(false);
+        let cfg = ConfigStore::new(d.path().join("cfg"));
+        let mut p2 = Profile::new("p2", "프로파일 2");
+        p2.repo_dir = d.path().join("repo").to_string_lossy().to_string();
+        cfg.upsert(p2).unwrap();
+        // p1 and p2 share repo_dir.
+        let snaps = d.path().join("repo/snapshots");
+        fs::create_dir_all(&snaps).unwrap();
+        fs::write(
+            snaps.join("snap_for_p2.json"),
+            r#"{"id":"snap_for_p2","profile_id":"p2","files":[{"path":"test","size":10}]}"#,
+        )
+        .unwrap();
+        let resolved = s.resolve_profile("snap_for_p2");
+        assert_eq!(resolved.as_ref().map(|p| p.id.as_str()), Some("p2"));
     }
 }

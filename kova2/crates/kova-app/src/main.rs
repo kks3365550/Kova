@@ -490,17 +490,26 @@ fn resolve_profile_id(store: &kova_core::config::ConfigStore, target: &str) -> O
     // 3. 스냅샷 ID 일치 (파일 직접 확인 또는 History DB)
     for p in &profiles {
         let repo = std::path::PathBuf::from(&p.repo_dir);
-        if repo.join("snapshots").join(format!("{t}.json")).exists()
-            || repo
-                .join("snapshots")
-                .join(format!("{t}.json.enc"))
-                .exists()
-        {
+        let snap_json = repo.join("snapshots").join(format!("{t}.json"));
+        let snap_enc = repo.join("snapshots").join(format!("{t}.json.enc"));
+        if snap_json.exists() || snap_enc.exists() {
+            if let Ok(cas) = kova_engine::storage::CasStorage::new(&repo) {
+                if let Ok(m) = cas.load_manifest(t) {
+                    if let Some(ref pid) = m.profile_id {
+                        if store.get(pid).is_some() {
+                            return Some(pid.clone());
+                        }
+                    }
+                }
+            }
             return Some(p.id.clone());
         }
         if let Ok(h) = kova_core::history::History::open(&repo) {
             if let Ok(snaps) = h.list_snapshots() {
-                if snaps.iter().any(|s| s.id == t) {
+                if let Some(s) = snaps.iter().find(|s| s.id == t) {
+                    if !s.profile_id.is_empty() && store.get(&s.profile_id).is_some() {
+                        return Some(s.profile_id.clone());
+                    }
                     return Some(p.id.clone());
                 }
             }
@@ -3780,6 +3789,21 @@ mod tests {
             resolve_profile_id(&store, "20261121_103641"),
             Some("prof_test".into())
         );
+
+        // 4b. Disambiguate by profile_id when multiple profiles share repository
+        let mut p2 = kova_core::config::Profile::new("prof_second", "두번째");
+        p2.repo_dir = dir.join("repo").to_string_lossy().to_string();
+        store.upsert(p2).unwrap();
+        std::fs::write(
+            snap_dir.join("snap_for_second.json"),
+            r#"{"id":"snap_for_second","profile_id":"prof_second","files":[{"path":"b","size":1}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_profile_id(&store, "snap_for_second"),
+            Some("prof_second".into())
+        );
+
         // 5. Unknown string
         assert_eq!(resolve_profile_id(&store, "unknown_12345"), None);
 

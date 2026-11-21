@@ -3,7 +3,7 @@
 ; =========================================================================
 
 #define MyAppName "Kova2"
-#define MyAppVersion "3.15.2"
+#define MyAppVersion "3.15.3"
 #define MyAppPublisher "kks3365550"
 
 [Setup]
@@ -53,6 +53,9 @@ Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM kova-app.exe /IM kova-pe.
 Filename: "{sys}\sc.exe"; Parameters: "stop KovaSvc"; Flags: runhidden waituntilterminated
 Filename: "{app}\kova-service.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM kova-service.exe"; Flags: runhidden waituntilterminated
+
+[InstallDelete]
+Type: files; Name: "{app}\is-*.tmp"
 
 [Code]
 procedure KillKovaProcesses();
@@ -105,10 +108,30 @@ begin
   KillKovaProcesses();
 end;
 
+procedure CleanTempFiles();
+var
+  FindRec: TFindRec;
+begin
+  if FindFirst(ExpandConstant('{app}\is-*.tmp'), FindRec) then
+  begin
+    try
+      repeat
+        DeleteFile(ExpandConstant('{app}\') + FindRec.Name);
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
   begin
     KillKovaProcesses();
+  end;
+  if CurStep = ssPostInstall then
+  begin
+    CleanTempFiles();
   end;
 end;
