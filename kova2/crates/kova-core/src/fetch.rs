@@ -81,7 +81,10 @@ pub fn download(url: &str, max_bytes: u64) -> Result<Vec<u8>, FetchError> {
 }
 
 fn download_with_wait(url: &str, max_bytes: u64, wait: Duration) -> Result<Vec<u8>, FetchError> {
-    let resp = get_with_retry(url, wait)?;
+    read_capped(get_with_retry(url, wait)?, max_bytes)
+}
+
+fn read_capped(resp: ureq::Response, max_bytes: u64) -> Result<Vec<u8>, FetchError> {
     let mut buf = Vec::new();
     resp.into_reader()
         .take(max_bytes + 1)
@@ -92,6 +95,25 @@ fn download_with_wait(url: &str, max_bytes: u64, wait: Duration) -> Result<Vec<u
     }
     Ok(buf)
 }
+
+/// 자산이 없으면(404) Ok(None). 그 밖의 오류는 재시도 경로로 다시 받아 보고, 그래도 실패하면 오류(fail-closed).
+fn download_if_exists(
+    url: &str,
+    max_bytes: u64,
+    wait: Duration,
+) -> Result<Option<Vec<u8>>, FetchError> {
+    match agent().get(url).call() {
+        Ok(r) => read_capped(r, max_bytes).map(Some),
+        Err(ureq::Error::Status(404, _)) => Ok(None),
+        Err(_) => download_with_wait(url, max_bytes, wait).map(Some),
+    }
+}
+
+/// `.sig2` 가 없을 때 옛 `.sig`(zip 바이트만 서명, 태그와 안 묶임)로 검증하는 것을 허용할지.
+/// 기존 설치본(3.15.x/3.16.0)용으로 `.sig` 도 계속 게시하고, 새 릴리즈부터 `.sig2` 를 함께 게시한다.
+/// 계획: `.sig2` 를 게시한 릴리즈가 한 번 나간 뒤 다음 릴리즈에서 false 로 바꾼다
+/// (`.sig2` 를 지우고 옛 `.sig` 만 남기는 공격은 그때까지 `ensure_package_newer` 가 막는다).
+pub const ALLOW_LEGACY_SIG: bool = true;
 
 /// 배포 서명에 쓰는 신뢰 공개키(공개키만 포함). 키를 바꾸면 여기와 릴리즈 서명을 함께 바꾼다.
 pub const TRUSTED_KEYS: &[&str] = &[
@@ -125,7 +147,9 @@ impl From<FetchError> for UpdateError {
     }
 }
 
-/// 패키지(`release_<tag>.zip`)와 서명(`.zip.sig`)을 받아 검증까지 마친 바이트를 돌려준다. 설치는 하지 않는다.
+/// 패키지(`release_<tag>.zip`)와 서명을 받아 검증까지 마친 바이트를 돌려준다. 설치는 하지 않는다.
+/// `.zip.sig2`(태그에 묶인 서명)가 있으면 반드시 그것으로 검증하고(태그 불일치 거부),
+/// 없을 때만 `ALLOW_LEGACY_SIG` 가 켜져 있으면 옛 `.zip.sig` 로 검증한다.
 pub fn fetch_verified(
     base: &str,
     repo: &str,
@@ -133,15 +157,47 @@ pub fn fetch_verified(
     trusted: &[&str],
     max_bytes: u64,
 ) -> Result<Vec<u8>, UpdateError> {
-    let url = package_url(base, repo, tag);
-    let pkg = download(&url, max_bytes)?;
-    let sig = download(&format!("{url}.sig"), 4096)?;
+    fetch_verified_with(
+        base,
+        repo,
+        tag,
+        trusted,
+        max_bytes,
+        ALLOW_LEGACY_SIG,
+        RETRY_WAIT,
+    )
+}
+
+fn parse_sig_file(sig: Vec<u8>) -> Result<String, UpdateError> {
     let sig = String::from_utf8(sig).map_err(|_| UpdateError::BadSignatureFile)?;
     let sig = sig.trim();
     if sig.is_empty() || !sig.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(UpdateError::BadSignatureFile);
     }
-    crate::update::verify_package(&pkg, "", sig, trusted).map_err(UpdateError::Verify)?;
+    Ok(sig.to_string())
+}
+
+fn fetch_verified_with(
+    base: &str,
+    repo: &str,
+    tag: &str,
+    trusted: &[&str],
+    max_bytes: u64,
+    allow_legacy: bool,
+    wait: Duration,
+) -> Result<Vec<u8>, UpdateError> {
+    let url = package_url(base, repo, tag);
+    let pkg = download_with_wait(&url, max_bytes, wait)?;
+    if let Some(sig2) = download_if_exists(&format!("{url}.sig2"), 4096, wait)? {
+        let sig2 = parse_sig_file(sig2)?;
+        crate::update::verify_package_v2(&pkg, tag, &sig2, trusted).map_err(UpdateError::Verify)?;
+        return Ok(pkg);
+    }
+    if !allow_legacy {
+        return Err(UpdateError::Verify(crate::update::VerifyError::NoSignature));
+    }
+    let sig = parse_sig_file(download_with_wait(&format!("{url}.sig"), 4096, wait)?)?;
+    crate::update::verify_package(&pkg, "", &sig, trusted).map_err(UpdateError::Verify)?;
     Ok(pkg)
 }
 
@@ -317,6 +373,141 @@ mod tests {
         let none = zip_with("kova-app.exe", b"MZ no resource");
         assert!(ensure_package_newer(&none, "kova-app.exe", "3.15.4").is_err());
         assert!(ensure_package_newer(&pkg, "other.exe", "1.0").is_err());
+    }
+
+    /// 시험용 릴리즈 자산 서버: 경로→내용 표에 있으면 200, 없으면 404.
+    fn serve_assets(assets: Vec<(String, Vec<u8>)>) -> String {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut s) = conn else { continue };
+                let mut line = String::new();
+                BufReader::new(s.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let resp = match assets.iter().find(|(p, _)| *p == path) {
+                    Some((_, body)) => {
+                        let mut r = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                            body.len()
+                        )
+                        .into_bytes();
+                        r.extend_from_slice(body);
+                        r
+                    }
+                    None => {
+                        b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .to_vec()
+                    }
+                };
+                let _ = s.write_all(&resp);
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn asset(tag: &str, ext: &str, body: &[u8]) -> (String, Vec<u8>) {
+        (
+            format!("/o/Kova/releases/download/{tag}/release_{tag}.zip{ext}"),
+            body.to_vec(),
+        )
+    }
+
+    fn fetch(base: &str, tag: &str, public: &str, legacy: bool) -> Result<Vec<u8>, UpdateError> {
+        fetch_verified_with(
+            base,
+            "o/Kova",
+            tag,
+            &[public],
+            1 << 20,
+            legacy,
+            Duration::from_millis(10),
+        )
+    }
+
+    #[test]
+    fn fetch_verified_prefers_tag_bound_sig2_and_falls_back_to_legacy_sig() {
+        let (private, public) = crate::sign::generate_key_pair().unwrap();
+        let (new_tag, old_tag) = ("kova2-v3.17.0", "kova2-v3.15.0");
+        let new_zip = b"new package".to_vec();
+        let old_zip = b"old package".to_vec();
+        let sig1 = |z: &[u8]| crate::sign::sign_bytes(z, &private).unwrap().into_bytes();
+        let sig2 = |z: &[u8], t: &str| {
+            crate::update::sign_package_v2(z, t, &private)
+                .unwrap()
+                .into_bytes()
+        };
+
+        // 1) 올바른 태그의 .sig2 통과
+        let base = serve_assets(vec![
+            asset(new_tag, "", &new_zip),
+            asset(new_tag, ".sig", &sig1(&new_zip)),
+            asset(new_tag, ".sig2", &sig2(&new_zip, new_tag)),
+        ]);
+        assert_eq!(fetch(&base, new_tag, &public, true).unwrap(), new_zip);
+        assert_eq!(fetch(&base, new_tag, &public, false).unwrap(), new_zip);
+
+        // 2) 옛 정식 패키지를 새 태그로 올림: .sig 는 맞아도 .sig2 의 태그가 달라 거부(폴백 안 함)
+        let base = serve_assets(vec![
+            asset(new_tag, "", &old_zip),
+            asset(new_tag, ".sig", &sig1(&old_zip)),
+            asset(new_tag, ".sig2", &sig2(&old_zip, old_tag)),
+        ]);
+        assert!(matches!(
+            fetch(&base, new_tag, &public, true),
+            Err(UpdateError::Verify(
+                crate::update::VerifyError::BadSignature
+            ))
+        ));
+
+        // 3) 변조 zip 거부
+        let base = serve_assets(vec![
+            asset(new_tag, "", b"tampered"),
+            asset(new_tag, ".sig", &sig1(&new_zip)),
+            asset(new_tag, ".sig2", &sig2(&new_zip, new_tag)),
+        ]);
+        assert!(matches!(
+            fetch(&base, new_tag, &public, true),
+            Err(UpdateError::Verify(
+                crate::update::VerifyError::BadSignature
+            ))
+        ));
+
+        // 4) .sig2 형식 오류면 .sig 로 폴백하지 않는다
+        let base = serve_assets(vec![
+            asset(new_tag, "", &new_zip),
+            asset(new_tag, ".sig", &sig1(&new_zip)),
+            asset(new_tag, ".sig2", b"not hex!"),
+        ]);
+        assert!(matches!(
+            fetch(&base, new_tag, &public, true),
+            Err(UpdateError::BadSignatureFile)
+        ));
+
+        // 5) .sig2 없음: 폴백 허용이면 옛 .sig 로 통과(기존 릴리즈 호환), 불허면 거부
+        let base = serve_assets(vec![
+            asset(new_tag, "", &new_zip),
+            asset(new_tag, ".sig", &sig1(&new_zip)),
+        ]);
+        assert_eq!(fetch(&base, new_tag, &public, true).unwrap(), new_zip);
+        assert!(matches!(
+            fetch(&base, new_tag, &public, false),
+            Err(UpdateError::Verify(crate::update::VerifyError::NoSignature))
+        ));
+
+        // 6) .sig2 없음 + 틀린 .sig·서명 없음은 폴백해도 거부
+        let base = serve_assets(vec![
+            asset(new_tag, "", &new_zip),
+            asset(new_tag, ".sig", &sig1(b"other")),
+        ]);
+        assert!(fetch(&base, new_tag, &public, true).is_err());
+        let base = serve_assets(vec![asset(new_tag, "", &new_zip)]);
+        assert!(matches!(
+            fetch(&base, new_tag, &public, true),
+            Err(UpdateError::Fetch(_))
+        ));
     }
 
     #[test]

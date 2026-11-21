@@ -1,4 +1,5 @@
-# Build the Kova2 update package: dist\release_<tag>.zip (+ .sig when a private key is given).
+# Build the Kova2 update package: dist\release_<tag>.zip (+ .sig and tag-bound .sig2 when a private key is given).
+# Publish all three assets: .zip, .zip.sig (for installs up to 3.16.0) and .zip.sig2 (bound to -Tag).
 # Usage: powershell -File make_update.ps1 -Tag kova2-v0.1.2 [-PrivateKey C:\secure\release_priv.pem]
 # The private key must stay outside the repository. Without -PrivateKey the package is built unsigned
 # (the app refuses unsigned packages, so it cannot be installed by auto-update).
@@ -24,7 +25,7 @@ foreach ($f in @("kova-app.exe", "kova-service.exe")) {
     Copy-Item $src $stage
 }
 $zip = Join-Path $dist ("release_" + $Tag + ".zip")
-Remove-Item -Force $zip, ($zip + ".sig") -ErrorAction SilentlyContinue
+Remove-Item -Force $zip, ($zip + ".sig"), ($zip + ".sig2") -ErrorAction SilentlyContinue
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
 Remove-Item -Recurse -Force $stage
 Write-Output ("package: " + $zip)
@@ -35,7 +36,7 @@ if ($PrivateKey -ne "") {
     if ($full.StartsWith((Split-Path -Parent $root), [System.StringComparison]::OrdinalIgnoreCase)) {
         Write-Warning "private key is inside the project tree; keep it outside the repository"
     }
-    cargo run --release -q -p kova-core --example sign_release -- sign $zip $PrivateKey
+    cargo run --release -q -p kova-core --example sign_release -- sign $zip $PrivateKey $Tag
     if ($LASTEXITCODE -ne 0) { throw "signing failed" }
 } else {
     Write-Output "unsigned package (no -PrivateKey given)"

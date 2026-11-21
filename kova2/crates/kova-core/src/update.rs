@@ -75,6 +75,55 @@ pub fn verify_package(
     }
 }
 
+/// `.sig2` 서명 대상의 도메인 분리 접두어(다른 용도의 서명과 섞이지 않게 한다).
+pub const RELEASE_SIG2_DOMAIN: &str = "kova2-release-v2\n";
+
+/// `.sig2` 서명 대상: 접두어 + 태그 + "\n" + sha256(zip) 소문자 16진 64자.
+/// 서명이 태그에 묶여, 옛 정식 패키지를 새 태그로 올려도 검증에 실패한다.
+pub fn release_message_v2(tag: &str, zip_bytes: &[u8]) -> Vec<u8> {
+    format!(
+        "{RELEASE_SIG2_DOMAIN}{tag}\n{:x}",
+        Sha256::digest(zip_bytes)
+    )
+    .into_bytes()
+}
+
+/// `.sig2` 를 만든다(서명 도구용). 태그가 비어 있으면 거부.
+pub fn sign_package_v2(
+    zip_bytes: &[u8],
+    tag: &str,
+    private_pem: &str,
+) -> Result<String, crate::sign::SignError> {
+    if tag.trim().is_empty() || tag.contains(['\n', '\r']) {
+        return Err(crate::sign::SignError("태그가 비었거나 형식 오류".into()));
+    }
+    crate::sign::sign_bytes(&release_message_v2(tag, zip_bytes), private_pem)
+}
+
+/// `.sig2` 검증: 패키지 바이트와 기대 태그로 서명 대상을 다시 만들어 신뢰 키 중 하나로 확인한다(fail-closed).
+pub fn verify_package_v2(
+    zip_bytes: &[u8],
+    tag: &str,
+    signature_hex: &str,
+    trusted_pems: &[&str],
+) -> Result<(), VerifyError> {
+    if signature_hex.is_empty() {
+        return Err(VerifyError::NoSignature);
+    }
+    if trusted_pems.is_empty() {
+        return Err(VerifyError::NoTrustedKeys);
+    }
+    if tag.trim().is_empty() || tag.contains(['\n', '\r']) {
+        return Err(VerifyError::BadSignature);
+    }
+    let msg = release_message_v2(tag, zip_bytes);
+    if crate::sign::verify_bytes_any(&msg, signature_hex, trusted_pems) {
+        Ok(())
+    } else {
+        Err(VerifyError::BadSignature)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,6 +181,55 @@ mod tests {
         assert_eq!(
             verify_package(b"tampered", "", &sig, &[&public]),
             Err(VerifyError::BadSignature)
+        );
+    }
+
+    #[test]
+    fn sig2_is_bound_to_tag_and_package() {
+        let (private, public) = crate::sign::generate_key_pair().unwrap();
+        let zip = b"kova update package v2";
+        let sig2 = sign_package_v2(zip, "kova2-v3.16.1", &private).unwrap();
+        assert_eq!(
+            verify_package_v2(zip, "kova2-v3.16.1", &sig2, &[&public]),
+            Ok(()),
+            "올바른 태그 통과"
+        );
+        assert_eq!(
+            verify_package_v2(zip, "kova2-v3.17.0", &sig2, &[&public]),
+            Err(VerifyError::BadSignature),
+            "다른 태그로 올린 옛 패키지는 거부"
+        );
+        assert_eq!(
+            verify_package_v2(b"tampered", "kova2-v3.16.1", &sig2, &[&public]),
+            Err(VerifyError::BadSignature),
+            "변조 zip 거부"
+        );
+        // v1(.sig, zip 바이트 서명)을 .sig2 자리에 넣어도 통과하지 않는다(도메인 분리)
+        let sig1 = crate::sign::sign_bytes(zip, &private).unwrap();
+        assert_eq!(
+            verify_package_v2(zip, "kova2-v3.16.1", &sig1, &[&public]),
+            Err(VerifyError::BadSignature)
+        );
+        assert_eq!(
+            verify_package(zip, "", &sig2, &[&public]),
+            Err(VerifyError::BadSignature)
+        );
+        let (_, other) = crate::sign::generate_key_pair().unwrap();
+        assert_eq!(
+            verify_package_v2(zip, "kova2-v3.16.1", &sig2, &[&other]),
+            Err(VerifyError::BadSignature)
+        );
+        assert_eq!(
+            verify_package_v2(zip, "kova2-v3.16.1", "", &[&public]),
+            Err(VerifyError::NoSignature)
+        );
+        assert!(sign_package_v2(zip, " ", &private).is_err());
+        assert!(sign_package_v2(zip, "a\nb", &private).is_err());
+        // 고정 인코딩 확인
+        let msg = String::from_utf8(release_message_v2("t1", b"")).unwrap();
+        assert_eq!(
+            msg,
+            "kova2-release-v2\nt1\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         );
     }
 }
