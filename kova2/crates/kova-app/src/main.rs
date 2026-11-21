@@ -220,6 +220,41 @@ fn source_rows_with(
     out
 }
 
+/// 원본 목록 중 없는 경로 수(있는지 보는 방법은 받는다: 시험용).
+fn missing_count_with(joined: &str, exists: impl Fn(&str) -> bool) -> usize {
+    joined
+        .split(';')
+        .map(str::trim)
+        .filter(|x| !x.is_empty() && !exists(x))
+        .count()
+}
+
+/// '없는 항목 정리': 있는 경로만 남겨 ';' 로 잇는다.
+fn keep_existing_with(joined: &str, exists: impl Fn(&str) -> bool) -> String {
+    joined
+        .split(';')
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && exists(s))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+/// 찾은 설치 프로그램 중 원본 목록에 아직 없는 것만 (이름, 경로들, 체크 안 함)으로.
+fn prog_candidates(
+    found: Vec<(String, Vec<String>)>,
+    sources: &str,
+) -> Vec<(String, Vec<String>, bool)> {
+    let have: std::collections::HashSet<String> = sources
+        .split(';')
+        .filter_map(|s| program_of(s).map(|x| x.0))
+        .collect();
+    found
+        .into_iter()
+        .filter(|(n, _)| !have.contains(&prog_norm(n)))
+        .map(|(n, p)| (n, p, false))
+        .collect()
+}
+
 /// 이 PC에 설치된 프로그램(이름, 백업할 경로들). 시작 메뉴·Program Files·AppData 폴더 이름으로 찾는다.
 fn installed_programs() -> Vec<(String, Vec<String>)> {
     let env = |k: &str| std::env::var_os(k).map(std::path::PathBuf::from);
@@ -2578,35 +2613,50 @@ fn main() -> Result<(), slint::PlatformError> {
             set_wizard_sources(&w, &list);
         });
         let weak = w.as_weak();
+        // 원본마다 있는지 확인(끊긴 네트워크 경로는 오래 걸린다)은 스레드에서 하고, 결과는 UI 스레드에서 넣는다
         w.on_sync_form_list(move |s| {
-            let Some(w) = weak.upgrade() else { return };
-            let list: Vec<SrcRow> = source_rows(&s)
-                .into_iter()
-                .map(|(kind, title, sub, key)| SrcRow {
-                    kind,
-                    title: title.into(),
-                    sub: sub.into(),
-                    key: key.into(),
-                })
-                .collect();
-            w.set_form_list(std::rc::Rc::new(slint::VecModel::from(list)).into());
-            let missing = s
-                .split(';')
-                .map(str::trim)
-                .filter(|x| !x.is_empty() && !std::path::Path::new(x).exists())
-                .count();
-            w.set_form_missing(missing as i32);
+            let (weak, s) = (weak.clone(), s.to_string());
+            std::thread::spawn(move || {
+                let rows = source_rows(&s);
+                let missing = missing_count_with(&s, |p| std::path::Path::new(p).exists());
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(w) = weak.upgrade() else { return };
+                    if w.get_form_sources() != s.as_str() {
+                        return; // 그사이 목록이 바뀌었다: 새 확인 결과가 따로 온다
+                    }
+                    let list: Vec<SrcRow> = rows
+                        .into_iter()
+                        .map(|(kind, title, sub, key)| SrcRow {
+                            kind,
+                            title: title.into(),
+                            sub: sub.into(),
+                            key: key.into(),
+                        })
+                        .collect();
+                    w.set_form_list(std::rc::Rc::new(slint::VecModel::from(list)).into());
+                    w.set_form_missing(missing as i32);
+                });
+            });
         });
         let weak = w.as_weak();
+        let gate = BusyGate::default();
         w.on_form_clean(move || {
             let Some(w) = weak.upgrade() else { return };
-            let keep: Vec<String> = w
-                .get_form_sources()
-                .split(';')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty() && std::path::Path::new(s).exists())
-                .collect();
-            w.set_form_sources(keep.join(";").into());
+            if !gate.try_begin() {
+                return;
+            }
+            let (weak, gate) = (weak.clone(), gate.clone());
+            let s = w.get_form_sources().to_string();
+            std::thread::spawn(move || {
+                let keep = keep_existing_with(&s, |p| std::path::Path::new(p).exists());
+                let _ = slint::invoke_from_event_loop(move || {
+                    gate.end();
+                    let Some(w) = weak.upgrade() else { return };
+                    if w.get_form_sources() == s.as_str() {
+                        w.set_form_sources(keep.into());
+                    }
+                });
+            });
         });
         let weak = w.as_weak();
         w.on_form_add(move |paths| {
@@ -2639,7 +2689,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .collect();
             w.set_form_sources(list.join(";").into());
         });
-        type Picks = std::rc::Rc<std::cell::RefCell<Vec<(String, Vec<String>, bool)>>>;
+        type Picks = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<String>, bool)>>>;
         let picks: Picks = Default::default();
         let show_picks = |w: &MainWindow, p: &[(String, Vec<String>, bool)]| {
             let rows: Vec<ProgPick> = p
@@ -2654,26 +2704,29 @@ fn main() -> Result<(), slint::PlatformError> {
             w.set_prog_list(std::rc::Rc::new(slint::VecModel::from(rows)).into());
         };
         let (weak, pk) = (w.as_weak(), picks.clone());
+        let gate = BusyGate::default();
+        // 설치 프로그램 폴더 스캔은 스레드에서 하고, 이미 넣은 프로그램은 결과를 넣을 때의 목록으로 거른다
         w.on_prog_open(move || {
-            let Some(w) = weak.upgrade() else { return };
-            let have: std::collections::HashSet<String> = w
-                .get_form_sources()
-                .split(';')
-                .filter_map(|s| program_of(s).map(|x| x.0))
-                .collect();
-            let list: Vec<(String, Vec<String>, bool)> = installed_programs()
-                .into_iter()
-                .filter(|(n, _)| !have.contains(&prog_norm(n)))
-                .map(|(n, p)| (n, p, false))
-                .collect();
-            show_picks(&w, &list);
-            *pk.borrow_mut() = list;
-            w.set_prog_shown(true);
+            if !gate.try_begin() {
+                return;
+            }
+            let (weak, pk, gate) = (weak.clone(), pk.clone(), gate.clone());
+            std::thread::spawn(move || {
+                let found = installed_programs();
+                let _ = slint::invoke_from_event_loop(move || {
+                    gate.end();
+                    let Some(w) = weak.upgrade() else { return };
+                    let list = prog_candidates(found, &w.get_form_sources());
+                    show_picks(&w, &list);
+                    *pk.lock().unwrap() = list;
+                    w.set_prog_shown(true);
+                });
+            });
         });
         let (weak, pk) = (w.as_weak(), picks.clone());
         w.on_prog_toggle(move |i| {
             let Some(w) = weak.upgrade() else { return };
-            let mut list = pk.borrow_mut();
+            let mut list = pk.lock().unwrap();
             if let Some(x) = list.get_mut(i as usize) {
                 x.2 = !x.2;
             }
@@ -2688,7 +2741,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            for (_, paths, checked) in pk.borrow().iter() {
+            for (_, paths, checked) in pk.lock().unwrap().iter() {
                 if *checked {
                     for p in paths {
                         if !cur.iter().any(|x| x.eq_ignore_ascii_case(p)) {
@@ -3740,6 +3793,38 @@ mod tests {
             pick_plan("form-repo", Err("x".into())),
             PickPlan::Error("선택 창을 열지 못했습니다: x".into())
         );
+    }
+
+    #[test]
+    fn missing_and_clean_use_given_exists() {
+        let s = " C:\\a ; \\\\nas\\gone ;;C:\\b";
+        let ex = |p: &str| !p.contains("gone");
+        assert_eq!(super::missing_count_with(s, ex), 1);
+        assert_eq!(super::keep_existing_with(s, ex), "C:\\a;C:\\b");
+        assert_eq!(super::missing_count_with("", ex), 0);
+    }
+
+    #[test]
+    fn prog_candidates_skips_programs_already_in_sources() {
+        let found = vec![
+            (
+                "Tailscale".to_string(),
+                vec!["C:\\Program Files\\Tailscale".to_string()],
+            ),
+            (
+                "Git".to_string(),
+                vec!["C:\\Program Files\\Git".to_string()],
+            ),
+        ];
+        let have = "C:\\Users\\a\\Desktop;C:\\Users\\a\\AppData\\Local\\Tailscale";
+        let names: Vec<String> = super::prog_candidates(found, have)
+            .into_iter()
+            .map(|(n, _, c)| {
+                assert!(!c);
+                n
+            })
+            .collect();
+        assert_eq!(names, ["Git"]);
     }
 
     #[test]
