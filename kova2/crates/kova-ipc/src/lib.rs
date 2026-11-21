@@ -14,6 +14,17 @@ pub const PIPE_NAME: &str = r"\\.\pipe\kova";
 /// 클라이언트가 읽지 않아 쓰기가 막히면 이 시간 뒤 연결을 끊는다(구독이 서비스 쪽에 쌓이지 않게).
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// 토큰·복구 코드 같은 비밀 문자열. 전송(JSON)은 그대로 하고 Debug 출력은 가린다(로그에 남지 않게).
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct Secret(pub String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(***)")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "cmd")]
 pub enum Request {
@@ -29,6 +40,15 @@ pub enum Request {
     },
     /// 연결을 유지한 채 이후 모든 작업 이벤트를 받는다.
     Subscribe,
+    /// 구글 드라이브 연결 여부(토큰 파일은 SYSTEM·관리자만 열 수 있어 서비스가 확인한다). 답: `GdriveStatus`.
+    GdriveStatus,
+    /// 앱이 구글 로그인으로 받은 토큰(JSON)을 서비스가 보호해 저장한다. 답: `Done` / `Error`.
+    /// 토큰 내용을 돌려주는 요청은 만들지 않는다.
+    GdriveStoreToken {
+        token: Secret,
+    },
+    /// 구글에 토큰 폐기를 요청하고 저장된 토큰을 지운다. 답: `Done`.
+    GdriveDisconnect,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -67,6 +87,13 @@ pub enum Event {
         snapshot_id: Option<String>,
     },
     Error {
+        message: String,
+    },
+    GdriveStatus {
+        connected: bool,
+    },
+    /// 요청을 처리했다(사람이 읽을 결과 문구).
+    Done {
         message: String,
     },
 }
@@ -521,6 +548,17 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert!(ok, "끊김이 반복된 뒤에도 Ping 에 응답해야 함");
+    }
+
+    #[test]
+    fn secret_is_sent_as_plain_string_but_hidden_in_debug() {
+        let r = Request::GdriveStoreToken {
+            token: Secret("tok-123".into()),
+        };
+        let line = serde_json::to_string(&r).unwrap();
+        assert_eq!(line, r#"{"cmd":"GdriveStoreToken","token":"tok-123"}"#);
+        assert_eq!(serde_json::from_str::<Request>(&line).unwrap(), r);
+        assert!(!format!("{r:?}").contains("tok-123"));
     }
 
     #[test]

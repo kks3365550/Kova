@@ -1796,6 +1796,30 @@ fn send_failure(res: &std::io::Result<Vec<kova_ipc::Event>>) -> Option<String> {
     }
 }
 
+/// 서비스에 요청 하나를 보내고 응답을 모은다(화면 스레드가 아닌 곳에서 부른다).
+fn ipc_once(req: &kova_ipc::Request) -> std::io::Result<Vec<kova_ipc::Event>> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(kova_ipc::request(kova_ipc::PIPE_NAME, req))
+}
+
+/// 결과 문구(`Done`)를 돌려주는 서비스 요청. 서비스에 닿지 못하거나 거절되면 Err(사유).
+fn ipc_done(req: &kova_ipc::Request) -> Result<String, String> {
+    let res = ipc_once(req);
+    if let Some(why) = send_failure(&res) {
+        return Err(why);
+    }
+    res.ok()
+        .into_iter()
+        .flatten()
+        .find_map(|e| match e {
+            kova_ipc::Event::Done { message } => Some(message),
+            _ => None,
+        })
+        .ok_or_else(|| "서비스가 응답하지 않았습니다(서비스를 최신 버전으로 업데이트하세요)".into())
+}
+
 /// 서비스에 작업을 요청한다. 요청이 거절되거나 서비스에 닿지 못하면 화면의 완료 카드에 실패를 띄운다.
 fn send(weak: slint::Weak<MainWindow>, kind: impl Into<String>, id: String) {
     let kind: String = kind.into();
@@ -2735,9 +2759,23 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
     }
-    w.set_gdrive_connected(kova_core::gdrive::is_connected(
-        &kova_service::default_config_dir(),
-    ));
+    {
+        // 토큰 파일은 SYSTEM·관리자만 열 수 있으므로 연결 여부는 서비스에 묻는다(서비스가 없으면 파일 유무로 대신)
+        let weak = w.as_weak();
+        std::thread::spawn(move || {
+            let connected = match ipc_once(&kova_ipc::Request::GdriveStatus) {
+                Ok(evs) => evs.iter().find_map(|e| match e {
+                    kova_ipc::Event::GdriveStatus { connected } => Some(*connected),
+                    _ => None,
+                }),
+                Err(_) => None,
+            }
+            .unwrap_or_else(|| {
+                kova_core::gdrive::is_connected(&kova_service::default_config_dir())
+            });
+            let _ = weak.upgrade_in_event_loop(move |w| w.set_gdrive_connected(connected));
+        });
+    }
     {
         let weak = w.as_weak();
         w.on_connect_gdrive(move || {
@@ -2766,14 +2804,20 @@ fn main() -> Result<(), slint::PlatformError> {
             let weak = weak.clone();
             std::thread::spawn(move || {
                 let cancel = std::sync::atomic::AtomicBool::new(false);
-                let r = kova_core::gdrive::login(
+                // 로그인은 앱이 하고, 받은 토큰은 서비스가 SYSTEM·관리자 전용 파일로 저장한다
+                let r = kova_core::gdrive::login_token(
                     &kova_core::gdrive::Endpoints::default(),
                     &creds,
-                    &dir,
                     open_url,
                     &cancel,
                     std::time::Duration::from_secs(300),
-                );
+                )
+                .and_then(|token| {
+                    ipc_done(&kova_ipc::Request::GdriveStoreToken {
+                        token: kova_ipc::Secret(token),
+                    })
+                    .map(|_| ())
+                });
                 if r.is_ok() {
                     set_offsite_provider("gdrive");
                 }
@@ -2810,15 +2854,18 @@ fn main() -> Result<(), slint::PlatformError> {
             // 토큰 폐기는 네트워크 요청이라 화면이 멈추지 않게 별도 스레드에서 한다
             let weak = weak.clone();
             std::thread::spawn(move || {
-                kova_core::gdrive::disconnect(
-                    &kova_service::default_config_dir(),
-                    &kova_core::gdrive::Endpoints::default(),
-                );
-                set_offsite_provider("local");
+                // 토큰 폐기·삭제는 토큰 파일을 열 수 있는 서비스가 한다
+                let r = ipc_done(&kova_ipc::Request::GdriveDisconnect);
+                if r.is_ok() {
+                    set_offsite_provider("local");
+                }
                 GDRIVE_BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
-                let _ = weak.upgrade_in_event_loop(|w| {
-                    w.set_gdrive_connected(false);
-                    w.set_gdrive_text("연결을 해제했습니다.".into());
+                let _ = weak.upgrade_in_event_loop(move |w| match r {
+                    Ok(m) => {
+                        w.set_gdrive_connected(false);
+                        w.set_gdrive_text(m.into());
+                    }
+                    Err(e) => w.set_gdrive_text(format!("연결 해제 실패: {e}").into()),
                 });
             });
         });

@@ -1355,6 +1355,36 @@ impl kova_ipc::Handler for IpcHandler {
                 });
                 Reply::Stream(out)
             }
+            // 구글 드라이브 토큰: 파일은 SYSTEM·관리자만 열 수 있으므로 일반 권한 앱의 연결·상태·해제를 대신한다.
+            // 토큰 내용을 돌려주는 요청은 없고, 토큰은 기록하지 않는다.
+            Request::GdriveStatus => Reply::Once(vec![Event::GdriveStatus {
+                connected: kova_core::gdrive::is_connected(&self.0 .0.config_dir),
+            }]),
+            Request::GdriveStoreToken { token } => {
+                let cfg = &self.0 .0.config_dir;
+                Reply::Once(vec![match kova_core::gdrive::store_token(cfg, &token.0) {
+                    Ok(()) => {
+                        kova_core::applog::write(cfg, "INFO", "구글 드라이브 연결: 토큰 저장");
+                        Event::Done {
+                            message: "구글 드라이브를 연결했습니다".into(),
+                        }
+                    }
+                    Err(e) => Event::Error { message: e },
+                }])
+            }
+            Request::GdriveDisconnect => {
+                // 토큰 폐기는 네트워크 요청이라 IPC 작업 스레드를 막지 않게 따로 돌린다
+                let cfg = self.0 .0.config_dir.clone();
+                let (tx, rx) = sync_channel(1);
+                std::thread::spawn(move || {
+                    kova_core::gdrive::disconnect(&cfg, &kova_core::gdrive::Endpoints::default());
+                    kova_core::applog::write(&cfg, "INFO", "구글 드라이브 연결 해제");
+                    let _ = tx.send(Event::Done {
+                        message: "연결을 해제했습니다.".into(),
+                    });
+                });
+                Reply::Stream(rx)
+            }
         }
     }
 }
@@ -2111,6 +2141,41 @@ mod tests {
         // 모르는 종류는 권한과 무관하게 "알 수 없는 작업"
         assert!(first_error(h.handle(run_now("format", "p1"), admin))
             .is_some_and(|m| m.contains("알 수 없는")));
+    }
+
+    /// 일반 사용자 앱이 받은 구글 토큰을 서비스가 저장하고, 상태는 연결 여부만 돌려준다.
+    #[test]
+    fn gdrive_token_is_stored_by_service_and_status_reveals_only_connected() {
+        use kova_ipc::{Caller, Event, Handler, Request, Secret};
+        let (d, s) = setup(true);
+        let h = IpcHandler(s.clone());
+        let user = Caller { privileged: false };
+        let status = |h: &IpcHandler| match h.handle(Request::GdriveStatus, user) {
+            kova_ipc::Reply::Once(v) => v,
+            kova_ipc::Reply::Stream(_) => panic!("Once 여야 함"),
+        };
+        assert_eq!(status(&h), vec![Event::GdriveStatus { connected: false }]);
+        let bad = Request::GdriveStoreToken {
+            token: Secret("garbage".into()),
+        };
+        assert!(first_error(h.handle(bad, user)).is_some());
+        assert_eq!(status(&h), vec![Event::GdriveStatus { connected: false }]);
+        let tok = r#"{"refresh":"RT-secret","access":"AT-secret","expires_at":0}"#;
+        let ok = h.handle(
+            Request::GdriveStoreToken {
+                token: Secret(tok.into()),
+            },
+            user,
+        );
+        assert!(
+            matches!(ok, kova_ipc::Reply::Once(ref v) if matches!(v[..], [Event::Done { .. }]))
+        );
+        assert_eq!(status(&h), vec![Event::GdriveStatus { connected: true }]);
+        // 토큰은 로그에 남지 않는다
+        let log = fs::read_to_string(kova_core::applog::log_path(&d.path().join("cfg")))
+            .unwrap_or_default();
+        assert!(log.contains("토큰 저장"), "{log}");
+        assert!(!log.contains("RT-secret") && !log.contains("AT-secret"));
     }
 
     #[test]
