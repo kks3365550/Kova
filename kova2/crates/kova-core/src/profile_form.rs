@@ -10,10 +10,8 @@ fn abs_ok(p: &str) -> bool {
 }
 
 fn norm(p: &str) -> String {
-    p.trim()
-        .trim_matches('"')
-        .trim()
-        .replace('/', "\\")
+    // `..`·`.` 를 풀어야 `D:\a\..\b` 같은 경로가 겹침 검사를 빠져나가지 않는다
+    crate::restore_target::lexical_normalize(&p.trim().trim_matches('"').trim().replace('/', "\\"))
         .trim_end_matches('\\')
         .to_lowercase()
 }
@@ -209,6 +207,10 @@ mod tests {
         assert!(bad("a", &src, "D:\\", "5", "7").is_err());
         assert!(bad("a", &src, "relative", "5", "7").is_err());
         assert!(bad("a", &src, &format!("{src}\\sub"), "5", "7").is_err());
+        // `..` 로 돌아가도 겹침을 잡는다
+        let zz = format!("{}\\zz\\..\\src\\sub", d.path().display());
+        assert!(bad("a", &src, &zz, "5", "7").is_err());
+        assert!(bad("a", &src, &format!("{repo}\\..\\src\\inner"), "5", "7").is_err());
         assert!(bad("a", &src, &repo, "0", "7").is_err());
         assert!(bad("a", &src, &repo, "5", "abc").is_err());
         assert!(bad("a", &src, r"\\.\PhysicalDrive0", "5", "7").is_err());

@@ -27,6 +27,32 @@ impl std::fmt::Display for TargetError {
     }
 }
 
+/// `\` 로 구분된 Windows 경로의 `.`·`..`·빈 조각을 글자 그대로 풀어 정리한다(파일 시스템은 보지 않는다).
+/// 드라이브(`D:`)나 UNC 공유(`\\서버\공유`) 위로는 올라가지 않는다.
+pub(crate) fn lexical_normalize(path: &str) -> String {
+    let (prefix, rest) = if let Some(r) = path.strip_prefix("\\\\") {
+        let mut it = r.splitn(3, '\\');
+        let server = it.next().unwrap_or("");
+        let share = it.next().unwrap_or("");
+        (format!("\\\\{server}\\{share}"), it.next().unwrap_or(""))
+    } else if path.len() >= 2 && path.as_bytes()[1] == b':' {
+        (path[..2].to_string(), &path[2..])
+    } else {
+        (String::new(), path)
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    for c in rest.split('\\') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            x => parts.push(x),
+        }
+    }
+    format!("{prefix}\\{}", parts.join("\\"))
+}
+
 /// 통과하면 정리된 대상 경로를 돌려준다. 폴더는 아직 만들지 않는다(엔진이 만든다).
 pub fn check(target: &str, repo: &Path) -> Result<PathBuf, TargetError> {
     let t = target.trim().trim_matches('"').trim();
@@ -37,19 +63,19 @@ pub fn check(target: &str, repo: &Path) -> Result<PathBuf, TargetError> {
     if norm.starts_with("\\\\.\\") || norm.starts_with("\\\\?\\") {
         return Err(TargetError::Device);
     }
-    let p = PathBuf::from(&norm);
     let b = norm.as_bytes();
     let unc = norm.starts_with("\\\\");
     if !unc && !(b.len() >= 3 && b[1] == b':' && b[2] == b'\\') {
         // "D:" 처럼 문자만 있는 경우도 여기서 걸린다
         return Err(TargetError::NotAbsolute);
     }
+    // `D:\a\..\저장소\x` 처럼 `..` 로 돌아가는 경로가 저장소 안쪽·드라이브 루트 검사를 빠져나가지 않게 정리한다
+    let p = PathBuf::from(lexical_normalize(&norm));
     if p.parent().is_none() || p.file_name().is_none() {
         return Err(TargetError::DriveRoot);
     }
     let lower = |x: &Path| {
-        x.to_string_lossy()
-            .replace('/', "\\")
+        lexical_normalize(&x.to_string_lossy().replace('/', "\\"))
             .trim_end_matches('\\')
             .to_lowercase()
     };
@@ -105,6 +131,29 @@ mod tests {
         assert_eq!(
             check(r"\\.\PhysicalDrive0", &repo),
             Err(TargetError::Device)
+        );
+    }
+
+    /// `..`·`.` 로 돌아가는 경로도 정리한 뒤 검사한다(저장소 안쪽·드라이브 루트 우회 차단).
+    #[test]
+    fn dot_dot_paths_are_normalized_before_checks() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = d.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let sneaky = format!("{}\\other\\..\\repo\\.\\sub", d.path().display());
+        assert_eq!(check(&sneaky, &repo), Err(TargetError::InsideRepo));
+        let via_repo = d.path().join("other").join("..").join("REPO").join("x");
+        assert_eq!(
+            check(via_repo.to_str().unwrap(), &repo),
+            Err(TargetError::InsideRepo)
+        );
+        assert_eq!(check(r"D:\a\..", &repo), Err(TargetError::DriveRoot));
+        assert_eq!(check(r"D:\..\..", &repo), Err(TargetError::DriveRoot));
+        let ok = format!("{}\\x\\..\\fresh", d.path().display());
+        assert_eq!(check(&ok, &repo).unwrap(), d.path().join("fresh"));
+        assert_eq!(
+            lexical_normalize(r"\\srv\share\a\..\..\b"),
+            r"\\srv\share\b"
         );
     }
 }

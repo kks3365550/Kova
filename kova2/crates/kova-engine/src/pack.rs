@@ -27,18 +27,31 @@ pub fn idx_file(repo: &Path, id: &str) -> PathBuf {
     packs_dir(repo).join(format!("{id}.idx"))
 }
 
-/// 색인 한 개를 읽는다. 팩 파일이 없거나 색인이 가리키는 범위보다 짧으면 None(그 팩은 쓰지 않는다).
+/// 색인 한 개를 읽는다. 팩 파일이나 색인이 없으면 None. 형식이 틀리거나 팩 범위를 벗어나는 줄은
+/// 그 줄만 건너뛴다(한 줄 오류로 팩 안의 다른 블롭까지 버리지 않는다).
 pub fn read_idx(repo: &Path, id: &str) -> Option<Vec<(String, PackEntry)>> {
-    let text = fs::read_to_string(idx_file(repo, id)).ok()?;
+    read_idx_checked(repo, id).map(|(v, _)| v)
+}
+
+/// `read_idx` 와 같되 건너뛴 잘못된 줄 수도 돌려준다(정리(GC)는 잘못된 줄이 있는 팩을 지우지 않는다).
+pub fn read_idx_checked(repo: &Path, id: &str) -> Option<(Vec<(String, PackEntry)>, usize)> {
+    let text = fs::read(idx_file(repo, id)).ok()?;
+    let text = String::from_utf8_lossy(&text);
     let pack_len = fs::metadata(pack_file(repo, id)).ok()?.len();
     let mut out = Vec::new();
+    let mut bad = 0usize;
     for line in text.lines().filter(|l| !l.trim().is_empty()) {
         let mut it = line.split_whitespace();
-        let (h, o, l) = (it.next()?, it.next()?, it.next()?);
-        let (offset, len): (u64, u64) = (o.parse().ok()?, l.parse().ok()?);
-        if offset.checked_add(len)? > pack_len {
-            return None;
-        }
+        let parsed = (|| {
+            let (h, o, l) = (it.next()?, it.next()?, it.next()?);
+            let (offset, len): (u64, u64) = (o.parse().ok()?, l.parse().ok()?);
+            (crate::storage::is_valid_hash(h) && offset.checked_add(len)? <= pack_len)
+                .then_some((h, offset, len))
+        })();
+        let Some((h, offset, len)) = parsed else {
+            bad += 1;
+            continue;
+        };
         out.push((
             h.to_string(),
             PackEntry {
@@ -48,7 +61,7 @@ pub fn read_idx(repo: &Path, id: &str) -> Option<Vec<(String, PackEntry)>> {
             },
         ));
     }
-    Some(out)
+    Some((out, bad))
 }
 
 /// 저장소의 모든 유효한 팩 id.
@@ -187,15 +200,36 @@ mod tests {
     fn pack_without_index_or_truncated_pack_is_ignored() {
         let d = tempfile::tempdir().unwrap();
         let id = write_pack(d.path(), &items()).unwrap();
-        // 팩이 잘리면 그 팩 전체를 쓰지 않는다(잘못된 바이트를 돌려주느니 없는 편이 낫다)
+        // 팩이 잘리면 잘린 범위를 가리키는 블롭만 쓰지 않는다(앞쪽의 온전한 블롭은 그대로 읽힌다)
         let p = pack_file(d.path(), &id);
         let bytes = fs::read(&p).unwrap();
         fs::write(&p, &bytes[..bytes.len() - 10]).unwrap();
-        assert!(load_index(d.path()).is_empty());
+        let idx = load_index(d.path());
+        assert_eq!(idx.len(), 2);
+        assert!(!idx.contains_key("cc03"));
+        assert_eq!(read_entry(d.path(), &idx["bb02"]).unwrap(), b"world!!");
+        assert_eq!(read_idx_checked(d.path(), &id).unwrap().1, 1);
         // 색인이 없는 고아 팩도 무시
         fs::write(&p, &bytes).unwrap();
         fs::remove_file(idx_file(d.path(), &id)).unwrap();
         assert!(load_index(d.path()).is_empty());
+    }
+
+    /// 색인 한 줄이 망가져도(형식 오류·16진수가 아닌 해시) 나머지 블롭은 그대로 쓰인다.
+    #[test]
+    fn one_bad_index_line_does_not_drop_whole_pack() {
+        let d = tempfile::tempdir().unwrap();
+        let id = write_pack(d.path(), &items()).unwrap();
+        let ip = idx_file(d.path(), &id);
+        let mut text = fs::read_to_string(&ip).unwrap();
+        text.insert_str(0, "garbage line\nzz/.. 0 1\n한글 0 1\n");
+        fs::write(&ip, text).unwrap();
+        let (entries, bad) = read_idx_checked(d.path(), &id).unwrap();
+        assert_eq!((entries.len(), bad), (3, 3));
+        let idx = load_index(d.path());
+        for (h, data) in items() {
+            assert_eq!(read_entry(d.path(), &idx[&h]).unwrap(), data);
+        }
     }
 
     #[test]

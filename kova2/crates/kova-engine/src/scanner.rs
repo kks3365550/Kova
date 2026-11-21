@@ -39,6 +39,26 @@ const VOLATILE_DIRS: [&str; 11] = [
     "log",
 ];
 
+/// 사용자 패턴과 무관하게 항상 빠지는 기본 제외 폴더 이름인지(대소문자 무시).
+pub fn is_default_excluded_dir(name: &str) -> bool {
+    let n = name.to_lowercase();
+    VOLATILE_DIRS.contains(&n.as_str()) || n == "deliveryoptimization"
+}
+
+/// 스캔 중 조용히 빠졌던 것들: 기본 제외 폴더(상대 경로)와 읽지 못한 항목(경로와 이유).
+#[derive(Debug, Default, Clone)]
+pub struct ScanReport {
+    pub default_excluded: Vec<String>,
+    pub errors: Vec<String>,
+}
+
+fn rel_of(path: &Path, root: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
 fn glob_match(p: &[char], s: &[char]) -> bool {
     if p.is_empty() {
         return s.is_empty();
@@ -99,7 +119,7 @@ impl ExcludeFilter {
 
     pub fn is_dir_excluded(&self, name: &str) -> bool {
         let n = name.to_lowercase();
-        if VOLATILE_DIRS.contains(&n.as_str()) || n == "deliveryoptimization" {
+        if is_default_excluded_dir(&n) {
             return true;
         }
         self.matches_common(&n)
@@ -119,14 +139,27 @@ impl ExcludeFilter {
 }
 
 pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<ScannedItem> {
+    scan_directory_report(source_root, filter)
+        .map(|(v, _)| v)
+        .unwrap_or_default()
+}
+
+/// `scan_directory` 와 같되, 기본 제외 폴더와 읽지 못한 항목을 `ScanReport` 로 알려 준다.
+/// 원본이 있는데 원본 자체(폴더 목록·파일 정보)를 읽지 못하면 오류. 원본이 없으면 빈 목록.
+pub fn scan_directory_report(
+    source_root: &Path,
+    filter: &ExcludeFilter,
+) -> std::io::Result<(Vec<ScannedItem>, ScanReport)> {
+    let mut report = ScanReport::default();
     // A source that is a single file: use the file name as its relative path.
     if source_root.is_file() {
         let name = match source_root.file_name() {
             Some(n) => n.to_string_lossy().to_string(),
-            None => return Vec::new(),
+            None => return Ok((Vec::new(), report)),
         };
-        return match fs::symlink_metadata(source_root) {
-            Ok(m) => vec![ScannedItem {
+        let m = fs::symlink_metadata(source_root)?;
+        return Ok((
+            vec![ScannedItem {
                 path: source_root.to_path_buf(),
                 rel_path: name,
                 is_dir: false,
@@ -134,56 +167,77 @@ pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<Scanned
                 modified: mtime_ms(&m),
                 src: 0,
             }],
-            Err(_) => Vec::new(),
-        };
+            report,
+        ));
     }
 
     if !source_root.is_dir() {
-        return Vec::new();
+        return Ok((Vec::new(), report));
     }
 
     // Read top-level children to branch subdirectories across Rayon thread pool
     let mut top_files = Vec::new();
     let mut top_subdirs = Vec::new();
 
-    if let Ok(rd) = fs::read_dir(source_root) {
-        for entry in rd.flatten() {
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            let file_type = match entry.file_type() {
-                Ok(ft) => ft,
-                Err(_) => continue,
-            };
+    for entry in fs::read_dir(source_root)? {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                report
+                    .errors
+                    .push(format!("{} ({e})", source_root.display()));
+                continue;
+            }
+        };
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let file_type = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(e) => {
+                report
+                    .errors
+                    .push(format!("{} ({e})", rel_of(&path, source_root)));
+                continue;
+            }
+        };
 
-            if file_type.is_dir() {
-                if !filter.is_dir_excluded(&name) {
-                    top_subdirs.push(path);
-                }
-            } else if !filter.is_file_excluded(&name) {
-                if let Ok(metadata) = entry.metadata() {
-                    if let Ok(rel) = path.strip_prefix(source_root) {
-                        let rel_path = rel.to_string_lossy().replace('\\', "/");
-                        if !rel_path.is_empty() {
-                            top_files.push(ScannedItem {
-                                path,
-                                rel_path,
-                                is_dir: false,
-                                size: metadata.len(),
-                                modified: mtime_ms(&metadata),
-                                src: 0,
-                            });
-                        }
+        if file_type.is_dir() {
+            if is_default_excluded_dir(&name) {
+                report.default_excluded.push(rel_of(&path, source_root));
+            }
+            if !filter.is_dir_excluded(&name) {
+                top_subdirs.push(path);
+            }
+        } else if !filter.is_file_excluded(&name) {
+            match entry.metadata() {
+                Ok(metadata) => {
+                    let rel_path = rel_of(&path, source_root);
+                    if !rel_path.is_empty() {
+                        top_files.push(ScannedItem {
+                            path,
+                            rel_path,
+                            is_dir: false,
+                            size: metadata.len(),
+                            modified: mtime_ms(&metadata),
+                            src: 0,
+                        });
                     }
                 }
+                Err(e) => report
+                    .errors
+                    .push(format!("{} ({e})", rel_of(&path, source_root))),
             }
         }
     }
 
     // Scan each subdirectory in parallel using Rayon full-core worker pool
+    let sub_reports: std::sync::Mutex<Vec<ScanReport>> = Default::default();
     let subdir_items: Vec<ScannedItem> = top_subdirs
         .into_par_iter()
         .flat_map(|subdir| {
             let mut items = Vec::new();
+            let mut rep = ScanReport::default();
+            let excluded_here = std::cell::RefCell::new(Vec::new());
 
             // Include the subdir itself if metadata is available
             if let Ok(m) = fs::symlink_metadata(&subdir) {
@@ -210,12 +264,28 @@ pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<Scanned
                     }
                     let name = e.file_name().to_string_lossy();
                     if e.file_type().is_dir() {
+                        if is_default_excluded_dir(&name) {
+                            excluded_here
+                                .borrow_mut()
+                                .push(rel_of(e.path(), source_root));
+                        }
                         !filter.is_dir_excluded(&name)
                     } else {
                         !filter.is_file_excluded(&name)
                     }
                 })
-                .filter_map(|e| e.ok())
+                .filter_map(|e| match e {
+                    Ok(e) => Some(e),
+                    Err(err) => {
+                        // 접근 거부 등으로 못 읽은 폴더·파일은 조용히 넘기지 않고 보고한다
+                        let at = err
+                            .path()
+                            .map(|p| rel_of(p, source_root))
+                            .unwrap_or_else(|| rel_of(&subdir, source_root));
+                        rep.errors.push(format!("{at} ({err})"));
+                        None
+                    }
+                })
                 .collect();
 
             let mut scanned: Vec<ScannedItem> = entries
@@ -225,7 +295,14 @@ pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<Scanned
                         // Already recorded the root subdir above
                         return None;
                     }
-                    let metadata = entry.metadata().ok()?;
+                    let metadata = match entry.metadata() {
+                        Ok(m) => m,
+                        Err(err) => {
+                            rep.errors
+                                .push(format!("{} ({err})", rel_of(entry.path(), source_root)));
+                            return None;
+                        }
+                    };
                     let is_dir = metadata.is_dir();
                     let size = if is_dir { 0 } else { metadata.len() };
                     let modified = mtime_ms(&metadata);
@@ -253,12 +330,23 @@ pub fn scan_directory(source_root: &Path, filter: &ExcludeFilter) -> Vec<Scanned
                 .collect();
 
             items.append(&mut scanned);
+            rep.default_excluded = excluded_here.into_inner();
+            sub_reports
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .push(rep);
             items
         })
         .collect();
 
+    for r in sub_reports.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        report.default_excluded.extend(r.default_excluded);
+        report.errors.extend(r.errors);
+    }
+    report.default_excluded.sort();
+    report.errors.sort();
     top_files.extend(subdir_items);
-    top_files
+    Ok((top_files, report))
 }
 
 fn mtime_ms(m: &fs::Metadata) -> u64 {
@@ -287,6 +375,29 @@ mod tests {
         assert!(f.is_file_excluded("~$doc.docx"));
         assert!(!f.is_file_excluded("linecache.py"));
         assert!(!f.is_file_excluded("report.xlsx"));
+    }
+
+    /// 기본 제외 폴더(temp/logs/cache 등)는 빠지되 어디가 빠졌는지 보고된다. 없는 원본은 빈 목록(오류 아님).
+    #[test]
+    fn default_excluded_dirs_are_reported() {
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path();
+        fs::create_dir_all(root.join("Temp")).unwrap();
+        fs::create_dir_all(root.join("src/logs")).unwrap();
+        fs::write(root.join("Temp/a.txt"), b"1").unwrap();
+        fs::write(root.join("src/logs/b.log"), b"2").unwrap();
+        fs::write(root.join("src/c.txt"), b"3").unwrap();
+        let (items, rep) = scan_directory_report(root, &ExcludeFilter::new(&[])).unwrap();
+        let rels: Vec<_> = items.iter().map(|i| i.rel_path.as_str()).collect();
+        assert!(rels.contains(&"src/c.txt"));
+        assert!(!rels
+            .iter()
+            .any(|r| r.contains("a.txt") || r.contains("b.log")));
+        assert_eq!(rep.default_excluded, vec!["Temp", "src/logs"]);
+        assert!(rep.errors.is_empty(), "{:?}", rep.errors);
+        let (none, _) =
+            scan_directory_report(&root.join("없음"), &ExcludeFilter::new(&[])).unwrap();
+        assert!(none.is_empty());
     }
 
     #[test]
