@@ -63,6 +63,13 @@ pub fn disk_selected_ok(
     image_disks: &[u32],
     image_bytes: u64,
 ) -> Result<(), String> {
+    // 이미지가 놓인 디스크를 못 알아냈으면 어느 디스크도 지우지 않는다(이미지 디스크를 지우는 것을 막을 수 없으므로)
+    if image_disks.is_empty() {
+        return Err(
+            "could not determine which disk holds the restore image; refusing to erase any disk"
+                .into(),
+        );
+    }
     if image_disks.contains(&disk.num) {
         return Err(format!(
             "disk {} holds the restore image and cannot be erased",
@@ -156,6 +163,29 @@ pub fn bcdboot_args(os: char, sys: char, uefi: bool) -> Vec<String> {
         "/f".into(),
         if uefi { "UEFI".into() } else { "BIOS".into() },
     ]
+}
+
+/// 한 번 시도한 자동 모드 파일을 바꿔 둘 이름(재부팅마다 디스크를 다시 지우지 않게).
+pub const AUTO_DONE_NAME: &str = "KOVA_AUTO.done.txt";
+
+/// 자동 모드의 대상 디스크: 디스크 고유 ID(`disk_id=`)만 받는다. 번호(`disk=`)·크기(`disk_mb=`)는
+/// 디스크 순서·구성이 바뀌면 다른 디스크를 지울 수 있어 거부한다.
+pub fn auto_disk_id(m: &std::collections::HashMap<String, String>) -> Result<String, String> {
+    let id = m
+        .get("disk_id")
+        .map(|s| s.trim().trim_matches(['{', '}']).to_uppercase())
+        .unwrap_or_default();
+    if id.is_empty() {
+        return Err(if m.contains_key("disk") || m.contains_key("disk_mb") {
+            "auto mode accepts only disk_id=<unique disk ID>; disk= and disk_mb= are refused".into()
+        } else {
+            "auto mode needs disk_id=<unique disk ID> (see diskpart 'detail disk')".into()
+        });
+    }
+    if !id.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        return Err(format!("auto mode disk_id is not a disk ID: {id}"));
+    }
+    Ok(id)
 }
 
 /// 자동 모드 파일(KOVA_AUTO.txt)의 `key=value` 줄을 읽는다.
@@ -320,6 +350,35 @@ mod tests {
             ..d.clone()
         };
         assert!(disk_selected_ok(&off, &[], 1 << 30).is_err());
+        // 이미지 디스크를 못 알아내면(빈 목록) 정상 디스크라도 거부한다
+        assert!(disk_selected_ok(&d, &[], 20 << 30)
+            .unwrap_err()
+            .contains("could not determine"));
+    }
+
+    #[test]
+    fn auto_mode_accepts_only_disk_id() {
+        let ok = parse_auto("image=a.qblk\ndisk_id={919f469d-68f8-4433-9d35-34531b929926}\n");
+        assert_eq!(
+            auto_disk_id(&ok).as_deref(),
+            Ok("919F469D-68F8-4433-9D35-34531B929926")
+        );
+        assert_eq!(
+            auto_disk_id(&parse_auto("disk_id=1A2B3C4D")).as_deref(),
+            Ok("1A2B3C4D")
+        );
+        for bad in [
+            "disk=1\nconfirm=ERASE DISK 1",
+            "disk_mb=61440\nconfirm=ERASE DISK 61440 MB",
+            "image=a.qblk",
+            "disk_id=",
+            "disk_id=1 or 2",
+        ] {
+            assert!(auto_disk_id(&parse_auto(bad)).is_err(), "{bad}");
+        }
+        assert!(auto_disk_id(&parse_auto("disk=1"))
+            .unwrap_err()
+            .contains("refused"));
     }
 
     #[test]
