@@ -17,6 +17,23 @@ pub struct ReplicaReport {
     pub blobs_copied: usize,
     pub blobs_skipped: usize,
     pub bytes_copied: u64,
+    /// 원본이 깨져(매니페스트 손상·블롭 누락·잘못된 해시) 복제하지 못하고 건너뛴 스냅샷 수
+    pub snapshots_failed: usize,
+    /// 건너뛴 스냅샷별 사유(`매니페스트 이름: 사유`)
+    pub failures: Vec<String>,
+}
+
+impl ReplicaReport {
+    /// 건너뛴 스냅샷이 있으면 경고 문구(이 경우 성공으로 표시하지 말 것).
+    pub fn warning(&self) -> Option<String> {
+        (self.snapshots_failed > 0).then(|| {
+            format!(
+                "오프사이트 복제 중 원본 스냅샷 {}개를 건너뜀: {}",
+                self.snapshots_failed,
+                self.failures.join("; ")
+            )
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -41,6 +58,11 @@ impl From<io::Error> for OffsiteError {
     }
 }
 
+/// 매니페스트의 해시는 16진수여야 한다(경로 조각으로 쓰이므로 `..`·구분자·다중 바이트 문자를 막는다).
+pub(crate) fn valid_hash(h: &str) -> bool {
+    h.len() >= 2 && h.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 fn blob_path(root: &Path, hash: &str) -> PathBuf {
     let prefix = if hash.len() >= 2 { &hash[0..2] } else { "misc" };
     root.join("blobs").join(prefix).join(format!("{hash}.blob"))
@@ -58,35 +80,35 @@ fn copy_atomic_throttled(
     let tmp = dst.with_extension("part");
     // 원본이 읽기 전용(랜섬웨어 보호)이면 복사본도 읽기 전용이 된다. 중단된 이전 시도의 .part 가 남아 있으면 덮어쓸 수 없으므로 먼저 치운다
     let _ = crate::worm::remove_protected(&tmp);
-    let n = if max_bytes_per_sec == 0 {
-        fs::copy(src, &tmp)?
-    } else {
-        let mut r = fs::File::open(src)?;
-        let mut w = fs::File::create(&tmp)?;
-        let mut buf = vec![0u8; 256 * 1024];
-        let mut total = 0u64;
-        let started = Instant::now();
-        loop {
-            if cancel.load(Ordering::Relaxed) {
-                drop(w);
-                let _ = fs::remove_file(&tmp);
-                return Err(OffsiteError::Cancelled);
-            }
-            let read_n = r.read(&mut buf)?;
-            if read_n == 0 {
-                break;
-            }
-            w.write_all(&buf[..read_n])?;
-            total += read_n as u64;
-            let expected = Duration::from_secs_f64(total as f64 / max_bytes_per_sec as f64);
+    // 직접 복사해 디스크에 내려쓴(sync_all) 뒤에만 이름을 바꾼다(전원 차단 시 잘린 파일이 완성본으로 보이지 않게)
+    let mut r = fs::File::open(src)?;
+    let mut w = fs::File::create(&tmp)?;
+    let mut buf = vec![0u8; 256 * 1024];
+    let mut n = 0u64;
+    let started = Instant::now();
+    loop {
+        if cancel.load(Ordering::Relaxed) {
+            drop(w);
+            let _ = fs::remove_file(&tmp);
+            return Err(OffsiteError::Cancelled);
+        }
+        let read_n = r.read(&mut buf)?;
+        if read_n == 0 {
+            break;
+        }
+        w.write_all(&buf[..read_n])?;
+        n += read_n as u64;
+        if max_bytes_per_sec > 0 {
+            let expected = Duration::from_secs_f64(n as f64 / max_bytes_per_sec as f64);
             let elapsed = started.elapsed();
             if expected > elapsed {
                 std::thread::sleep((expected - elapsed).min(Duration::from_secs(2)));
             }
         }
-        w.flush()?;
-        total
-    };
+    }
+    w.flush()?;
+    w.sync_all()?;
+    drop(w);
     fs::rename(&tmp, dst)?;
     Ok(n)
 }
@@ -131,6 +153,28 @@ pub fn replicate_with_limit(
         .filter(|p| p.extension().is_some_and(|x| x == "json"))
         .collect();
     manifests.sort();
+    // 암호화 표식(crypto.json)을 스냅샷보다 먼저 복제한다. 없으면 복제본만으로는 복호화할 수 없다.
+    let marker = repo.join(kova_engine::codec::MARKER);
+    if marker.is_file() {
+        let dmk = dest.join(kova_engine::codec::MARKER);
+        let src_bytes = fs::read(&marker)?;
+        match fs::read(&dmk) {
+            Ok(b) if b == src_bytes => {}
+            Ok(_) => {
+                return Err(OffsiteError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "대상의 암호화 표식이 원본 저장소와 다릅니다(다른 저장소의 복제본): {}",
+                        dmk.display()
+                    ),
+                )))
+            }
+            Err(_) => {
+                rep.bytes_copied +=
+                    copy_atomic_throttled(&marker, &dmk, cancel, max_bytes_per_sec)?;
+            }
+        }
+    }
     let packs = kova_engine::pack::load_index(repo);
     let mut done_packs = std::collections::HashSet::new();
     for mp in manifests {
@@ -140,12 +184,38 @@ pub fn replicate_with_limit(
             rep.snapshots_skipped += 1;
             continue;
         }
-        let m: SnapshotManifest = serde_json::from_reader(io::BufReader::new(fs::File::open(&mp)?))
-            .map_err(|e| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("{}: {e}", mp.display()))
-            })?;
+        // 원본 스냅샷 하나가 깨져도(매니페스트 손상·잘못된 해시·블롭 누락) 그 스냅샷만 건너뛰고 나머지는 계속 복제한다
+        let fail = |rep: &mut ReplicaReport, why: String| {
+            rep.snapshots_failed += 1;
+            rep.failures
+                .push(format!("{}: {why}", name.to_string_lossy()));
+        };
+        let m: SnapshotManifest = match fs::File::open(&mp)
+            .map_err(|e| e.to_string())
+            .and_then(|f| serde_json::from_reader(io::BufReader::new(f)).map_err(|e| e.to_string()))
+        {
+            Ok(m) => m,
+            Err(e) => {
+                fail(&mut rep, format!("매니페스트를 읽지 못함({e})"));
+                continue;
+            }
+        };
+        let mut hashes = hashes_of(m);
+        hashes.retain(|h| !h.is_empty());
+        if let Some(bad) = hashes.iter().find(|h| !valid_hash(h)) {
+            fail(&mut rep, format!("잘못된 해시 {bad:?}"));
+            continue;
+        }
+        // 누락 블롭을 먼저 확인해, 있으면 이 스냅샷의 어떤 파일도 복사하지 않는다
+        if let Some(h) = hashes
+            .iter()
+            .find(|h| fs::metadata(blob_path(repo, h)).is_err() && !packs.contains_key(*h))
+        {
+            fail(&mut rep, OffsiteError::MissingBlob(h.clone()).to_string());
+            continue;
+        }
         let mut seen = std::collections::HashSet::new();
-        for h in hashes_of(m) {
+        for h in hashes {
             if !seen.insert(h.clone()) {
                 continue;
             }
@@ -294,13 +364,126 @@ mod tests {
             .find(|p| p.extension().is_some_and(|x| x == "pack"))
             .expect("팩 없음");
         fs::remove_file(pack).unwrap();
-        assert!(matches!(
-            replicate(&repo, &dest, &AtomicBool::new(false)),
-            Err(OffsiteError::MissingBlob(_))
-        ));
+        let r = replicate(&repo, &dest, &AtomicBool::new(false)).unwrap();
+        assert_eq!((r.snapshots_copied, r.snapshots_failed), (0, 1));
+        assert!(r.warning().unwrap().contains("원본에 블롭이 없음"));
         assert!(
             !dest.join("snapshots").exists()
                 || fs::read_dir(dest.join("snapshots")).unwrap().count() == 0
         );
+    }
+
+    #[test]
+    fn broken_snapshots_are_skipped_and_reported_while_healthy_ones_replicate() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = make_repo(d.path(), "건강한 내용");
+        let snaps = repo.join("snapshots");
+        // 경로 탈출 해시, 누락 블롭(16진 해시), 깨진 JSON
+        fs::write(
+            snaps.join("00000000_000001.json"),
+            r#"{"id":"x1","files":[{"path":"e.txt","size":1,"chunks":[{"hash":"../../evil","offset":0,"length":1,"compressed_length":1}]}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            snaps.join("00000000_000002.json"),
+            format!(
+                r#"{{"id":"x2","files":[{{"path":"m.txt","size":1,"chunks":[{{"hash":"{}","offset":0,"length":1,"compressed_length":1}}]}}]}}"#,
+                "ab".repeat(32)
+            ),
+        )
+        .unwrap();
+        fs::write(snaps.join("00000000_000003.json"), b"{broken").unwrap();
+        // 다중 바이트 문자로 시작하는 해시도 패닉 없이 거부
+        fs::write(
+            snaps.join("00000000_000004.json"),
+            r#"{"id":"x4","files":[{"path":"k.txt","size":1,"chunks":[{"hash":"한글","offset":0,"length":1,"compressed_length":1}]}]}"#,
+        )
+        .unwrap();
+        let dest = d.path().join("offsite");
+        let r = replicate(&repo, &dest, &AtomicBool::new(false)).unwrap();
+        assert_eq!((r.snapshots_copied, r.snapshots_failed), (1, 4));
+        assert_eq!(r.failures.len(), 4);
+        assert!(r.warning().is_some());
+        let copied: Vec<_> = fs::read_dir(dest.join("snapshots")).unwrap().collect();
+        assert_eq!(copied.len(), 1);
+        assert!(!d.path().join("evil").exists() && !dest.parent().unwrap().join("evil").exists());
+        assert!(crate::verify::verify_repo(&dest, true).unwrap().ok());
+    }
+
+    fn walk(p: &Path) -> Vec<PathBuf> {
+        let mut v = Vec::new();
+        for e in fs::read_dir(p).unwrap().flatten() {
+            let q = e.path();
+            if q.is_dir() {
+                v.extend(walk(&q));
+            } else {
+                v.push(q);
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn encrypted_repo_replica_carries_marker_and_restores_from_replica() {
+        let _g = crate::repocrypto::TEST_KEY_ENV
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let keys = tempfile::tempdir().unwrap();
+        std::env::set_var("KOVA2_KEY_DIR", keys.path());
+        crate::repocrypto::install_provider();
+        let d = tempfile::tempdir().unwrap();
+        let repo = d.path().join("repo");
+        crate::repocrypto::enable(&repo)
+            .unwrap()
+            .expect("새로 켜짐");
+        let src = d.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        let secret = "OFFSITE-ENCRYPTED-PAYLOAD".repeat(30);
+        fs::write(src.join("a.txt"), &secret).unwrap();
+        let opts = BackupOptions {
+            sources: vec![src],
+            repo: repo.clone(),
+            session_id: Some("20260101_000000".into()),
+            zstd_level: 3,
+            exclude: vec![],
+            profile_id: None,
+            scan_from: None,
+        };
+        run_backup(&opts, &|_| {}, &AtomicBool::new(false)).unwrap();
+        let dest = d.path().join("offsite");
+        let r = replicate(&repo, &dest, &AtomicBool::new(false)).unwrap();
+        assert_eq!((r.snapshots_copied, r.snapshots_failed), (1, 0));
+        let mk = kova_engine::codec::MARKER;
+        assert_eq!(
+            fs::read(dest.join(mk)).unwrap(),
+            fs::read(repo.join(mk)).unwrap()
+        );
+        // 복제본에서 복원: 표식이 있어야 키로 복호화된다
+        let out = d.path().join("out");
+        kova_engine::ops::run_restore(
+            &kova_engine::ops::RestoreOptions {
+                repo: dest.clone(),
+                session_id: "20260101_000000".into(),
+                target: Some(out.clone()),
+                only: None,
+            },
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let f = walk(&out)
+            .into_iter()
+            .find(|p| p.file_name().is_some_and(|n| n == "a.txt"))
+            .expect("복원된 파일");
+        assert_eq!(fs::read_to_string(f).unwrap(), secret);
+        // 대상에 다른 저장소의 표식이 있으면 섞지 않고 거부
+        let other = d.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join(mk), b"{\"version\":1}").unwrap();
+        assert!(matches!(
+            replicate(&repo, &other, &AtomicBool::new(false)),
+            Err(OffsiteError::Io(_))
+        ));
+        assert!(!other.join("snapshots").exists());
     }
 }

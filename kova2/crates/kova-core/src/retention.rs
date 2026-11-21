@@ -137,7 +137,8 @@ pub fn select_expired(snapshots: &[SnapshotMeta], policy: Policy, now: f64) -> V
         });
         if let Some(count) = policy.retention_count.filter(|c| *c > 0) {
             if group.len() > count {
-                for s in &group[count..] {
+                // 시각을 모르는(0) 스냅샷은 순서를 알 수 없으므로 지우지 않는다
+                for s in group[count..].iter().filter(|s| s.created_at > 0.0) {
                     out.insert(s.id.clone());
                 }
             }
@@ -205,9 +206,23 @@ pub fn list_snapshots(repo: &Path) -> std::io::Result<Vec<SnapshotMeta>> {
             Some(serde_json::Value::Null) | None => String::new(),
             Some(v) => v.to_string(),
         };
+        // created_at 이 없거나 해석되지 않으면 매니페스트 파일의 수정 시각으로 대신한다(그래도 없으면 0 = 삭제 제외)
+        let created_at = m
+            .created_at
+            .as_ref()
+            .map(parse_timestamp)
+            .filter(|t| *t > 0.0)
+            .or_else(|| {
+                fs::metadata(&p)
+                    .and_then(|md| md.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs_f64())
+            })
+            .unwrap_or(0.0);
         out.push(SnapshotMeta {
             id,
-            created_at: m.created_at.as_ref().map(parse_timestamp).unwrap_or(0.0),
+            created_at,
             profile_id,
         });
     }
@@ -260,7 +275,7 @@ fn apply_inner(repo: &Path, policy: Policy, only: Option<&str>) -> RetentionResu
     };
     for id in select_expired(&snaps, policy, now) {
         // 경로 조작 방지: id 는 파일 이름 한 조각이어야 한다
-        if id.is_empty() || id.contains(['/', '\\']) || id == "." || id == ".." {
+        if !is_safe_id(&id) {
             continue;
         }
         if crate::worm::remove_protected(&repo.join("snapshots").join(format!("{}.json", id)))
@@ -270,18 +285,29 @@ fn apply_inner(repo: &Path, policy: Policy, only: Option<&str>) -> RetentionResu
         }
     }
     if !res.deleted_snapshots.is_empty() {
-        if let Ok(g) = crate::gc::prune_orphans(repo, crate::gc::DEFAULT_MIN_AGE_SECS) {
-            res.deleted_blobs = g.deleted_blobs;
-            res.freed_bytes = g.freed_bytes;
+        match crate::gc::prune_orphans(repo, crate::gc::DEFAULT_MIN_AGE_SECS) {
+            Ok(g) => {
+                res.deleted_blobs = g.deleted_blobs;
+                res.freed_bytes = g.freed_bytes;
+            }
+            Err(e) => res.status = format!("ok (블롭 정리 실패: {e})"),
         }
     }
     res
 }
 
+/// 스냅샷 id 는 경로 조각 하나(Normal)여야 하고 그 자체와 같아야 한다. `:`(드라이브·대체 데이터 스트림)도 막는다.
+fn is_safe_id(id: &str) -> bool {
+    use std::path::Component;
+    let mut c = Path::new(id).components();
+    matches!((c.next(), c.next()), (Some(Component::Normal(n)), None) if n == id)
+        && !id.contains(':')
+}
+
 /// 사용자가 고른 스냅샷 하나를 지운다(복구할 수 없다). 저장소를 쓰는 작업이 있으면 하지 않고,
 /// 저장소의 마지막 스냅샷은 지우지 않는다. 지운 뒤 다른 스냅샷이 쓰지 않는 블롭을 정리한다.
 pub fn delete_snapshot(repo: &Path, id: &str) -> Result<String, String> {
-    if id.is_empty() || id.contains(['/', '\\', ':']) || id == "." || id == ".." {
+    if !is_safe_id(id) {
         return Err("스냅샷 번호가 올바르지 않습니다".into());
     }
     let _lock = crate::lock::RepoLock::try_acquire(repo)
@@ -298,13 +324,15 @@ pub fn delete_snapshot(repo: &Path, id: &str) -> Result<String, String> {
     if let Ok(h) = crate::history::History::open(repo) {
         let _ = h.delete_snapshot_record(id);
     }
-    let freed = crate::gc::prune_orphans(repo, crate::gc::DEFAULT_MIN_AGE_SECS)
-        .map(|g| g.freed_bytes)
-        .unwrap_or(0);
-    Ok(format!(
-        "스냅샷을 지웠습니다 (정리된 공간 {:.1} MB)",
-        freed as f64 / (1024.0 * 1024.0)
-    ))
+    match crate::gc::prune_orphans(repo, crate::gc::DEFAULT_MIN_AGE_SECS) {
+        Ok(g) => Ok(format!(
+            "스냅샷을 지웠습니다 (정리된 공간 {:.1} MB)",
+            g.freed_bytes as f64 / (1024.0 * 1024.0)
+        )),
+        Err(e) => Ok(format!(
+            "스냅샷을 지웠습니다 (쓰지 않는 블롭 정리 실패: {e})"
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -502,6 +530,68 @@ mod tests {
         let e = delete_snapshot(d.path(), "b").unwrap_err();
         assert!(e.contains("마지막"));
         assert!(snaps.join("b.json").exists());
+    }
+
+    #[test]
+    fn unknown_created_at_is_never_deleted_and_falls_back_to_file_time() {
+        // 순수 선택: 시각 0 은 세대 수 초과여도 지우지 않는다
+        let v = vec![s("new", 300.0, ""), s("mid", 200.0, ""), s("zero", 0.0, "")];
+        let pol = Policy {
+            retention_count: Some(1),
+            retention_days: None,
+            keep_weekly: 0,
+            keep_monthly: 0,
+        };
+        assert_eq!(select_expired(&v, pol, 400.0), vec!["mid"]);
+        // 목록: created_at 이 없거나 깨지면 파일 수정 시각을 쓴다
+        let d = tempfile::tempdir().unwrap();
+        let snaps = d.path().join("snapshots");
+        fs::create_dir_all(&snaps).unwrap();
+        fs::write(snaps.join("a.json"), r#"{"id":"a"}"#).unwrap();
+        fs::write(snaps.join("b.json"), r#"{"id":"b","created_at":"garbage"}"#).unwrap();
+        let l = list_snapshots(d.path()).unwrap();
+        assert!(l.iter().all(|m| m.created_at > 1_000_000_000.0), "{l:?}");
+    }
+
+    #[test]
+    fn snapshot_id_check_is_single_normal_component() {
+        for bad in [
+            "", ".", "..", "../x", "a/b", "a\\b", "a/", "C:", "a:b", "/a", "\\a",
+        ] {
+            assert!(!is_safe_id(bad), "{bad:?}");
+        }
+        for ok in ["20261121_120000", "a.b", "스냅샷"] {
+            assert!(is_safe_id(ok), "{ok:?}");
+        }
+        let d = tempfile::tempdir().unwrap();
+        assert!(delete_snapshot(d.path(), "a:b").is_err());
+        assert!(delete_snapshot(d.path(), "a/").is_err());
+    }
+
+    #[test]
+    fn gc_failure_is_reported_in_status() {
+        let d = tempfile::tempdir().unwrap();
+        let snaps = d.path().join("snapshots");
+        fs::create_dir_all(&snaps).unwrap();
+        fs::write(snaps.join("a.json"), r#"{"id":"a","created_at":100}"#).unwrap();
+        fs::write(snaps.join("b.json"), r#"{"id":"b","created_at":200}"#).unwrap();
+        // 메타는 읽히지만 전체 매니페스트로는 깨진 스냅샷 → 블롭 정리(GC)가 실패한다
+        fs::write(
+            snaps.join("c.json"),
+            r#"{"id":"c","created_at":300,"files":"not-a-list"}"#,
+        )
+        .unwrap();
+        let r = apply(
+            d.path(),
+            Policy {
+                retention_count: Some(2),
+                retention_days: None,
+                keep_weekly: 0,
+                keep_monthly: 0,
+            },
+        );
+        assert_eq!(r.deleted_snapshots, vec!["a"]);
+        assert!(r.status.contains("블롭 정리 실패"), "{}", r.status);
     }
 
     #[test]

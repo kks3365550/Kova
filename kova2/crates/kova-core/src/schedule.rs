@@ -28,14 +28,34 @@ pub fn should_run(p: &Profile, now: DateTime<Local>) -> bool {
     {
         return true;
     }
+    schedule_due(p, now)
+}
 
+/// 정기 일정(재시도 제외)상 지금 돌 차례인가. 자동 백업이 꺼져 있으면 false.
+pub fn is_schedule_due(p: &Profile, now: DateTime<Local>) -> bool {
+    p.auto_backup_enabled && schedule_due(p, now)
+}
+
+/// 정기 일정으로 시작하는 실행이면 재시도 횟수를 0 으로 되돌린다(실패가 이어져도 다음 정기 실행 뒤 다시 재시도하도록).
+/// 서비스가 자동 실행을 시작할 때 last_run·last_status 를 바꾸기 전에 호출한다. 초기화했으면 true.
+pub fn reset_retry_if_scheduled(p: &mut Profile, now: DateTime<Local>) -> bool {
+    if retry_count(p) == 0 || !is_schedule_due(p, now) {
+        return false;
+    }
+    p.extra.insert("retry_count".into(), 0.into());
+    true
+}
+
+fn schedule_due(p: &Profile, now: DateTime<Local>) -> bool {
+    let now_ts = now.timestamp() as f64;
     let Some(last) = p.last_run.filter(|l| *l > 0.0) else {
         return true;
     };
     let elapsed = now_ts - last;
     match p.schedule_type.as_str() {
+        // 0 이하(또는 숫자가 아님)는 거부: 0 이면 서비스 틱(30초)마다 백업이 돈다
         "interval_hours" => match p.schedule_value.trim().parse::<f64>() {
-            Ok(h) if h.is_finite() && h >= 0.0 => elapsed >= h * 3600.0,
+            Ok(h) if h.is_finite() && h > 0.0 => elapsed >= h * 3600.0,
             _ => false,
         },
         "daily" => {
@@ -66,20 +86,28 @@ pub fn should_run(p: &Profile, now: DateTime<Local>) -> bool {
                 None => ("MON", p.schedule_value.as_str()),
             };
             let days = parse_weekdays(days_part);
-            if days.is_empty() || !days.contains(&now.weekday()) {
+            if days.is_empty() {
                 return false;
             }
             let Some((h, m)) = parse_hm(time_part) else {
                 return false;
             };
-            let Some(target) = now
-                .date_naive()
-                .and_hms_opt(h, m, 0)
-                .and_then(|t| Local.from_local_datetime(&t).earliest())
-            else {
+            // 지난 7일 안에서 가장 최근에 도래한 예정 시각을 찾아, 그 뒤로 돈 적이 없으면 따라잡는다
+            // (예정 요일에 꺼져 있다가 다음 날 켜져도 그 주 몫을 실행)
+            let latest = (0..7i64).find_map(|back| {
+                let day = now.date_naive() - chrono::Duration::days(back);
+                if !days.contains(&day.weekday()) {
+                    return None;
+                }
+                let t = day
+                    .and_hms_opt(h, m, 0)
+                    .and_then(|t| Local.from_local_datetime(&t).earliest())?;
+                (t <= now).then_some(t)
+            });
+            let Some(target) = latest else {
                 return false;
             };
-            now >= target && last < target.timestamp() as f64
+            last < target.timestamp() as f64
         }
         "monthly" => {
             if elapsed < 3600.0 {
@@ -258,6 +286,37 @@ mod tests {
     }
 
     #[test]
+    fn retry_count_resets_on_scheduled_run_and_zero_interval_is_rejected() {
+        let last = at(2026, 11, 11, 10, 0);
+        let mut p = prof("interval_hours", "24", Some(last));
+        p.last_status = "failed".into();
+        p.extra.insert("retry_count".into(), 3.into());
+        // 정기 시각 전에는 재시도 횟수를 그대로 둔다
+        assert!(!reset_retry_if_scheduled(&mut p, at(2026, 11, 11, 12, 0)));
+        assert_eq!(retry_count(&p), 3);
+        // 정기 실행 시각이 되면 0 으로 → 그 실행이 실패해도 다시 재시도할 수 있다
+        assert!(reset_retry_if_scheduled(&mut p, at(2026, 11, 12, 10, 0)));
+        assert_eq!(retry_count(&p), 0);
+        p.last_run = Some(at(2026, 11, 12, 10, 0).timestamp() as f64);
+        assert!(should_run(&p, at(2026, 11, 12, 10, 30)), "재시도 재개");
+        // 자동 백업이 꺼져 있으면 초기화하지 않는다
+        let mut off = prof("interval_hours", "1", Some(last));
+        off.auto_backup_enabled = false;
+        off.extra.insert("retry_count".into(), 3.into());
+        assert!(!reset_retry_if_scheduled(&mut off, at(2026, 12, 1, 0, 0)));
+        // 0 이하 주기는 거부(틱마다 백업 방지)
+        for v in ["0", "-1", "0.0", "NaN", "inf"] {
+            assert!(
+                !should_run(
+                    &prof("interval_hours", v, Some(last)),
+                    at(2026, 11, 11, 10, 1)
+                ),
+                "{v}"
+            );
+        }
+    }
+
+    #[test]
     fn maintenance_runs_after_interval_days_and_respects_zero() {
         let base = at(2026, 11, 1, 3, 0).timestamp() as f64;
         assert!(!should_run_maintenance(
@@ -302,11 +361,23 @@ mod tests {
     #[test]
     fn weekly_and_monthly_schedules_match_expected_times() {
         // 2026-11-16 은 월요일(Mon), 2026-11-17 은 화요일(Tue)
-        let prev = at(2026, 11, 9, 3, 5);
+        // 직전 예정(수 11/11 03:00) 몫은 이미 돌았다
+        let prev = at(2026, 11, 11, 3, 5);
         let w = prof("weekly", "MON,WED@03:00", Some(prev));
         assert!(!should_run(&w, at(2026, 11, 16, 2, 59)));
         assert!(should_run(&w, at(2026, 11, 16, 3, 0)));
-        assert!(!should_run(&w, at(2026, 11, 17, 10, 0)), "화요일은 제외");
+        // 월요일 몫을 놓쳤으면 화요일에 켜져도 따라잡는다(모듈 주석과 같은 규칙)
+        assert!(
+            should_run(&w, at(2026, 11, 17, 10, 0)),
+            "놓친 월요일 따라잡기"
+        );
+        // 월요일 몫을 이미 돌았으면 화요일(예정 없음)에는 돌지 않는다
+        let w_done = prof("weekly", "MON,WED@03:00", Some(at(2026, 11, 16, 3, 5)));
+        assert!(
+            !should_run(&w_done, at(2026, 11, 17, 10, 0)),
+            "화요일은 제외"
+        );
+        assert!(should_run(&w_done, at(2026, 11, 18, 3, 0)));
 
         let w_kr = prof("weekly", "월,수@03:00", Some(prev));
         assert!(should_run(&w_kr, at(2026, 11, 16, 4, 0)));

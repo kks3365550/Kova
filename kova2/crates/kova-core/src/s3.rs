@@ -13,7 +13,7 @@ use std::time::Duration;
 
 const S3_TIMEOUT: Duration = Duration::from_secs(30);
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct S3Config {
     /// 예: "https://s3.ap-northeast-2.amazonaws.com" 또는 "https://<acct>.r2.cloudflarestorage.com"
     pub endpoint: String,
@@ -23,6 +23,27 @@ pub struct S3Config {
     pub prefix: String,
     pub access_key: String,
     pub secret_key: String,
+}
+
+/// 로그·오류에 `{:?}` 로 찍혀도 비밀 키가 드러나지 않게 가린다.
+impl std::fmt::Debug for S3Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("S3Config")
+            .field("endpoint", &self.endpoint)
+            .field("region", &self.region)
+            .field("bucket", &self.bucket)
+            .field("prefix", &self.prefix)
+            .field("access_key", &self.access_key)
+            .field(
+                "secret_key",
+                &if self.secret_key.is_empty() {
+                    ""
+                } else {
+                    "***"
+                },
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -446,6 +467,12 @@ mod tests {
             access_key: "TESTKEY".into(),
             secret_key: "TESTSECRET".into(),
         };
+        // Debug 출력에 비밀 키가 드러나지 않는다
+        let dbg = format!("{cfg:?}");
+        assert!(
+            !dbg.contains("TESTSECRET") && dbg.contains("TESTKEY"),
+            "{dbg}"
+        );
         let no = AtomicBool::new(false);
         let r1 = replicate_to_s3(&repo, &cfg, &no).unwrap();
         assert_eq!(r1.snapshots_uploaded, 1);

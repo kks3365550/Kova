@@ -38,8 +38,23 @@ fn set_readonly(p: &Path, ro: bool) -> io::Result<()> {
     fs::set_permissions(p, perm)
 }
 
+/// icacls 결과 판정: 종료 코드가 우선이다(출력 문구는 Windows 표시 언어에 따라 달라 한글 Windows 에서는 맞지 않는다).
+/// 종료 코드가 0 이어도 영문 출력에 실패 건수가 보이면(/c 로 계속 진행한 경우) 실패로 본다.
+fn icacls_ok(success: bool, out: &str) -> bool {
+    if !success {
+        return false;
+    }
+    let failed = out
+        .split("Failed processing ")
+        .nth(1)
+        .and_then(|s| s.split_whitespace().next())
+        .and_then(|n| n.parse::<u64>().ok())
+        .unwrap_or(0);
+    failed == 0
+}
+
 #[cfg(windows)]
-fn icacls(target: &Path, args: &[&str]) -> bool {
+pub(crate) fn icacls(target: &Path, args: &[&str]) -> bool {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     if !target.exists() {
@@ -57,15 +72,13 @@ fn icacls(target: &Path, args: &[&str]) -> bool {
                 String::from_utf8_lossy(&o.stdout),
                 String::from_utf8_lossy(&o.stderr)
             );
-            o.status.success()
-                && !out.contains("0 files processed")
-                && !out.contains("Access denied")
+            icacls_ok(o.status.success(), &out)
         }
         Err(_) => false,
     }
 }
 #[cfg(not(windows))]
-fn icacls(_target: &Path, _args: &[&str]) -> bool {
+pub(crate) fn icacls(_target: &Path, _args: &[&str]) -> bool {
     let _ = Command::new("true");
     false
 }
@@ -157,12 +170,27 @@ pub fn remove_protected(path: &Path) -> io::Result<()> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(e),
         Err(_) => {}
     }
+    let was_ro = fs::metadata(path).is_ok_and(|m| m.permissions().readonly());
     let _ = set_readonly(path, false);
     if fs::remove_file(path).is_ok() {
         return Ok(());
     }
-    let _ = unprotect_file(path, true);
-    fs::remove_file(path)
+    let acl_removed = unprotect_file(path, true).unwrap_or(false);
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // 지우지 못했으면 풀어 둔 보호를 다시 건다(보호가 풀린 채 남지 않게).
+            // 매니페스트(.json)는 읽기 전용 + 거부 ACL, 그 밖(블롭·팩)은 읽기 전용만(protect_new_files 와 같은 규칙)
+            if was_ro {
+                if acl_removed && path.extension().is_some_and(|x| x == "json") {
+                    protect_file(path, true);
+                } else {
+                    let _ = set_readonly(path, true);
+                }
+            }
+            Err(e)
+        }
+    }
 }
 
 /// 아직 보호되지 않은 매니페스트·블롭만 보호한다(백업 직후 호출). 이미 읽기 전용인 파일은 건너뛰므로 반복 호출해도 싸다.
@@ -324,6 +352,45 @@ mod tests {
             "ACL 보호 중에는 쓸 수 없어야 함"
         );
         assert!(remove_protected(&f).is_ok() && !f.exists());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn failed_removal_reapplies_protection() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join("ab01.blob");
+        fs::write(&f, b"x").unwrap();
+        assert!(protect_file(&f, false));
+        // 공유 없이 열어 두면 삭제가 실패한다
+        let hold = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&f)
+            .unwrap();
+        assert!(remove_protected(&f).is_err());
+        drop(hold);
+        assert!(f.exists());
+        assert!(
+            fs::metadata(&f).unwrap().permissions().readonly(),
+            "삭제 실패 후 보호가 다시 걸려야 함"
+        );
+        assert!(remove_protected(&f).is_ok() && !f.exists());
+    }
+
+    #[test]
+    fn icacls_judgement_prefers_exit_code() {
+        // 한글 Windows 출력(영문 문구 없음)이라도 종료 코드 0 이면 성공
+        assert!(icacls_ok(true, "처리된 파일: 1, 처리하지 못한 파일: 0"));
+        assert!(!icacls_ok(false, "Successfully processed 1 files"));
+        assert!(icacls_ok(
+            true,
+            "Successfully processed 1 files; Failed processing 0 files"
+        ));
+        assert!(!icacls_ok(
+            true,
+            "Successfully processed 0 files; Failed processing 1 files"
+        ));
     }
 
     #[test]

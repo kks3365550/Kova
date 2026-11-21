@@ -127,8 +127,15 @@ pub fn apply(
         let _ = fs::remove_dir_all(&stage);
         return Err(e);
     }
-    // 3) 교체 + 롤백 기록
+    // 3) 교체 + 롤백 기록. 백업 폴더는 이번 적용분만 담도록 비운다
+    //    (이전 적용의 파일이 남아 있으면 rollback 이 여러 버전을 섞어 되돌린다)
     fs::create_dir_all(install_dir)?;
+    if backup_dir.exists() {
+        if let Err(e) = fs::remove_dir_all(backup_dir) {
+            let _ = fs::remove_dir_all(&stage);
+            return Err(InstallError::Io(e));
+        }
+    }
     fs::create_dir_all(backup_dir)?;
     let mut moved_old: Vec<PathBuf> = vec![]; // 백업으로 옮긴 기존 파일(상대 경로)
     let mut placed_new: Vec<PathBuf> = vec![]; // 새로 놓은 파일(상대 경로)
@@ -286,6 +293,27 @@ mod tests {
         ));
         assert_eq!(fs::read(i.join("kova.exe")).unwrap(), b"old");
         assert!(!i.parent().unwrap().join("evil.exe").exists());
+    }
+
+    #[test]
+    fn backup_holds_only_the_latest_apply() {
+        let (_d, i, b) = dirs();
+        fs::write(i.join("a.exe"), b"v1-a").unwrap();
+        fs::write(i.join("b.exe"), b"v1-b").unwrap();
+        // 1차 적용: a, b 교체 → 백업에 v1 a, b
+        apply(
+            &make_zip(&[("a.exe", b"v2-a"), ("b.exe", b"v2-b")]),
+            &i,
+            &b,
+            &[],
+        )
+        .unwrap();
+        // 2차 적용: a 만 교체 → 백업에는 v2-a 만 있어야 한다(옛 v1-b 가 남으면 rollback 이 섞인다)
+        apply(&make_zip(&[("a.exe", b"v3-a")]), &i, &b, &[]).unwrap();
+        assert!(!b.join("b.exe").exists(), "이전 적용의 백업이 남음");
+        assert_eq!(rollback(&i, &b).unwrap(), 1);
+        assert_eq!(fs::read(i.join("a.exe")).unwrap(), b"v2-a");
+        assert_eq!(fs::read(i.join("b.exe")).unwrap(), b"v2-b");
     }
 
     #[test]
