@@ -1,7 +1,7 @@
 //! 서비스 본체: 스케줄러 틱 → 작업 큐 → 엔진 실행 → 프로파일 상태 갱신 → 이벤트 푸시.
 //! 시각을 인자로 받아 서비스 루프와 시험이 같은 코드를 쓴다.
 use chrono::{DateTime, Local};
-use kova_core::config::ConfigStore;
+use kova_core::config::{ConfigStore, Profile};
 use kova_core::history::History;
 use kova_core::jobs::{Enqueue, Job, JobQueue, Kind};
 use kova_core::schedule::{should_run, should_run_maintenance, MAX_AUTO_RETRIES};
@@ -253,8 +253,45 @@ impl Supervisor {
         self.pump();
     }
 
+    /// 프로파일 ID, 저장소 경로, 스냅샷 ID 또는 "default"로부터 프로파일을 찾는다.
+    fn resolve_profile(&self, id_or_target: &str) -> Option<Profile> {
+        let t = id_or_target.trim();
+        if t.is_empty() {
+            return self.0.store.profiles().into_iter().next();
+        }
+        if let Some(p) = self.0.store.get(t) {
+            return Some(p);
+        }
+        let profiles = self.0.store.profiles();
+        if let Some(p) = profiles.iter().find(|p| p.repo_dir.eq_ignore_ascii_case(t)) {
+            return Some(p.clone());
+        }
+        for p in &profiles {
+            let repo = std::path::PathBuf::from(&p.repo_dir);
+            if repo.join("snapshots").join(format!("{t}.json")).exists()
+                || repo
+                    .join("snapshots")
+                    .join(format!("{t}.json.enc"))
+                    .exists()
+            {
+                return Some(p.clone());
+            }
+            if let Ok(h) = History::open(&repo) {
+                if let Ok(snaps) = h.list_snapshots() {
+                    if snaps.iter().any(|s| s.id == t) {
+                        return Some(p.clone());
+                    }
+                }
+            }
+        }
+        if t.eq_ignore_ascii_case("default") {
+            return profiles.into_iter().next();
+        }
+        None
+    }
+
     fn run_backup_job(&self, job: &Job, cancel: &AtomicBool) -> (bool, String, Option<String>) {
-        let Some(prof) = self.0.store.get(&job.profile_id) else {
+        let Some(prof) = self.resolve_profile(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
         };
         let mut opts = BackupOptions {
@@ -295,12 +332,13 @@ impl Supervisor {
         let on_event = |e: EngineEvent| {
             if let EngineEvent::Progress(p) = e {
                 let mut l = last_pct.lock().unwrap();
-                // 병렬 작업자가 순서 없이 보고해도 진행률이 뒤로 가지 않게(100% 다음 99% 방지) 커질 때만 알린다
-                if *l == u64::MAX || p.percent > *l {
-                    *l = p.percent;
+                // 파일 백업 단계는 0~95%로 매핑하여 후속 정리(팩·보호·복제) 단계와 진행률이 겹치거나 뒤로 가지 않게 한다
+                let scaled = (p.percent * 95 / 100).min(95);
+                if *l == u64::MAX || scaled > *l {
+                    *l = scaled;
                     self.emit(SvcEvent::Progress {
                         job_id: id,
-                        percent: p.percent,
+                        percent: scaled,
                         current: p.current_file,
                     });
                 }
@@ -351,7 +389,7 @@ impl Supervisor {
         drop(shadows); // 백업이 끝났으니 섀도 복사본 삭제
         let now = Local::now().timestamp() as f64;
         // 결과 반영은 최신 파일을 다시 읽어 이 프로파일만 갱신한다 (실행 중 화면에서 바꾼 설정을 덮어쓰지 않음)
-        let mut prof = self.0.store.get(&job.profile_id).unwrap_or(prof);
+        let mut prof = self.resolve_profile(&job.profile_id).unwrap_or(prof);
         let out = match res {
             Ok(s) => {
                 let had_previous = prof.last_snapshot_id.is_some();
@@ -409,6 +447,11 @@ impl Supervisor {
                 }
                 // 팩 컨테이너: 1시간 이상 된 낱개 블롭을 묶는다(이미 상단에서 _repo_lock 보유 중).
                 let pack_note = if self.0.store.settings().pack_blobs {
+                    self.emit(SvcEvent::Progress {
+                        job_id: id,
+                        percent: 96,
+                        current: "블롭 팩 압축 정리 중...".into(),
+                    });
                     match kova_core::packer::compact(
                         &opts.repo,
                         kova_core::gc::DEFAULT_MIN_AGE_SECS,
@@ -426,6 +469,11 @@ impl Supervisor {
                 // 랜섬웨어 보호: 이번 백업으로 생긴 매니페스트·블롭을 읽기 전용(+매니페스트는 삭제 거부 ACL)으로 잠근다.
                 // 삭제는 보존 정책·정리가 승인 경로(worm::remove_protected)로만 한다
                 let protected = if self.0.store.settings().enable_ransomware_protection {
+                    self.emit(SvcEvent::Progress {
+                        job_id: id,
+                        percent: 97,
+                        current: "랜섬웨어 변조 차단 보호 적용 중...".into(),
+                    });
                     let st = kova_core::worm::protect_new_files(&opts.repo);
                     Some(st.blobs + st.snapshots)
                 } else {
@@ -469,6 +517,11 @@ impl Supervisor {
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
                 {
+                    self.emit(SvcEvent::Progress {
+                        job_id: id,
+                        percent: 98,
+                        current: "오프사이트 백업 복제 중...".into(),
+                    });
                     let bw_limit = (self.0.store.settings().offsite_bw_limit_mbps as u64)
                         .saturating_mul(1024 * 1024);
                     match kova_core::offsite::replicate_with_limit(
@@ -485,9 +538,15 @@ impl Supervisor {
                     }
                 }
                 // 구글 드라이브 오프사이트: 앱에서 연결(로그인)돼 있고 제공자가 gdrive 일 때만. 실패해도 로컬 백업은 성공으로 둔다
-                if self.0.store.settings().offsite_provider == "gdrive"
+                if self.0.store.settings().offsite_enabled
+                    && self.0.store.settings().offsite_provider == "gdrive"
                     && kova_core::gdrive::is_connected(&self.0.store.dir)
                 {
+                    self.emit(SvcEvent::Progress {
+                        job_id: id,
+                        percent: 99,
+                        current: "구글 드라이브 클라우드 복제 중...".into(),
+                    });
                     let r = kova_core::gdrive::load_client(&self.0.store.dir).and_then(|creds| {
                         let mut c = kova_core::gdrive::DriveClient::open(
                             &self.0.store.dir,
@@ -533,6 +592,11 @@ impl Supervisor {
                         a.summary()
                     ));
                 }
+                self.emit(SvcEvent::Progress {
+                    job_id: id,
+                    percent: 100,
+                    current: "백업 완료".into(),
+                });
                 (true, msg, Some(s.session_id))
             }
             Err(e) => {
@@ -558,7 +622,7 @@ impl Supervisor {
 
     /// 스냅샷 삭제: 저장소는 프로파일 설정에서만 찾는다(요청자가 경로를 정하지 못한다).
     fn run_delete_snapshot_job(&self, job: &Job) -> (bool, String, Option<String>) {
-        let Some(prof) = self.0.store.get(&job.profile_id) else {
+        let Some(prof) = self.resolve_profile(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
         };
         match kova_core::retention::delete_snapshot(std::path::Path::new(&prof.repo_dir), &job.arg)
@@ -569,7 +633,7 @@ impl Supervisor {
     }
 
     fn run_gc_job(&self, job: &Job) -> (bool, String, Option<String>) {
-        let Some(mut prof) = self.0.store.get(&job.profile_id) else {
+        let Some(mut prof) = self.resolve_profile(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
         };
         let repo = std::path::Path::new(&prof.repo_dir);
@@ -584,12 +648,22 @@ impl Supervisor {
             }
             Err(e) => return (false, format!("저장소 잠금 실패: {e}"), None),
         };
+        self.emit(SvcEvent::Progress {
+            job_id: job.id,
+            percent: 50,
+            current: "고아 블롭 및 저장소 정리 중...".into(),
+        });
         // 1시간 미만의 새 블롭은 진행 중 백업 것일 수 있어 보호된다
         match kova_core::gc::prune_orphans(repo, kova_core::gc::DEFAULT_MIN_AGE_SECS) {
             Ok(r) => {
                 let now = Local::now().timestamp() as f64;
                 prof.extra.insert("last_gc_at".into(), now.into());
                 let _ = self.0.store.upsert(prof);
+                self.emit(SvcEvent::Progress {
+                    job_id: job.id,
+                    percent: 100,
+                    current: "정리 완료".into(),
+                });
                 (
                     true,
                     format!(
@@ -611,7 +685,7 @@ impl Supervisor {
         drive: char,
         cancel: &AtomicBool,
     ) -> (bool, String, Option<String>) {
-        let Some(prof) = self.0.store.get(&job.profile_id) else {
+        let Some(prof) = self.resolve_profile(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
         };
         let dir = std::path::Path::new(&prof.repo_dir).join("images");
@@ -664,7 +738,7 @@ impl Supervisor {
     }
 
     fn run_verify_job(&self, job: &Job) -> (bool, String, Option<String>) {
-        let Some(mut prof) = self.0.store.get(&job.profile_id) else {
+        let Some(mut prof) = self.resolve_profile(&job.profile_id) else {
             return (false, format!("프로파일 없음: {}", job.profile_id), None);
         };
         let repo = std::path::Path::new(&prof.repo_dir);
@@ -689,15 +763,27 @@ impl Supervisor {
         } else {
             "빠른 검증"
         };
+        self.emit(SvcEvent::Progress {
+            job_id: job.id,
+            percent: 50,
+            current: format!("{mode} 수행 중...").into(),
+        });
         let res = match kova_core::verify::verify_repo(repo, deep) {
-            Ok(r) if r.ok() => (
-                true,
-                format!(
-                    "{mode} 통과: 스냅샷 {}개, 파일 {}개, 청크 {}개",
-                    r.snapshots, r.files, r.unique_chunks
-                ),
-                None,
-            ),
+            Ok(r) if r.ok() => {
+                self.emit(SvcEvent::Progress {
+                    job_id: job.id,
+                    percent: 100,
+                    current: "검증 완료".into(),
+                });
+                (
+                    true,
+                    format!(
+                        "{mode} 통과: 스냅샷 {}개, 파일 {}개, 청크 {}개",
+                        r.snapshots, r.files, r.unique_chunks
+                    ),
+                    None,
+                )
+            }
             Ok(r) => (
                 false,
                 format!(
@@ -808,6 +894,11 @@ impl kova_ipc::Handler for IpcHandler {
                 Reply::Once(vec![Event::Status { waiting, running }])
             }
             Request::RunNow { profile_id, kind } => {
+                let pid = self
+                    .0
+                    .resolve_profile(&profile_id)
+                    .map(|p| p.id)
+                    .unwrap_or(profile_id);
                 let mut arg = String::new();
                 let k = match kind.as_str() {
                     "backup" => Kind::Backup,
@@ -829,7 +920,7 @@ impl kova_ipc::Handler for IpcHandler {
                         }])
                     }
                 };
-                Reply::Once(vec![match self.0.enqueue_with(&profile_id, k, &arg) {
+                Reply::Once(vec![match self.0.enqueue_with(&pid, k, &arg) {
                     Enqueue::Queued(job_id) => Event::Queued {
                         job_id,
                         merged: false,
@@ -1253,6 +1344,36 @@ mod tests {
     #[test]
     fn sleep_guard_can_be_created_and_dropped() {
         drop(SleepGuard::new());
+    }
+
+    #[test]
+    fn resolve_profile_handles_id_repo_and_default() {
+        let (d, s) = setup(true);
+        // 1. Direct ID
+        assert_eq!(s.resolve_profile("p1").map(|p| p.id), Some("p1".into()));
+        // 2. Repo path
+        let repo_str = d.path().join("repo").to_string_lossy().to_string();
+        assert_eq!(
+            s.resolve_profile(&repo_str).map(|p| p.id),
+            Some("p1".into())
+        );
+        // 3. "default" and empty string
+        assert_eq!(
+            s.resolve_profile("default").map(|p| p.id),
+            Some("p1".into())
+        );
+        assert_eq!(s.resolve_profile("").map(|p| p.id), Some("p1".into()));
+        assert_eq!(s.resolve_profile("   ").map(|p| p.id), Some("p1".into()));
+        // 4. Snapshot ID file check
+        let snap_dir = d.path().join("repo").join("snapshots");
+        std::fs::create_dir_all(&snap_dir).unwrap();
+        std::fs::write(snap_dir.join("20261121_103641.json"), "{}").unwrap();
+        assert_eq!(
+            s.resolve_profile("20261121_103641").map(|p| p.id),
+            Some("p1".into())
+        );
+        // 5. Unknown string
+        assert_eq!(s.resolve_profile("nonexistent"), None);
     }
 
     #[test]

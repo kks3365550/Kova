@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 slint::include_modules!();
+use slint::Model;
 
 use tray_icon::menu::{Menu, MenuEvent, MenuItem};
 use tray_icon::{Icon, TrayIconBuilder};
@@ -389,12 +390,15 @@ fn alert_rows() -> Vec<AlertRow> {
     let mut v = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir()).list();
     v.reverse();
     v.into_iter()
-        .map(|a| AlertRow {
-            when: chrono_fmt(a.at).into(),
-            level: a.level.into(),
-            message: shorten_alert(&format!("{}: {}", a.profile_id, a.message)).into(),
-            full: format!("{}: {}", a.profile_id, a.message).into(),
-            ack: a.acknowledged,
+        .map(|a| {
+            let name = profile_name(&a.profile_id);
+            AlertRow {
+                when: chrono_fmt(a.at).into(),
+                level: a.level.into(),
+                message: shorten_alert(&format!("{name}: {}", a.message)).into(),
+                full: format!("{name}: {}", a.message).into(),
+                ack: a.acknowledged,
+            }
         })
         .collect()
 }
@@ -449,23 +453,72 @@ fn set_offsite_provider(p: &str) {
 }
 
 /// 홈 화면의 "진행 중" 목록 한 줄(서비스 이벤트로 갱신).
+#[derive(Debug, Clone)]
 struct RunInfo {
     id: u64,
     name: String,
     pct: u64,
     current: String,
     cancellable: bool,
+    kind: String,
 }
 
 fn profile_name(id: &str) -> String {
-    kova_core::config::ConfigStore::new(kova_service::default_config_dir())
-        .get(id)
+    let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+    let resolved = resolve_profile_id(&store, id).unwrap_or_else(|| id.to_string());
+    store
+        .get(&resolved)
         .map(|p| p.name)
         .unwrap_or_else(|| id.to_string())
 }
 
-/// 이벤트 하나를 진행 중 목록에 반영한다. 검증·정리는 서비스가 취소 신호를 보지 않으므로 취소 버튼을 주지 않는다.
-fn update_running(rows: &mut Vec<RunInfo>, e: &kova_ipc::Event, name_of: &dyn Fn(&str) -> String) {
+/// 프로파일 ID, 저장소 경로, 스냅샷 ID, 또는 "default"로부터 올바른 프로파일 ID를 찾는다.
+fn resolve_profile_id(store: &kova_core::config::ConfigStore, target: &str) -> Option<String> {
+    let t = target.trim();
+    if t.is_empty() {
+        return store.profiles().first().map(|p| p.id.clone());
+    }
+    // 1. 직접 프로파일 ID 일치
+    if store.get(t).is_some() {
+        return Some(t.to_string());
+    }
+    let profiles = store.profiles();
+    // 2. 저장소 경로 일치
+    if let Some(p) = profiles.iter().find(|p| p.repo_dir.eq_ignore_ascii_case(t)) {
+        return Some(p.id.clone());
+    }
+    // 3. 스냅샷 ID 일치 (파일 직접 확인 또는 History DB)
+    for p in &profiles {
+        let repo = std::path::PathBuf::from(&p.repo_dir);
+        if repo.join("snapshots").join(format!("{t}.json")).exists()
+            || repo
+                .join("snapshots")
+                .join(format!("{t}.json.enc"))
+                .exists()
+        {
+            return Some(p.id.clone());
+        }
+        if let Ok(h) = kova_core::history::History::open(&repo) {
+            if let Ok(snaps) = h.list_snapshots() {
+                if snaps.iter().any(|s| s.id == t) {
+                    return Some(p.id.clone());
+                }
+            }
+        }
+    }
+    // 4. "default" 키워드 일치
+    if t.eq_ignore_ascii_case("default") {
+        return profiles.first().map(|p| p.id.clone());
+    }
+    None
+}
+
+/// 이벤트 하나를 진행 중 목록에 반영한다. 완료 이벤트인 경우 완료된 작업의 RunInfo를 반환한다.
+fn update_running(
+    rows: &mut Vec<RunInfo>,
+    e: &kova_ipc::Event,
+    name_of: &dyn Fn(&str) -> String,
+) -> Option<RunInfo> {
     match e {
         kova_ipc::Event::JobStarted {
             job_id,
@@ -479,7 +532,9 @@ fn update_running(rows: &mut Vec<RunInfo>, e: &kova_ipc::Event, name_of: &dyn Fn
                 pct: 0,
                 current: String::new(),
                 cancellable: kind == "backup" || kind.starts_with("image"),
+                kind: kind.clone(),
             });
+            None
         }
         kova_ipc::Event::Progress {
             job_id,
@@ -490,9 +545,13 @@ fn update_running(rows: &mut Vec<RunInfo>, e: &kova_ipc::Event, name_of: &dyn Fn
                 r.pct = (*percent).min(100);
                 r.current = current.clone();
             }
+            None
         }
-        kova_ipc::Event::JobFinished { job_id, .. } => rows.retain(|r| r.id != *job_id),
-        _ => {}
+        kova_ipc::Event::JobFinished { job_id, .. } => {
+            let pos = rows.iter().position(|r| r.id == *job_id)?;
+            Some(rows.remove(pos))
+        }
+        _ => None,
     }
 }
 
@@ -892,6 +951,7 @@ fn snaps() -> Vec<SnapRow> {
                 r.created_at,
                 SnapRow {
                     id: r.id.clone().into(),
+                    profile_id: p.id.clone().into(),
                     repo: p.repo_dir.clone().into(),
                     when: chrono_fmt(r.created_at).into(),
                     name: p.name.clone().into(),
@@ -1171,9 +1231,16 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
             let mut last_alerts: Option<Vec<AlertRow>> = None;
             let mut last_lines: Option<Vec<slint::SharedString>> = None;
             loop {
-                let text = match kova_ipc::request(kova_ipc::PIPE_NAME, &kova_ipc::Request::Status)
-                    .await
-                {
+                let status_res =
+                    kova_ipc::request(kova_ipc::PIPE_NAME, &kova_ipc::Request::Status).await;
+                let is_svc_idle = match &status_res {
+                    Ok(evs) => matches!(
+                        evs.first(),
+                        Some(kova_ipc::Event::Status { running: 0, .. })
+                    ),
+                    _ => false,
+                };
+                let text = match status_res {
                     Ok(evs) => match evs.first() {
                         Some(kova_ipc::Event::Status { waiting, running }) => {
                             format!("서비스 연결됨 · 실행 중 {running} · 대기 {waiting}")
@@ -1223,6 +1290,11 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
                         w.set_service_ok(text.starts_with("서비스 연결됨"));
                         w.set_service_status(text.into());
                         w.set_alert_text(alert.into());
+                        if is_svc_idle && w.get_running().row_count() > 0 {
+                            w.set_running(
+                                std::rc::Rc::new(slint::VecModel::<RunRow>::default()).into(),
+                            );
+                        }
                         if let Some(images) = images {
                             if w.get_img_path().is_empty() {
                                 if let Some(f) = images.first() {
@@ -1267,26 +1339,110 @@ fn spawn_ipc(weak: slint::Weak<MainWindow>) {
             loop {
                 let w = weak.clone();
                 let _ = kova_ipc::stream(kova_ipc::PIPE_NAME, &kova_ipc::Request::Subscribe, |e| {
-                    let rows: Vec<RunRow> = {
+                    let (run_rows, finished_info) = {
                         let mut r = running.lock().unwrap();
-                        update_running(&mut r, &e, &profile_name);
-                        r.iter()
+                        let fin = update_running(&mut r, &e, &profile_name);
+                        let rows: Vec<RunRow> = r
+                            .iter()
                             .map(|x| RunRow {
                                 id: x.id as i32,
                                 name: x.name.clone().into(),
                                 pct: x.pct as i32,
                                 current: x.current.clone().into(),
                                 cancellable: x.cancellable,
+                                kind: x.kind.clone().into(),
                             })
-                            .collect()
+                            .collect();
+                        (rows, fin)
                     };
                     {
                         let w = w.clone();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = w.upgrade() {
-                                w.set_running(std::rc::Rc::new(slint::VecModel::from(rows)).into());
+                                w.set_running(
+                                    std::rc::Rc::new(slint::VecModel::from(run_rows)).into(),
+                                );
                             }
                         });
+                    }
+                    if let kova_ipc::Event::JobStarted { .. } = e {
+                        let w_start = w.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w_start.upgrade() {
+                                w.set_job_completed_show(false);
+                            }
+                        });
+                    }
+                    if let kova_ipc::Event::JobFinished {
+                        ref profile_id,
+                        ok,
+                        ref message,
+                        ..
+                    } = e
+                    {
+                        let p_name = profile_name(profile_id);
+                        let kind = finished_info
+                            .map(|f| f.kind)
+                            .unwrap_or_else(|| "backup".into());
+                        let action = match kind.as_str() {
+                            "verify" => "무결성 검사",
+                            "gc" => "저장소 정리",
+                            s if s.starts_with("image") => "디스크 이미지 백업",
+                            "delsnap" => "스냅샷 삭제",
+                            _ => "백업",
+                        };
+                        let title = if ok {
+                            format!("{action} 완료: {p_name}")
+                        } else if message == "취소됨" {
+                            format!("{action} 취소됨: {p_name}")
+                        } else {
+                            format!("{action} 실패: {p_name}")
+                        };
+                        let is_ok = ok;
+                        let msg_text = message.clone();
+                        let w_done = w.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = w_done.upgrade() {
+                                w.set_job_completed_ok(is_ok);
+                                w.set_job_completed_title(title.into());
+                                w.set_job_completed_msg(msg_text.into());
+                                w.set_job_completed_show(true);
+                                let profiles = rows();
+                                let snapshots = snaps();
+                                w.set_profiles(
+                                    std::rc::Rc::new(slint::VecModel::from(profiles)).into(),
+                                );
+                                w.set_snapshots(
+                                    std::rc::Rc::new(slint::VecModel::from(snapshots)).into(),
+                                );
+                                let alerts = alert_rows();
+                                w.set_alerts(
+                                    std::rc::Rc::new(slint::VecModel::from(alerts)).into(),
+                                );
+                                let n = kova_core::alerts::AlertLog::new(
+                                    &kova_service::default_config_dir(),
+                                )
+                                .unacknowledged();
+                                if n > 0 {
+                                    w.set_alert_text(
+                                        format!("확인하지 않은 알림 {n}건 (백업 실패 등)").into(),
+                                    );
+                                } else {
+                                    w.set_alert_text("".into());
+                                }
+                            }
+                        });
+                        if is_ok {
+                            let w_auto = w.clone();
+                            tokio::spawn(async move {
+                                tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    if let Some(w) = w_auto.upgrade() {
+                                        w.set_job_completed_show(false);
+                                    }
+                                });
+                            });
+                        }
                     }
                     let line = match e {
                         kova_ipc::Event::JobStarted {
@@ -2412,8 +2568,28 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
     }
-    w.on_run_backup(|id| send("backup", id.to_string()));
-    w.on_run_verify(|id| send("verify", id.to_string()));
+    {
+        let weak = w.as_weak();
+        w.on_run_backup(move |id| {
+            if let Some(w) = weak.upgrade() {
+                w.set_job_completed_show(false);
+            }
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let pid = resolve_profile_id(&store, &id.to_string()).unwrap_or_else(|| id.to_string());
+            send("backup", pid);
+        });
+    }
+    {
+        let weak = w.as_weak();
+        w.on_run_verify(move |id| {
+            if let Some(w) = weak.upgrade() {
+                w.set_job_completed_show(false);
+            }
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let pid = resolve_profile_id(&store, &id.to_string()).unwrap_or_else(|| id.to_string());
+            send("verify", pid);
+        });
+    }
     w.on_open_repo_dir(|dir| {
         let dir_str = dir.to_string();
         std::thread::spawn(move || {
@@ -3140,7 +3316,17 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
     }
-    w.on_run_gc(|id| send("gc", id.to_string()));
+    {
+        let weak = w.as_weak();
+        w.on_run_gc(move |id| {
+            if let Some(w) = weak.upgrade() {
+                w.set_job_completed_show(false);
+            }
+            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
+            let pid = resolve_profile_id(&store, &id.to_string()).unwrap_or_else(|| id.to_string());
+            send("gc", pid);
+        });
+    }
     {
         let weak = w.as_weak();
         w.on_restore_inplace(move |repo, sid| {
@@ -3165,11 +3351,7 @@ fn main() -> Result<(), slint::PlatformError> {
             std::thread::spawn(move || {
                 // 지우기는 서비스(SYSTEM)에 맡긴다: 백업 파일에는 일반 사용자가 풀 수 없는 보호(ACL)가 걸려 있다
                 let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
-                let pid = store
-                    .profiles()
-                    .into_iter()
-                    .find(|p| p.repo_dir.eq_ignore_ascii_case(&repo))
-                    .map(|p| p.id);
+                let pid = resolve_profile_id(&store, &repo);
                 let via_service = pid.and_then(|pid| {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
@@ -3201,10 +3383,26 @@ fn main() -> Result<(), slint::PlatformError> {
             });
         });
     }
-    w.on_ack_alerts(|| {
-        let _ =
-            kova_core::alerts::AlertLog::new(&kova_service::default_config_dir()).acknowledge_all();
-    });
+    {
+        let weak_ack = w.as_weak();
+        w.on_ack_alerts(move || {
+            let _ = kova_core::alerts::AlertLog::new(&kova_service::default_config_dir())
+                .acknowledge_all();
+            if let Some(w) = weak_ack.upgrade() {
+                w.set_alert_text("".into());
+                let alerts = alert_rows();
+                w.set_alerts(std::rc::Rc::new(slint::VecModel::from(alerts)).into());
+            }
+        });
+    }
+    {
+        let weak_dismiss = w.as_weak();
+        w.on_dismiss_completed(move || {
+            if let Some(w) = weak_dismiss.upgrade() {
+                w.set_job_completed_show(false);
+            }
+        });
+    }
     spawn_ipc(w.as_weak());
 
     let menu = Menu::new();
@@ -3478,6 +3676,8 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows[0].cancellable && !rows[1].cancellable);
         assert_eq!(rows[0].name, "P-a");
+        assert_eq!(rows[0].kind, "backup");
+        assert_eq!(rows[1].kind, "verify");
         update_running(
             &mut rows,
             &E::Progress {
@@ -3488,7 +3688,7 @@ mod tests {
             &name,
         );
         assert_eq!((rows[0].pct, rows[0].current.as_str()), (100, "f.txt"));
-        update_running(
+        let fin = update_running(
             &mut rows,
             &E::JobFinished {
                 job_id: 1,
@@ -3501,6 +3701,7 @@ mod tests {
         );
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].id, 2);
+        assert_eq!(fin.map(|f| f.kind), Some("backup".into()));
         update_running(&mut rows, &start(3, "image:C"), &name);
         assert!(rows[1].cancellable);
     }
@@ -3542,6 +3743,47 @@ mod tests {
             decode_install_result("v3 설치 완료(2개 파일)"),
             (false, "v3 설치 완료(2개 파일)".into())
         );
+    }
+
+    #[test]
+    fn resolve_profile_id_lookup() {
+        let dir = std::env::temp_dir().join(format!("kova_test_resolve_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = kova_core::config::ConfigStore::new(&dir);
+        let mut p = kova_core::config::Profile::new("prof_test", "테스트");
+        p.repo_dir = dir.join("repo").to_string_lossy().to_string();
+        store.upsert(p).unwrap();
+
+        // 1. Direct ID match
+        assert_eq!(
+            resolve_profile_id(&store, "prof_test"),
+            Some("prof_test".into())
+        );
+        // 2. Repo path match
+        assert_eq!(
+            resolve_profile_id(&store, &dir.join("repo").to_string_lossy()),
+            Some("prof_test".into())
+        );
+        // 3. "default" fallback and empty string
+        assert_eq!(
+            resolve_profile_id(&store, "default"),
+            Some("prof_test".into())
+        );
+        assert_eq!(resolve_profile_id(&store, ""), Some("prof_test".into()));
+        assert_eq!(resolve_profile_id(&store, "   "), Some("prof_test".into()));
+        // 4. Snapshot ID file lookup
+        let snap_dir = dir.join("repo").join("snapshots");
+        std::fs::create_dir_all(&snap_dir).unwrap();
+        std::fs::write(snap_dir.join("20261121_103641.json"), "{}").unwrap();
+        assert_eq!(
+            resolve_profile_id(&store, "20261121_103641"),
+            Some("prof_test".into())
+        );
+        // 5. Unknown string
+        assert_eq!(resolve_profile_id(&store, "unknown_12345"), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

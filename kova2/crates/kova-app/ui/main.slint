@@ -3,13 +3,13 @@
 export struct ProfileRow { id: string, name: string, last: string, detail: string, next: string, stale: bool, size: string }
 export struct ProgPick { name: string, sub: string, checked: bool }
 export struct SrcRow { kind: int, title: string, sub: string, key: string }
-export struct SnapRow { id: string, repo: string, when: string, name: string, summary: string, verified: string }
+export struct SnapRow { id: string, profile-id: string, repo: string, when: string, name: string, summary: string, verified: string }
 export struct OffsiteRow { id: string, name: string, dir: string }
 export struct AlertRow { when: string, level: string, message: string, full: string, ack: bool }
 export struct BrowseRow { name: string, path: string, is-dir: bool, info: string, selected: bool }
 export struct DriveRow { name: string, pct: int, used: string, free: string, repo: bool }
 export struct ImageRow { name: string, path: string, size: string, when: string }
-export struct RunRow { id: int, name: string, pct: int, current: string, cancellable: bool }
+export struct RunRow { id: int, name: string, pct: int, current: string, cancellable: bool, kind: string }
 export struct GlobalFileRow { filename: string, rel-path: string, repo: string, snapshot-id: string, versions: string, info: string }
 
 global Theme {
@@ -346,19 +346,21 @@ component ModeCard inherits Rectangle {
         
         // Mode Title
         Text {
+            height: 24px;
             text: root.title;
             color: selected ? (Theme.dark ? #ffffff : #0f172a) : Theme.text;
             font-size: 18px;
             font-weight: 800;
+            vertical-alignment: center;
         }
         
         // Mode Description
         Text {
+            height: 56px;
             text: root.desc;
             color: selected ? (Theme.dark ? #cbd5e1 : #475569) : Theme.muted;
             font-size: 13px;
             wrap: word-wrap;
-            min-height: 52px;
         }
         
         Rectangle {
@@ -370,6 +372,7 @@ component ModeCard inherits Rectangle {
         if root.f1 != "": VerticalLayout {
             spacing: 8px;
             HorizontalLayout {
+                height: 20px;
                 spacing: 8px;
                 alignment: start;
                 VerticalLayout {
@@ -379,6 +382,7 @@ component ModeCard inherits Rectangle {
                 Text { text: root.f1; color: selected ? Theme.text : Theme.text-sub; font-size: 12px; vertical-alignment: center; }
             }
             if root.f2 != "": HorizontalLayout {
+                height: 20px;
                 spacing: 8px;
                 alignment: start;
                 VerticalLayout {
@@ -388,6 +392,7 @@ component ModeCard inherits Rectangle {
                 Text { text: root.f2; color: selected ? Theme.text : Theme.text-sub; font-size: 12px; vertical-alignment: center; }
             }
             if root.f3 != "": HorizontalLayout {
+                height: 20px;
                 spacing: 8px;
                 alignment: start;
                 VerticalLayout {
@@ -468,6 +473,11 @@ export component MainWindow inherits Window {
     callback check-update();
     in property <[RunRow]> running;
     callback cancel-job(int);
+    in-out property <bool> job-completed-show: false;
+    in-out property <bool> job-completed-ok: true;
+    in-out property <string> job-completed-title: "";
+    in-out property <string> job-completed-msg: "";
+    callback dismiss-completed();
     callback save-settings(string, bool, bool, bool, bool);
     in-out property <string> form-min-free: "5";
     in-out property <bool> form-ransom: true;
@@ -698,7 +708,7 @@ export component MainWindow inherits Window {
                         step-num: "2";
                         title: "파일 되돌리기 복원";
                         sub: "스냅샷 시점 복원 & 검색";
-                        active: root.page == 2 || root.page == 3;
+                        active: root.page == 2;
                         clicked => { root.page = 2; }
                     }
                     
@@ -708,6 +718,14 @@ export component MainWindow inherits Window {
                         sub: "일정, 보안 & WinPE";
                         active: root.page == 5;
                         clicked => { root.page = 5; }
+                    }
+
+                    NavStepItem {
+                        step-num: root.alert-text != "" ? "!" : "🔔";
+                        title: "알림 & 경고 내역";
+                        sub: root.alert-text != "" ? root.alert-text : "시스템 알림 및 경고 기록";
+                        active: root.page == 3;
+                        clicked => { root.page = 3; }
                     }
                 }
                 
@@ -814,7 +832,43 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                     }
                     if root.pick-error != "": Badge { text: root.pick-error; tone: Theme.danger; y: 5px; }
-                    if root.alert-text != "": Badge { text: root.alert-text; tone: Theme.danger; y: 5px; }
+                    if root.alert-text != "": Rectangle {
+                        height: 28px;
+                        border-radius: 14px;
+                        background: ta-header-alert.has-hover ? Theme.danger.with-alpha(0.24) : Theme.danger.with-alpha(0.16);
+                        border-width: 1px;
+                        border-color: ta-header-alert.has-hover ? Theme.danger : Theme.danger.with-alpha(0.4);
+                        HorizontalLayout {
+                            padding-left: 10px;
+                            padding-right: 12px;
+                            spacing: 6px;
+                            alignment: center;
+                            Rectangle {
+                                width: 6px;
+                                height: 6px;
+                                border-radius: 3px;
+                                background: Theme.danger;
+                            }
+                            Text {
+                                text: root.alert-text;
+                                color: Theme.danger;
+                                font-size: 11px;
+                                font-weight: 700;
+                                vertical-alignment: center;
+                            }
+                            Text {
+                                text: "→ 보기";
+                                color: Theme.danger;
+                                font-size: 11px;
+                                font-weight: 800;
+                                vertical-alignment: center;
+                            }
+                        }
+                        ta-header-alert := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.page = 3; }
+                        }
+                    }
                 }
             }
             
@@ -824,6 +878,130 @@ export component MainWindow inherits Window {
                 padding-top: 16px;
                 spacing: 14px;
                 vertical-stretch: 1;
+
+                // Dedicated Active Running Card (전체 화면 공통 실시간 러너)
+                if root.running.length > 0: Card {
+                    border-color: Theme.accent;
+                    border-width: 1px;
+                    background: Theme.dark ? #121c2e : #eff6ff;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 10px;
+                        for r in root.running: VerticalLayout {
+                            spacing: 8px;
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: Theme.accent;
+                                }
+                                Text {
+                                    text: r.kind == "verify" ? "무결성 검사 진행 중" : (r.kind == "gc" ? "저장소 정리 진행 중" : (r.kind == "delsnap" ? "스냅샷 삭제 중" : (r.kind != "" && r.kind != "backup" ? r.kind + " 진행 중" : "백업 진행 중")));
+                                    color: Theme.accent;
+                                    font-size: 12px;
+                                    font-weight: 800;
+                                }
+                                Text {
+                                    text: "• " + r.name;
+                                    color: Theme.text;
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
+                                Badge {
+                                    text: r.pct + "%";
+                                    tone: Theme.accent;
+                                }
+                                if r.cancellable: Btn {
+                                    text: "작업 중단";
+                                    kind: 2;
+                                    height: 28px;
+                                    clicked => { root.cancel-job(r.id); }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Text {
+                                    text: "현재 처리:";
+                                    color: Theme.muted;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                }
+                                Text {
+                                    text: r.current != "" ? r.current : (r.kind == "verify" ? "스냅샷 및 데이터 블롭 무결성 검증 중..." : (r.kind == "gc" ? "고아 블롭 및 저장소 데이터 정리 중..." : "파일 분석 및 백업 준비 중..."));
+                                    color: Theme.muted;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+                            Meter {
+                                pct: r.pct;
+                                tone: Theme.accent;
+                                height: 8px;
+                            }
+                        }
+                    }
+                }
+
+                // Dedicated Job Completion Banner / Card (전체 화면 공통 완료 카드)
+                if root.job-completed-show && root.running.length == 0: Card {
+                    border-color: root.job-completed-ok ? Theme.ok : Theme.danger;
+                    border-width: 1px;
+                    background: root.job-completed-ok ? (Theme.dark ? #0f241a : #f0fdf4) : (Theme.dark ? #2a1215 : #fef2f2);
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: center;
+                            Rectangle {
+                                width: 22px;
+                                height: 22px;
+                                border-radius: 11px;
+                                background: root.job-completed-ok ? Theme.ok : Theme.danger;
+                                Text {
+                                    text: root.job-completed-ok ? "✓" : "!";
+                                    color: #ffffff;
+                                    font-size: 13px;
+                                    font-weight: 900;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            Text {
+                                text: root.job-completed-title;
+                                color: root.job-completed-ok ? Theme.ok : Theme.danger;
+                                font-size: 14px;
+                                font-weight: 800;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                            if !root.job-completed-ok: Btn {
+                                text: "알림 내역 보기";
+                                kind: 2;
+                                height: 28px;
+                                clicked => { root.dismiss-completed(); root.page = 3; }
+                            }
+                            Btn {
+                                text: "확인";
+                                kind: root.job-completed-ok ? 1 : 0;
+                                height: 28px;
+                                clicked => { root.dismiss-completed(); }
+                            }
+                        }
+                        if root.job-completed-msg != "": Text {
+                            text: root.job-completed-msg;
+                            color: Theme.muted;
+                            font-size: 12px;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
 
                 // PAGE 0: HOME & BACKUP (Tiny11 Builder Clean Fluent UI)
                 if root.page == 0: VerticalLayout {
@@ -864,29 +1042,6 @@ export component MainWindow inherits Window {
                                 text: "원클릭으로 PC와 중요 데이터를 안전하게 보호하세요.";
                                 color: Theme.muted;
                                 font-size: 13px;
-                            }
-                        }
-                    }
-                    
-                    // Active Running Jobs (if any)
-                    if root.running.length > 0: Card {
-                        border-color: Theme.accent;
-                        background: Theme.accent.with-alpha(0.08);
-                        VerticalLayout {
-                            padding: 12px;
-                            spacing: 8px;
-                            for r in root.running: HorizontalLayout {
-                                spacing: 10px;
-                                alignment: center;
-                                VerticalLayout {
-                                    horizontal-stretch: 1;
-                                    HorizontalLayout {
-                                        Text { text: "⚡ " + r.name; color: Theme.text; font-size: 13px; font-weight: 700; }
-                                        Text { text: r.current; color: Theme.muted; font-size: 12px; horizontal-stretch: 1; overflow: elide; }
-                                    }
-                                    Meter { pct: r.pct; tone: Theme.accent; }
-                                }
-                                if r.cancellable: Btn { text: "중단"; kind: 2; y: 4px; clicked => { root.cancel-job(r.id); } }
                             }
                         }
                     }
@@ -1000,6 +1155,7 @@ export component MainWindow inherits Window {
                                     min-width: 190px;
                                     clicked => {
                                         if root.sel-mode == 0 {
+                                            root.dismiss-completed();
                                             if root.profiles.length > 0 {
                                                 root.run-backup(root.profiles[0].id);
                                             } else {
@@ -1512,7 +1668,7 @@ export component MainWindow inherits Window {
                                     Btn { 
                                         text: "🔍 무결성 검사"; 
                                         height: 32px; 
-                                        clicked => { root.run-verify(s.id); } 
+                                        clicked => { root.run-verify(s.profile-id != "" ? s.profile-id : s.id); } 
                                     }
                                 }
                                 
@@ -1582,14 +1738,34 @@ export component MainWindow inherits Window {
                     
                 Card {
                     vertical-stretch: 1;
-                    ListView {
+                    if root.alerts.length == 0: VerticalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Text {
+                            text: "🎉 확인이 필요한 알림이 없습니다.";
+                            color: Theme.ok;
+                            font-size: 15px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                        }
+                        Text {
+                            text: "모든 백업 및 무결성 검증이 문제 없이 안정적으로 수행되었습니다.";
+                            color: Theme.muted;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                        }
+                    }
+                    if root.alerts.length > 0: ListView {
                         for a[i] in root.alerts: Rectangle {
-                            min-height: 50px;
-                            HorizontalLayout {
+                            height: max(54px, hl-alert.preferred-height);
+                            hl-alert := HorizontalLayout {
                                 padding: 14px;
                                 spacing: 14px;
-                                Text { text: a.when; color: Theme.muted; width: 120px; font-size: 12px; vertical-alignment: top; }
-                                Badge { text: a.level; tone: a.level == "error" ? Theme.danger : Theme.warn; y: 0px; }
+                                Text { text: a.when; color: Theme.muted; width: 90px; font-size: 12px; vertical-alignment: top; }
+                                VerticalLayout {
+                                    alignment: start;
+                                    Badge { text: a.level == "error" ? "오류" : (a.level == "warning" ? "경고" : a.level); tone: a.level == "error" ? Theme.danger : Theme.warn; }
+                                }
                                 Text { 
                                     text: root.open-alert == i ? a.full : a.message; 
                                     color: Theme.text; 
@@ -1598,8 +1774,17 @@ export component MainWindow inherits Window {
                                     horizontal-stretch: 1; 
                                     wrap: word-wrap; 
                                 }
+                                Text {
+                                    text: root.open-alert == i ? "▲ 접기" : "▼ 상세보기";
+                                    color: Theme.muted;
+                                    font-size: 11px;
+                                    vertical-alignment: top;
+                                }
                             }
-                            TouchArea { clicked => { root.open-alert = root.open-alert == i ? -1 : i; } }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.open-alert = root.open-alert == i ? -1 : i; }
+                            }
                             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.line; }
                         }
                     }
