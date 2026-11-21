@@ -502,6 +502,15 @@ fn resolve_profile_id(store: &kova_core::config::ConfigStore, target: &str) -> O
                     }
                 }
             }
+            if let Ok(h) = kova_core::history::History::open(&repo) {
+                if let Ok(snaps) = h.list_snapshots() {
+                    if let Some(s) = snaps.iter().find(|s| s.id == t) {
+                        if !s.profile_id.is_empty() && store.get(&s.profile_id).is_some() {
+                            return Some(s.profile_id.clone());
+                        }
+                    }
+                }
+            }
             return Some(p.id.clone());
         }
         if let Ok(h) = kova_core::history::History::open(&repo) {
@@ -3801,6 +3810,21 @@ mod tests {
         .unwrap();
         assert_eq!(
             resolve_profile_id(&store, "snap_for_second"),
+            Some("prof_second".into())
+        );
+
+        // 4c. Disambiguate encrypted snapshot by History DB
+        std::fs::write(snap_dir.join("snap_enc_second.json.enc"), b"cipher_content").unwrap();
+        let repo_path = dir.join("repo");
+        let _ = kova_core::history::History::open(&repo_path).unwrap();
+        let conn = kova_core::rusqlite::Connection::open(repo_path.join("metadata.db")).unwrap();
+        conn.execute(
+            "INSERT INTO snapshots_meta (id, profile_id) VALUES (?1, ?2)",
+            kova_core::rusqlite::params!["snap_enc_second", "prof_second"],
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_profile_id(&store, "snap_enc_second"),
             Some("prof_second".into())
         );
 

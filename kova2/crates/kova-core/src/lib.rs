@@ -33,3 +33,5 @@ pub mod update;
 pub mod verify;
 pub mod vss;
 pub mod worm;
+
+pub use rusqlite;

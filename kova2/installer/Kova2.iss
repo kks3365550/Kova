@@ -55,7 +55,7 @@ Filename: "{app}\kova-service.exe"; Parameters: "--uninstall"; Flags: runhidden 
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM kova-service.exe"; Flags: runhidden waituntilterminated
 
 [InstallDelete]
-Type: files; Name: "{app}\is-*.tmp"
+Type: filesandordirs; Name: "{app}\is-*.tmp"
 
 [Code]
 procedure KillKovaProcesses();
@@ -111,12 +111,17 @@ end;
 procedure CleanTempFiles();
 var
   FindRec: TFindRec;
+  Target: String;
 begin
   if FindFirst(ExpandConstant('{app}\is-*.tmp'), FindRec) then
   begin
     try
       repeat
-        DeleteFile(ExpandConstant('{app}\') + FindRec.Name);
+        Target := ExpandConstant('{app}\') + FindRec.Name;
+        if (FindRec.Attributes and 16) <> 0 then
+          DelTree(Target, True, True, True)
+        else
+          DeleteFile(Target);
       until not FindNext(FindRec);
     finally
       FindClose(FindRec);

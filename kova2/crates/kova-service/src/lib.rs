@@ -280,6 +280,19 @@ impl Supervisor {
                         }
                     }
                 }
+                if let Ok(h) = History::open(&repo) {
+                    if let Ok(snaps) = h.list_snapshots() {
+                        if let Some(s) = snaps.iter().find(|s| s.id == t) {
+                            if !s.profile_id.is_empty() {
+                                if let Some(target) =
+                                    profiles.iter().find(|pr| pr.id == s.profile_id)
+                                {
+                                    return Some(target.clone());
+                                }
+                            }
+                        }
+                    }
+                }
                 return Some(p.clone());
             }
             if let Ok(h) = History::open(&repo) {
@@ -1636,6 +1649,33 @@ mod tests {
         )
         .unwrap();
         let resolved = s.resolve_profile("snap_for_p2");
+        assert_eq!(resolved.as_ref().map(|p| p.id.as_str()), Some("p2"));
+    }
+
+    #[test]
+    fn resolve_profile_disambiguates_shared_repo_encrypted_snapshot_by_history() {
+        let (d, s) = setup(false);
+        let cfg = ConfigStore::new(d.path().join("cfg"));
+        let mut p2 = Profile::new("p2", "프로파일 2");
+        p2.repo_dir = d.path().join("repo").to_string_lossy().to_string();
+        cfg.upsert(p2).unwrap();
+
+        let repo = d.path().join("repo");
+        let snaps = repo.join("snapshots");
+        fs::create_dir_all(&snaps).unwrap();
+        // Encrypted snapshot file (.enc cannot be loaded as plaintext json by CasStorage)
+        fs::write(snaps.join("snap_enc_p2.json.enc"), b"cipher_data").unwrap();
+
+        // Record in SQLite History
+        let _ = History::open(&repo).unwrap();
+        let conn = kova_core::rusqlite::Connection::open(repo.join("metadata.db")).unwrap();
+        conn.execute(
+            "INSERT INTO snapshots_meta (id, profile_id) VALUES (?1, ?2)",
+            kova_core::rusqlite::params!["snap_enc_p2", "p2"],
+        )
+        .unwrap();
+
+        let resolved = s.resolve_profile("snap_enc_p2");
         assert_eq!(resolved.as_ref().map(|p| p.id.as_str()), Some("p2"));
     }
 }

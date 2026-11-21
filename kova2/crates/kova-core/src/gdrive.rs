@@ -649,10 +649,20 @@ pub fn replicate_to_drive(
             rep.snapshots_skipped += 1;
             continue;
         }
-        let m: SnapshotManifest = serde_json::from_reader(io::BufReader::new(
-            fs::File::open(&mp).map_err(|e| e.to_string())?,
-        ))
-        .map_err(|e| format!("{}: {e}", mp.display()))?;
+        let m: SnapshotManifest = match fs::File::open(&mp)
+            .map_err(|e| e.to_string())
+            .and_then(|f| serde_json::from_reader(io::BufReader::new(f)).map_err(|e| e.to_string()))
+        {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!(
+                    "[KOVA-GDRIVE-WARN] 매니페스트 읽기 실패 ({}): {} -> 스냅샷 업로드 건너뜀",
+                    mp.display(),
+                    e
+                );
+                continue;
+            }
+        };
         let mut hashes = Vec::new();
         for fe in m.files() {
             hashes.extend(fe.chunks.into_iter().map(|c| c.hash));
@@ -666,7 +676,7 @@ pub fn replicate_to_drive(
         let mut seen = HashSet::new();
         let mut snapshot_healthy = true;
         for h in hashes {
-            if !seen.insert(h.clone()) {
+            if h.is_empty() || !seen.insert(h.clone()) {
                 continue;
             }
             if cancel.load(Ordering::Relaxed) {
@@ -1072,6 +1082,72 @@ mod tests {
         assert_eq!(r2.snapshots_uploaded, 0);
         assert_eq!(r2.snapshots_skipped, 1);
         assert_eq!(r2.bytes_uploaded, 0);
+    }
+
+    #[test]
+    fn replicate_skips_corrupted_or_missing_blob_snapshot_and_continues_to_healthy() {
+        let st = Arc::new(Mutex::new(Mock::default()));
+        let (_b, ep) = start_mock(st.clone());
+        let dir = tempfile::tempdir().unwrap();
+        save_token(
+            dir.path(),
+            &Token {
+                refresh: "RT1".into(),
+                access: "AT1".into(),
+                expires_at: i64::MAX,
+            },
+        )
+        .unwrap();
+
+        let work = tempfile::tempdir().unwrap();
+        let src = work.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("healthy.txt"), "healthy data").unwrap();
+        let repo = work.path().join("repo");
+
+        // 1. Create a healthy snapshot via backup
+        kova_engine::ops::run_backup(
+            &kova_engine::ops::BackupOptions {
+                sources: vec![src],
+                repo: repo.clone(),
+                session_id: Some("20261121_120000".into()),
+                zstd_level: 3,
+                exclude: vec![],
+                profile_id: None,
+                scan_from: None,
+            },
+            &|_| {},
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+
+        // 2. Inject an earlier corrupted snapshot with a nonexistent blob hash
+        let snaps_dir = repo.join("snapshots");
+        fs::write(
+            snaps_dir.join("20261121_110000.json"),
+            r#"{"id":"20261121_110000","files":[{"path":"missing.txt","size":100,"chunks":[{"hash":"nonexistent_blob_hash_1234567890abcdef","offset":0,"length":100,"compressed_length":50}]}]}"#,
+        )
+        .unwrap();
+
+        // 3. Inject an unparseable malformed JSON snapshot
+        fs::write(snaps_dir.join("20261121_100000.json"), b"invalid-json{{{").unwrap();
+
+        // 4. Replicate to Google Drive
+        let mut c = DriveClient::open(dir.path(), ep, creds()).unwrap();
+        c.retry_base = Duration::ZERO;
+        let cancel = AtomicBool::new(false);
+        let rep = replicate_to_drive(&repo, &mut c, &["Kova2 Backup", "p1"], &cancel).unwrap();
+
+        // The malformed and missing-blob snapshots must be skipped, while the healthy snapshot succeeds!
+        assert_eq!(rep.snapshots_uploaded, 1);
+        assert!(rep.blobs_uploaded >= 1);
+
+        let m = st.lock().unwrap();
+        // 20261121_120000.json was uploaded
+        assert!(m.files.iter().any(|f| f.0 == "20261121_120000.json"));
+        // 20261121_110000.json and 20261121_100000.json were NOT uploaded
+        assert!(!m.files.iter().any(|f| f.0 == "20261121_110000.json"));
+        assert!(!m.files.iter().any(|f| f.0 == "20261121_100000.json"));
     }
 
     /// 실계정 소량 시험(수동): 앱에서 먼저 연결한 뒤 `cargo test -p kova-core real_drive -- --ignored --nocapture`.

@@ -459,16 +459,16 @@ impl CasStorage {
             for entry in dir_entries.flatten() {
                 let path = entry.path();
                 if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
-                    if let Ok(meta) = entry.metadata() {
-                        if let Ok(mtime) = meta.modified() {
-                            entries.push((mtime, path));
-                        }
-                    }
+                    let mtime = entry
+                        .metadata()
+                        .and_then(|m| m.modified())
+                        .unwrap_or(std::time::UNIX_EPOCH);
+                    entries.push((mtime, path));
                 }
             }
         }
 
-        entries.sort_by_key(|e| std::cmp::Reverse(e.0));
+        entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
 
         // Parse candidate manifests in parallel batches (newest first, order preserved).
         use rayon::prelude::*;
