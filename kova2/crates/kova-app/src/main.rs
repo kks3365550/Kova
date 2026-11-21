@@ -1878,6 +1878,8 @@ fn do_install() -> Result<(String, bool), String> {
         500 << 20,
     )
     .map_err(|e| e.to_string())?;
+    kova_core::fetch::ensure_package_newer(&pkg, "kova-app.exe", current)
+        .map_err(|e| e.to_string())?;
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let dir = exe.parent().ok_or("설치 폴더를 알 수 없음")?.to_path_buf();
     let backup = dir.join("update_backup");

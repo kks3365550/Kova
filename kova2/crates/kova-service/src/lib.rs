@@ -292,6 +292,11 @@ impl Supervisor {
         self.0.queue.lock().unwrap().cancel(job_id)
     }
 
+    /// 대기·실행 중인 작업의 종류(권한 판단용).
+    pub fn job_kind(&self, job_id: u64) -> Option<Kind> {
+        self.0.queue.lock().unwrap().kind_of(job_id)
+    }
+
     /// 스케줄이 도래한 프로파일을 큐에 넣고 시작 가능한 작업을 시작한다. 새로 큐에 넣은 수를 반환.
     pub fn tick(&self, now: DateTime<Local>) -> usize {
         let mut n = 0;
@@ -812,10 +817,15 @@ impl Supervisor {
                         cancel,
                         bw_limit,
                     ) {
-                        Ok(r) => msg.push_str(&format!(
-                            ", 오프사이트 복제 {}개 스냅샷/{}개 블롭",
-                            r.snapshots_copied, r.blobs_copied
-                        )),
+                        Ok(r) => {
+                            msg.push_str(&format!(
+                                ", 오프사이트 복제 {}개 스냅샷/{}개 블롭",
+                                r.snapshots_copied, r.blobs_copied
+                            ));
+                            if let Some(w) = r.warning() {
+                                msg.push_str(&format!(" (경고: {w})"));
+                            }
+                        }
                         Err(e) => msg.push_str(&format!(", 오프사이트 복제 실패: {e}")),
                     }
                 }
@@ -843,10 +853,15 @@ impl Supervisor {
                         )
                     });
                     match r {
-                        Ok(r) => msg.push_str(&format!(
-                            ", 구글 드라이브 복제 {}개 스냅샷/{}개 블롭",
-                            r.snapshots_uploaded, r.blobs_uploaded
-                        )),
+                        Ok(r) => {
+                            msg.push_str(&format!(
+                                ", 구글 드라이브 복제 {}개 스냅샷/{}개 블롭",
+                                r.snapshots_uploaded, r.blobs_uploaded
+                            ));
+                            if let Some(w) = r.warning() {
+                                msg.push_str(&format!(" (경고: {w})"));
+                            }
+                        }
                         Err(e) => msg.push_str(&format!(", 구글 드라이브 복제 실패: {e}")),
                     }
                 }
@@ -1312,7 +1327,13 @@ impl kova_ipc::Handler for IpcHandler {
                 }])
             }
             Request::Cancel { job_id } => {
-                if !caller.privileged {
+                // 일반 사용자 앱의 취소 버튼이 동작하도록 백업·검증 취소는 허용하고, 이미지·정리·삭제 취소는 관리자만 한다
+                let light = job_id
+                    .checked_sub(base)
+                    .filter(|i| *i > 0)
+                    .and_then(|i| self.0.job_kind(i))
+                    .is_some_and(|k| matches!(k, Kind::Backup | Kind::Verify));
+                if !caller.privileged && !light {
                     return self.refuse(&format!("Cancel job={job_id}"));
                 }
                 let found = job_id

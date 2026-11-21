@@ -104,6 +104,15 @@ impl JobQueue {
         false
     }
 
+    /// 대기 중이거나 실행 중인 작업의 종류. 없으면 None.
+    pub fn kind_of(&self, id: u64) -> Option<Kind> {
+        self.waiting
+            .iter()
+            .find(|j| j.id == id)
+            .or_else(|| self.running.iter().map(|(j, _)| j).find(|j| j.id == id))
+            .map(|j| j.kind)
+    }
+
     pub fn is_profile_busy(&self, profile_id: &str) -> bool {
         self.running.iter().any(|(j, _)| j.profile_id == profile_id)
             || self.waiting.iter().any(|j| j.profile_id == profile_id)
