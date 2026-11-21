@@ -188,6 +188,24 @@ pub fn enable(repo: &Path) -> Result<Option<String>, String> {
         return Ok(None);
     }
     fs::create_dir_all(repo).map_err(|e| format!("저장소 폴더: {e}"))?;
+    // 백업·정리 중에는 켜지 않는다(쓰기 도중 표식이 생기면 한 스냅샷에 평문·암호문이 섞인다).
+    // 잠금 파일을 열 권한이 없는 경우(일반 사용자 앱)에는 기존처럼 잠금 없이 진행한다.
+    let _lock = match crate::lock::RepoLock::try_acquire(repo) {
+        Ok(l) => Some(l),
+        Err(crate::lock::LockError::Busy) => {
+            return Err("저장소를 쓰는 작업이 있어 지금은 암호화를 켤 수 없습니다".into())
+        }
+        Err(crate::lock::LockError::Io(_)) => None,
+    };
+    if is_enabled(repo) {
+        return Ok(None);
+    }
+    if has_encrypted_blobs(repo) {
+        return Err(format!(
+            "저장소에 암호화된 블롭이 있는데 암호화 표식({MARKER})이 없습니다. \
+             새 키를 만들면 기존 백업을 영영 읽을 수 없으므로 거부합니다. 원래 {MARKER} 을 복원하세요"
+        ));
+    }
     let key: [u8; 32] = random_bytes();
     let repo_id = hex(&random_bytes::<8>());
     store_key(&repo_id, &key)?;
@@ -197,9 +215,55 @@ pub fn enable(repo: &Path) -> Result<Option<String>, String> {
         key_check: key_check(&key),
     };
     let json = serde_json::to_string_pretty(&m).map_err(|e| e.to_string())?;
-    fs::write(repo.join(MARKER), json).map_err(|e| format!("crypto.json 쓰기: {e}"))?;
+    // 원자적 저장: 임시 파일에 쓰고 디스크에 내려쓴 뒤 이름을 바꾼다(반쯤 쓴 표식이 남지 않게)
+    let tmp = repo.join(format!("{MARKER}.{}.tmp", std::process::id()));
+    let write = || -> std::io::Result<()> {
+        use std::io::Write;
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(json.as_bytes())?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, repo.join(MARKER))
+    };
+    if let Err(e) = write() {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("crypto.json 쓰기: {e}"));
+    }
     Ok(Some(group(&hex(&key))))
 }
+
+/// 표식 없이 암호화 머리표(ENC\x01)를 가진 블롭·팩이 하나라도 있는가.
+fn has_encrypted_blobs(repo: &Path) -> bool {
+    use std::io::Read;
+    let is_enc = |p: &Path| {
+        let mut b = [0u8; 4];
+        fs::File::open(p)
+            .and_then(|mut f| f.read_exact(&mut b))
+            .is_ok()
+            && &b == b"ENC\x01"
+    };
+    let files = |d: PathBuf, ext: &'static str| {
+        fs::read_dir(d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+            .filter(move |p| p.extension().is_some_and(|x| x == ext))
+    };
+    if files(repo.join("packs"), "pack").any(|p| is_enc(&p)) {
+        return true;
+    }
+    fs::read_dir(repo.join("blobs"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|d| d.path().is_dir())
+        .any(|d| files(d.path(), "blob").any(|p| is_enc(&p)))
+}
+
+/// 시험 간 `KOVA2_KEY_DIR` 환경 변수 경합을 막는 잠금(키 폴더를 바꾸는 시험은 모두 이것을 쥔다).
+#[cfg(test)]
+pub(crate) static TEST_KEY_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// 복구 코드로 이 PC의 키 파일을 다시 만든다(PC 교체·키 파일 분실 시).
 pub fn restore_key(repo: &Path, code: &str) -> Result<(), String> {
@@ -353,6 +417,7 @@ mod tests {
 
     #[test]
     fn encrypted_repo_roundtrips_hides_plaintext_and_fails_closed_without_key() {
+        let _g = TEST_KEY_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let keys = tempfile::tempdir().unwrap();
         std::env::set_var("KOVA2_KEY_DIR", keys.path());
         install_provider();
@@ -407,6 +472,34 @@ mod tests {
         fs::write(&blob, b).unwrap();
         let rep = crate::verify::verify_repo(repo.path(), true).unwrap();
         assert!(!rep.problems.is_empty());
+    }
+
+    #[test]
+    fn enable_is_atomic_and_refuses_when_locked_or_encrypted_blobs_lack_marker() {
+        let _g = TEST_KEY_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let keys = tempfile::tempdir().unwrap();
+        std::env::set_var("KOVA2_KEY_DIR", keys.path());
+        let repo = tempfile::tempdir().unwrap();
+        // 다른 작업이 저장소를 쓰는 중이면 거부
+        let l = crate::lock::RepoLock::try_acquire(repo.path()).unwrap();
+        assert!(enable(repo.path()).unwrap_err().contains("작업"));
+        assert!(!is_enabled(repo.path()));
+        drop(l);
+        // 표식 없이 암호화 블롭이 있으면(표식 유실) 새 키를 만들지 않는다
+        let b = repo.path().join("blobs").join("ab");
+        fs::create_dir_all(&b).unwrap();
+        fs::write(b.join("ab01.blob"), b"ENC\x01payload").unwrap();
+        assert!(enable(repo.path()).unwrap_err().contains(MARKER));
+        assert!(!is_enabled(repo.path()));
+        assert_eq!(fs::read_dir(keys.path()).unwrap().count(), 0);
+        // 평문 블롭만 있으면 켜지고, 임시 파일이 남지 않는다
+        fs::write(b.join("ab01.blob"), b"plain").unwrap();
+        assert!(enable(repo.path()).unwrap().is_some());
+        assert!(read_marker(repo.path()).is_ok());
+        assert!(!fs::read_dir(repo.path())
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().ends_with(".tmp")));
     }
 
     #[test]

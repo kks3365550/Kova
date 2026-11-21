@@ -25,26 +25,36 @@ impl AlertLog {
     }
 
     pub fn list(&self) -> Vec<Alert> {
-        std::fs::read(&self.0)
+        crate::config::try_read_json(&self.0)
             .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
+            .flatten()
             .unwrap_or_default()
     }
 
-    fn save(&self, v: &[Alert]) -> io::Result<()> {
-        if let Some(p) = self.0.parent() {
-            std::fs::create_dir_all(p)?;
+    /// 수정용 읽기: 손상 파일은 `.json.bak` 으로 보존된 뒤 빈 목록에서 다시 시작한다(알림은 새로 쌓여야 하므로).
+    /// 읽기 자체가 실패하면(권한·잠김) 덮어쓰지 않고 오류.
+    fn load_for_update(&self) -> io::Result<Vec<Alert>> {
+        match crate::config::try_read_json(&self.0) {
+            Ok(v) => Ok(v.unwrap_or_default()),
+            Err(e) if e.kind() == io::ErrorKind::InvalidData => Ok(Vec::new()),
+            Err(e) => Err(e),
         }
-        let tmp = self.0.with_extension("tmp");
-        std::fs::write(
-            &tmp,
-            serde_json::to_vec_pretty(v).map_err(io::Error::other)?,
-        )?;
-        std::fs::rename(&tmp, &self.0)
+    }
+
+    fn lock(&self) -> Option<std::fs::File> {
+        crate::config::lock_shared(&self.0.with_file_name(".alerts.lock"))
+    }
+
+    fn save(&self, v: &[Alert]) -> io::Result<()> {
+        crate::config::atomic_write_shared(
+            &self.0,
+            &serde_json::to_vec_pretty(v).map_err(io::Error::other)?,
+        )
     }
 
     pub fn push(&self, a: Alert) -> io::Result<()> {
-        let mut v = self.list();
+        let _g = self.lock();
+        let mut v = self.load_for_update()?;
         v.push(a);
         let n = v.len();
         if n > MAX_ALERTS {
@@ -58,7 +68,8 @@ impl AlertLog {
     }
 
     pub fn acknowledge_all(&self) -> io::Result<()> {
-        let mut v = self.list();
+        let _g = self.lock();
+        let mut v = self.load_for_update()?;
         v.iter_mut().for_each(|a| a.acknowledged = true);
         self.save(&v)
     }
@@ -102,5 +113,36 @@ mod tests {
         assert!(l.list().is_empty());
         l.push(a(1)).unwrap();
         assert_eq!(l.list().len(), 1);
+        // 손상 파일은 덮어쓰기 전에 .bak 으로 보존된다
+        assert_eq!(
+            std::fs::read(d.path().join("alerts.json.bak")).unwrap(),
+            b"{broken"
+        );
+    }
+
+    #[test]
+    fn concurrent_pushes_from_many_threads_lose_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().to_path_buf();
+        let hs: Vec<_> = (0..8)
+            .map(|t| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    let l = AlertLog::new(&dir);
+                    for i in 0..5 {
+                        l.push(a(t * 10 + i)).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
+        assert_eq!(AlertLog::new(&dir).list().len(), 40);
+        // 임시 파일이 남지 않는다
+        assert!(!std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().ends_with(".tmp")));
     }
 }

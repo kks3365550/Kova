@@ -98,9 +98,15 @@ pub fn bundle(
     use std::io::Write;
     let mut z = zip::ZipWriter::new(std::fs::File::create(out)?);
     let o = zip::write::SimpleFileOptions::default();
+    // 웹훅 URL(비밀 토큰 포함)이 알림·로그에 남아 있어도 ZIP 에는 가려서 담는다
+    let hook = ConfigStore::new(config_dir).settings().webhook_url;
     let mut put = |name: &str, bytes: &[u8]| -> std::io::Result<()> {
         z.start_file(name, o).map_err(std::io::Error::other)?;
-        z.write_all(bytes)
+        if hook.trim().is_empty() {
+            return z.write_all(bytes);
+        }
+        let text = String::from_utf8_lossy(bytes);
+        z.write_all(crate::notify::redact(&text, &hook).as_bytes())
     };
     put(
         "report.txt",
@@ -129,7 +135,7 @@ fn now() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Profile;
+    use crate::config::{Profile, Settings};
 
     #[test]
     fn report_lists_profiles_and_missing_paths_without_failing() {
@@ -157,5 +163,44 @@ mod tests {
         assert!(z.by_name("report.txt").is_ok());
         assert!(z.by_name("health.txt").is_ok());
         assert!(z.by_name("logs/kova-service.log").is_ok());
+    }
+
+    #[test]
+    fn bundle_masks_webhook_url_in_alerts_and_logs() {
+        use std::io::Read;
+        let d = tempfile::tempdir().unwrap();
+        let cfg = d.path().join("cfg");
+        let store = ConfigStore::new(&cfg);
+        let hook = "https://hooks.example.com/services/T1/B2/TOPSECRET";
+        let s = Settings {
+            webhook_url: hook.into(),
+            ..Default::default()
+        };
+        store.save_settings(&s).unwrap();
+        AlertLog::new(&cfg)
+            .push(crate::alerts::Alert {
+                at: 1.0,
+                profile_id: "p".into(),
+                level: "error".into(),
+                message: format!("웹훅 전송 실패: {hook}: refused"),
+                acknowledged: false,
+            })
+            .unwrap();
+        crate::applog::write(&cfg, "ERROR", &format!("post {hook} failed"));
+        let out = d.path().join("diag.zip");
+        bundle(&cfg, "0.0.1", "연결됨", &out).unwrap();
+        let mut z = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        for i in 0..z.len() {
+            let mut f = z.by_index(i).unwrap();
+            let mut s = String::new();
+            let _ = f.read_to_string(&mut s);
+            assert!(!s.contains("TOPSECRET"), "{} 에 웹훅 토큰이 남음", f.name());
+        }
+        let mut a = String::new();
+        z.by_name("alerts.json")
+            .unwrap()
+            .read_to_string(&mut a)
+            .unwrap();
+        assert!(a.contains("https://hooks.example.com/***"));
     }
 }

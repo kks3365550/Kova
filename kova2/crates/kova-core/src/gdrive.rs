@@ -160,8 +160,10 @@ pub(crate) fn pct_decode(s: &str) -> String {
         match b[i] {
             b'+' => o.push(b' '),
             b'%' if i + 2 < b.len() => {
-                if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                    o.push(v);
+                // 바이트 단위로 해석한다(문자열 슬라이스는 다중 바이트 문자 경계에서 패닉)
+                let hexv = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+                if let (Some(h), Some(l)) = (hexv(b[i + 1]), hexv(b[i + 2])) {
+                    o.push(h << 4 | l);
                     i += 2;
                 } else {
                     o.push(b'%');
@@ -334,6 +336,23 @@ pub struct DriveReplicaReport {
     pub blobs_uploaded: usize,
     pub blobs_skipped: usize,
     pub bytes_uploaded: u64,
+    /// 원본이 깨져(매니페스트 손상·블롭 누락·잘못된 해시) 올리지 못하고 건너뛴 스냅샷 수
+    pub snapshots_failed: usize,
+    /// 건너뛴 스냅샷별 사유
+    pub failures: Vec<String>,
+}
+
+impl DriveReplicaReport {
+    /// 건너뛴 스냅샷이 있으면 경고 문구(이 경우 성공으로 표시하지 말 것).
+    pub fn warning(&self) -> Option<String> {
+        (self.snapshots_failed > 0).then(|| {
+            format!(
+                "구글 드라이브 복제 중 원본 스냅샷 {}개를 건너뜀: {}",
+                self.snapshots_failed,
+                self.failures.join("; ")
+            )
+        })
+    }
 }
 
 pub struct DriveClient {
@@ -346,6 +365,8 @@ pub struct DriveClient {
     folders: HashMap<String, String>,
     retry_base: Duration,
     workers: usize,
+    /// 이어올리기 조각 크기(시험에서 줄인다)
+    chunk: usize,
 }
 
 /// 올릴 파일 하나(계획 단계에서 폴더·목록을 처리해 둔 결과).
@@ -369,6 +390,7 @@ impl DriveClient {
             folders: HashMap::new(),
             retry_base: Duration::from_secs(2),
             workers: DEFAULT_UPLOAD_WORKERS,
+            chunk: CHUNK,
         })
     }
 
@@ -783,8 +805,12 @@ impl DriveClient {
             .to_string();
         let mut f = fs::File::open(local).map_err(|e| format!("{}: {e}", local.display()))?;
         let mut start = 0u64;
+        let mut stalls = 0u32;
         loop {
-            let len = ((size - start) as usize).min(CHUNK);
+            use std::io::Seek;
+            f.seek(io::SeekFrom::Start(start))
+                .map_err(|e| e.to_string())?;
+            let len = ((size - start) as usize).min(self.chunk);
             let mut buf = vec![0u8; len];
             f.read_exact(&mut buf).map_err(|e| e.to_string())?;
             let range = if size == 0 {
@@ -802,10 +828,36 @@ impl DriveClient {
                 200 | 201 => {
                     let v: serde_json::Value =
                         serde_json::from_str(&resp.into_string().map_err(|e| e.to_string())?)
-                            .unwrap_or_default();
-                    return Ok(v["id"].as_str().unwrap_or("").to_string());
+                            .map_err(|e| format!("업로드 완료 응답 오류: {e}"))?;
+                    return v["id"]
+                        .as_str()
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string)
+                        .ok_or_else(|| "업로드 완료 응답에 파일 id 가 없습니다".to_string());
                 }
-                308 if size > 0 => start += len as u64,
+                308 if size > 0 => {
+                    // 서버가 실제로 받은 범위(Range: bytes=0-N)를 따른다. 머리글이 없으면 아직 아무것도 받지 못한 것.
+                    let got = resp
+                        .header("Range")
+                        .and_then(|r| r.trim().strip_prefix("bytes="))
+                        .and_then(|r| r.split_once('-'))
+                        .and_then(|(_, e)| e.trim().parse::<u64>().ok())
+                        .map_or(0, |e| e + 1);
+                    if got > size {
+                        return Err(format!("업로드 응답 범위 오류: {got} > {size}"));
+                    }
+                    if got <= start {
+                        stalls += 1;
+                        if stalls >= 3 {
+                            return Err(
+                                "업로드가 진행되지 않습니다(서버가 받은 범위가 늘지 않음)".into()
+                            );
+                        }
+                    } else {
+                        stalls = 0;
+                    }
+                    start = got;
+                }
                 s => return Err(format!("업로드 응답 오류: HTTP {s}")),
             }
             if start >= size {
@@ -843,6 +895,23 @@ pub fn replicate_to_drive(
             .chain(s.split('/').map(|x| x.to_string()))
             .collect()
     };
+    // 암호화 표식(crypto.json)을 스냅샷보다 먼저 올린다. 없으면 드라이브 복제본만으로는 복호화할 수 없다.
+    let marker = repo.join(kova_engine::codec::MARKER);
+    if marker.is_file() {
+        let size = fs::metadata(&marker).map_err(|e| e.to_string())?.len();
+        let parent = client.ensure_folder(folder)?;
+        if let Some(e) = client.list(&parent)?.get(kova_engine::codec::MARKER) {
+            if !e.folder && e.size != size {
+                return Err(
+                    "드라이브 폴더의 암호화 표식이 이 저장소와 다릅니다(다른 저장소의 복제본)"
+                        .into(),
+                );
+            }
+        }
+        if let Some(n) = client.put_file(folder, kova_engine::codec::MARKER, &marker)? {
+            rep.bytes_uploaded += n;
+        }
+    }
 
     for mp in manifests {
         if cancel.load(Ordering::Relaxed) {
@@ -862,11 +931,9 @@ pub fn replicate_to_drive(
         {
             Ok(m) => m,
             Err(e) => {
-                eprintln!(
-                    "[KOVA-GDRIVE-WARN] 매니페스트 읽기 실패 ({}): {} -> 스냅샷 업로드 건너뜀",
-                    mp.display(),
-                    e
-                );
+                rep.snapshots_failed += 1;
+                rep.failures
+                    .push(format!("{name}: 매니페스트를 읽지 못함({e})"));
                 continue;
             }
         };
@@ -894,14 +961,21 @@ pub fn replicate_to_drive(
                 jobs.len() - 1
             })
         };
+        // 해시는 경로 조각이 되므로 16진수만 허용한다(경로 탈출·문자 경계 패닉 방지)
+        hashes.retain(|h| !h.is_empty());
+        if let Some(bad) = hashes.iter().find(|h| !crate::offsite::valid_hash(h)) {
+            rep.snapshots_failed += 1;
+            rep.failures.push(format!("{name}: 잘못된 해시 {bad:?}"));
+            continue;
+        }
         for h in hashes {
-            if h.is_empty() || !seen.insert(h.clone()) {
+            if !seen.insert(h.clone()) {
                 continue;
             }
             if cancel.load(Ordering::Relaxed) {
                 return Err("취소됨".into());
             }
-            let prefix = if h.len() >= 2 { &h[0..2] } else { "misc" };
+            let prefix = &h[0..2];
             let local_blob = repo.join("blobs").join(prefix).join(format!("{h}.blob"));
             if local_blob.is_file() {
                 let d = sub(&format!("blobs/{prefix}"));
@@ -928,7 +1002,9 @@ pub fn replicate_to_drive(
                     units.push((add(&mut jobs, a), add(&mut jobs, b)));
                 }
             } else {
-                eprintln!("[KOVA-GDRIVE-WARN] 스냅샷 {name} 복제 중 블롭 누락 발견 ({h}) -> 스냅샷 업로드 건너뜀");
+                rep.snapshots_failed += 1;
+                rep.failures
+                    .push(format!("{name}: 원본에 블롭이 없음: {h}"));
                 snapshot_healthy = false;
                 break;
             }
@@ -984,6 +1060,10 @@ mod tests {
         let s = "http://127.0.0.1:5/ a&b=한";
         assert_eq!(pct_decode(&pct_encode(s)), s);
         assert_eq!(pct_decode("a%2Fb+c%"), "a/b c%");
+        // 다중 바이트 문자가 % 뒤에 와도 패닉하지 않고, 부호(+)는 16진수로 보지 않는다
+        assert_eq!(pct_decode("%한x"), "%한x");
+        assert_eq!(pct_decode("a%+fb"), "a% fb");
+        assert_eq!(pct_decode("%ED%95%9C"), "한");
     }
 
     /// 모의 구글 서버: 토큰·목록·폴더 생성·이어올리기를 메모리로 흉내낸다.
@@ -996,6 +1076,10 @@ mod tests {
         refresh_calls: usize,
         code_verifier_ok: bool,
         expect_challenge: Option<String>,
+        /// 남은 횟수만큼 중간 조각의 뒷부분 절반을 받지 않은 척한다(308 Range 가 줄어듦)
+        short_ack: usize,
+        /// 완료 응답에 id 를 빼고 보낸다
+        omit_id: bool,
     }
 
     fn read_req(s: &mut TcpStream) -> (String, String, Vec<u8>, HashMap<String, String>) {
@@ -1149,8 +1233,22 @@ mod tests {
                         .next()
                         .and_then(|t| t.parse().ok())
                         .unwrap_or(0);
+                    // 조각의 시작 위치에 맞춰 이어 붙인다(재전송 시 겹치는 부분 정리)
+                    let from: usize = range
+                        .strip_prefix("bytes ")
+                        .and_then(|r| r.split('-').next())
+                        .and_then(|a| a.parse().ok())
+                        .unwrap_or(0);
+                    let mut body = body;
+                    if m.short_ack > 0 && from + body.len() < total && body.len() > 1 {
+                        m.short_ack -= 1;
+                        body.truncate(body.len() / 2);
+                    }
+                    m.sessions[n].3.truncate(from);
                     m.sessions[n].3.extend_from_slice(&body);
-                    if m.sessions[n].3.len() >= total {
+                    if m.sessions[n].3.len() >= total && m.omit_id {
+                        respond(&mut s, "200 OK", "", "{}");
+                    } else if m.sessions[n].3.len() >= total {
                         let (existing, name, parent, data) = m.sessions[n].clone();
                         let idx = match existing {
                             Some(i) => {
@@ -1164,7 +1262,13 @@ mod tests {
                         };
                         respond(&mut s, "200 OK", "", &format!(r#"{{"id":"f{idx}"}}"#));
                     } else {
-                        respond(&mut s, "308 Resume Incomplete", "", "");
+                        let got = m.sessions[n].3.len();
+                        let hdr = if got == 0 {
+                            String::new()
+                        } else {
+                            format!("Range: bytes=0-{}\r\n", got - 1)
+                        };
+                        respond(&mut s, "308 Resume Incomplete", &hdr, "");
                     }
                 } else {
                     respond(&mut s, "404 Not Found", "", "{}");
@@ -1366,6 +1470,10 @@ mod tests {
         // The malformed and missing-blob snapshots must be skipped, while the healthy snapshot succeeds!
         assert_eq!(rep.snapshots_uploaded, 1);
         assert!(rep.blobs_uploaded >= 1);
+        // 건너뛴 스냅샷은 조용히 삼키지 않고 보고서·경고로 올린다
+        assert_eq!(rep.snapshots_failed, 2);
+        assert_eq!(rep.failures.len(), 2);
+        assert!(rep.warning().unwrap().contains("2개"));
 
         let m = st.lock().unwrap();
         // 20261121_120000.json was uploaded
@@ -1572,5 +1680,117 @@ mod tests {
         // 취소 플래그가 서 있으면 작업을 시작하지 않고 '취소됨'
         let err = c.run_jobs(&jobs, &AtomicBool::new(true)).unwrap_err();
         assert_eq!(err, "취소됨");
+    }
+
+    fn token_dir() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        save_token(
+            dir.path(),
+            &Token {
+                refresh: "RT1".into(),
+                access: "AT1".into(),
+                expires_at: i64::MAX,
+            },
+        )
+        .unwrap();
+        dir
+    }
+
+    #[test]
+    fn marker_is_uploaded_before_snapshots_and_conflicting_marker_is_refused() {
+        let st = Arc::new(Mutex::new(Mock::default()));
+        let (_b, ep) = start_mock(st.clone());
+        let dir = token_dir();
+        let work = tempfile::tempdir().unwrap();
+        let repo = work.path().join("repo");
+        let h = "cd".repeat(32);
+        fs::create_dir_all(repo.join("blobs").join("cd")).unwrap();
+        fs::write(
+            repo.join("blobs").join("cd").join(format!("{h}.blob")),
+            b"ENC\x01x",
+        )
+        .unwrap();
+        fs::create_dir_all(repo.join("snapshots")).unwrap();
+        fs::write(
+            repo.join("snapshots").join("20261121_120000.json"),
+            format!(
+                r#"{{"id":"20261121_120000","files":[{{"path":"a","size":5,"chunks":[{{"hash":"{h}","offset":0,"length":5,"compressed_length":5}}]}}]}}"#
+            ),
+        )
+        .unwrap();
+        let marker = br#"{"version":1,"repo_id":"r1","key_check":"k"}"#;
+        fs::write(repo.join(kova_engine::codec::MARKER), marker).unwrap();
+        let mut c = DriveClient::open(dir.path(), ep.clone(), creds()).unwrap();
+        c.retry_base = Duration::ZERO;
+        let r = replicate_to_drive(
+            &repo,
+            &mut c,
+            &["Kova2 Backup", "p1"],
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!((r.snapshots_uploaded, r.snapshots_failed), (1, 0));
+        {
+            let m = st.lock().unwrap();
+            let p1 = m
+                .files
+                .iter()
+                .position(|f| f.2 && f.0 == "p1")
+                .expect("p1 폴더");
+            let mk = m
+                .files
+                .iter()
+                .position(|f| f.0 == kova_engine::codec::MARKER)
+                .expect("표식 업로드");
+            assert_eq!(
+                m.files[mk].1,
+                format!("f{p1}"),
+                "표식은 프로파일 폴더 바로 아래"
+            );
+            assert_eq!(m.files[mk].3, marker.to_vec());
+            let snap = m
+                .files
+                .iter()
+                .position(|f| f.0 == "20261121_120000.json")
+                .unwrap();
+            assert!(mk < snap, "표식이 매니페스트보다 먼저 올라가야 함");
+        }
+        // 다른 저장소(크기가 다른 표식)를 같은 폴더로 올리려 하면 거부
+        fs::write(repo.join(kova_engine::codec::MARKER), b"{}").unwrap();
+        let mut c2 = DriveClient::open(dir.path(), ep, creds()).unwrap();
+        let e = replicate_to_drive(
+            &repo,
+            &mut c2,
+            &["Kova2 Backup", "p1"],
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert!(e.contains("암호화 표식"), "{e}");
+    }
+
+    #[test]
+    fn chunked_upload_follows_server_range_and_requires_file_id() {
+        let st = Arc::new(Mutex::new(Mock::default()));
+        let (_b, ep) = start_mock(st.clone());
+        let dir = token_dir();
+        let work = tempfile::tempdir().unwrap();
+        let local = work.path().join("data.bin");
+        let data: Vec<u8> = (0..50u8).collect();
+        fs::write(&local, &data).unwrap();
+        let mut c = DriveClient::open(dir.path(), ep, creds()).unwrap();
+        c.retry_base = Duration::ZERO;
+        c.chunk = 8;
+        // 서버가 두 번 조각의 절반만 받았다고 답해도 받은 위치부터 다시 보내 내용이 정확해야 한다
+        st.lock().unwrap().short_ack = 2;
+        let id = c.upload(None, "data.bin", "root", &local, 50).unwrap();
+        {
+            let m = st.lock().unwrap();
+            let i: usize = id.trim_start_matches('f').parse().unwrap();
+            assert_eq!(m.files[i].3, data);
+        }
+        // 완료 응답에 id 가 없으면 성공으로 치지 않는다
+        st.lock().unwrap().omit_id = true;
+        let e = c.upload(None, "data2.bin", "root", &local, 50).unwrap_err();
+        assert!(e.contains("id"), "{e}");
     }
 }

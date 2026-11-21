@@ -157,29 +157,155 @@ impl Default for Settings {
     }
 }
 
-/// 임시 파일에 쓴 뒤 rename 하는 원자적 저장.
-fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
+/// 서비스(SYSTEM)와 일반 사용자 앱이 함께 쓰는 설정 파일에 Users 수정 권한을 준다(비밀 파일에는 쓰지 않는다).
+/// 서비스가 새로 만든 파일은 폴더 상속(Users 읽기만)을 받아 앱이 저장하지 못하게 되기 때문이다.
+/// 프로세스마다 경로별로 한 번만 시도한다(이후 저장은 ACL 을 보존하는 교체로 유지된다).
+pub(crate) fn grant_users_modify_once(path: &Path) {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    static DONE: Mutex<Option<HashSet<PathBuf>>> = Mutex::new(None);
+    let mut g = DONE.lock().unwrap_or_else(|e| e.into_inner());
+    if !g
+        .get_or_insert_with(HashSet::new)
+        .insert(path.to_path_buf())
+    {
+        return;
+    }
+    drop(g);
+    if cfg!(windows) {
+        let _ = crate::worm::icacls(path, &["/grant", "*S-1-5-32-545:(M)", "/q"]);
+    }
+}
+
+/// `replacement` 로 `target` 을 바꾼다. 기존 파일이 있으면 ReplaceFileW 로 기존 파일의 ACL·속성을 유지하고,
+/// 실패하거나 없으면 rename 한다.
+fn replace_preserving_acl(replacement: &Path, target: &Path) -> io::Result<()> {
+    #[cfg(windows)]
+    if target.exists() {
+        use std::os::windows::ffi::OsStrExt;
+        extern "system" {
+            fn ReplaceFileW(
+                replaced: *const u16,
+                replacement: *const u16,
+                backup: *const u16,
+                flags: u32,
+                exclude: *mut std::ffi::c_void,
+                reserved: *mut std::ffi::c_void,
+            ) -> i32;
+        }
+        const REPLACEFILE_IGNORE_MERGE_ERRORS: u32 = 0x2;
+        let w = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain([0]).collect() };
+        let (t, r) = (w(target), w(replacement));
+        let ok = unsafe {
+            ReplaceFileW(
+                t.as_ptr(),
+                r.as_ptr(),
+                std::ptr::null(),
+                REPLACEFILE_IGNORE_MERGE_ERRORS,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        if ok != 0 {
+            return Ok(());
+        }
+    }
+    fs::rename(replacement, target)
+}
+
+/// 공유 설정 파일의 원자적 저장: 고유한 임시 이름에 쓰고 디스크에 내려쓴 뒤 교체한다(동시 저장끼리 임시 파일을 밟지 않게).
+pub(crate) fn atomic_write_shared(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     if let Some(p) = path.parent() {
         fs::create_dir_all(p)?;
     }
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, text)?;
-    fs::rename(&tmp, path)
+    let name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let tmp = path.with_file_name(format!(
+        "{name}.{}.{}.tmp",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    let r = (|| {
+        let mut f = fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        drop(f);
+        replace_preserving_acl(&tmp, path)
+    })();
+    if r.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    r?;
+    grant_users_modify_once(path);
+    Ok(())
 }
 
-/// 읽기. 파일이 없으면 None, 파싱 실패면 손상 파일을 .bak 으로 보존하고 None.
-fn read_json<T: for<'a> Deserialize<'a>>(path: &Path) -> Option<T> {
-    let raw = fs::read(path).ok()?;
-    let raw = raw.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(&raw);
-    match serde_json::from_slice(raw) {
-        Ok(v) => Some(v),
-        Err(_) => {
-            let mut bak: PathBuf = path.into();
-            bak.set_extension("json.bak");
-            let _ = fs::copy(path, bak);
-            None
+/// 프로세스 안팎(서비스·앱·여러 스레드) 읽기-수정-쓰기를 직렬화하는 파일 잠금. 놓으면(drop) 풀린다.
+/// 잠금 파일을 열 수 없으면(권한 등) None — 이 경우 저장 자체도 대개 실패하므로 잠금 없이 진행한다.
+pub(crate) fn lock_shared(lock_path: &Path) -> Option<fs::File> {
+    if let Some(p) = lock_path.parent() {
+        let _ = fs::create_dir_all(p);
+    }
+    let f = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)
+        .or_else(|_| fs::File::open(lock_path))
+        .ok()?;
+    grant_users_modify_once(lock_path);
+    f.lock().ok()?;
+    Some(f)
+}
+
+/// 손상 파일을 `.json.bak` 으로 보존한다. 이미 다른 내용의 .bak 이 있으면 시각을 붙인 이름으로 남긴다.
+fn preserve_corrupt(path: &Path, raw: &[u8]) -> PathBuf {
+    let mut bak: PathBuf = path.into();
+    bak.set_extension("json.bak");
+    if fs::read(&bak).is_ok_and(|b| b != raw) {
+        let t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        bak.set_extension(format!("json.bak.{t}"));
+    }
+    let _ = fs::write(&bak, raw);
+    bak
+}
+
+/// 읽기. 파일이 없으면 Ok(None). 읽기 실패(권한·잠김 등)는 Err, 파싱 실패는 손상 파일을 .bak 으로 보존하고 Err.
+pub(crate) fn try_read_json<T: for<'a> Deserialize<'a>>(path: &Path) -> io::Result<Option<T>> {
+    let raw = match fs::read(path) {
+        Ok(r) => r,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(io::Error::new(e.kind(), format!("{}: {e}", path.display()))),
+    };
+    let body = raw.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(&raw);
+    match serde_json::from_slice(body) {
+        Ok(v) => Ok(Some(v)),
+        Err(e) => {
+            let bak = preserve_corrupt(path, &raw);
+            Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} 손상({e}). 덮어쓰지 않고 거부합니다(사본: {})",
+                    path.display(),
+                    bak.display()
+                ),
+            ))
         }
     }
+}
+
+/// 읽기(표시용). 없거나 읽지 못하면 None(손상 파일은 .bak 으로 보존).
+fn read_json<T: for<'a> Deserialize<'a>>(path: &Path) -> Option<T> {
+    try_read_json(path).ok().flatten()
 }
 
 pub struct ConfigStore {
@@ -197,37 +323,66 @@ impl ConfigStore {
         self.dir.join("app_settings.json")
     }
 
+    fn lock(&self) -> Option<fs::File> {
+        lock_shared(&self.dir.join(".config.lock"))
+    }
+
     pub fn settings(&self) -> Settings {
         read_json(&self.settings_path()).unwrap_or_default()
     }
+    /// 설정 읽기. 파일이 없으면 기본값, 읽기 실패·손상이면 오류.
+    pub fn try_settings(&self) -> io::Result<Settings> {
+        Ok(try_read_json(&self.settings_path())?.unwrap_or_default())
+    }
+    /// 저장. 기존 파일을 읽지 못하거나 손상돼 있으면 덮어쓰지 않고 거부한다(손상 파일은 .bak 으로 보존).
     pub fn save_settings(&self, s: &Settings) -> io::Result<()> {
-        atomic_write(&self.settings_path(), &serde_json::to_string_pretty(s)?)
+        let _g = self.lock();
+        try_read_json::<Settings>(&self.settings_path())?;
+        atomic_write_shared(
+            &self.settings_path(),
+            serde_json::to_string_pretty(s)?.as_bytes(),
+        )
     }
     pub fn profiles(&self) -> Vec<Profile> {
         read_json(&self.profiles_path()).unwrap_or_default()
     }
+    /// 프로파일 읽기. 파일이 없으면 빈 목록, 읽기 실패·손상이면 오류(빈 목록으로 착각해 덮어쓰지 않게).
+    pub fn try_profiles(&self) -> io::Result<Vec<Profile>> {
+        Ok(try_read_json(&self.profiles_path())?.unwrap_or_default())
+    }
+    fn write_profiles(&self, p: &[Profile]) -> io::Result<()> {
+        atomic_write_shared(
+            &self.profiles_path(),
+            serde_json::to_string_pretty(p)?.as_bytes(),
+        )
+    }
+    /// 저장. 기존 파일을 읽지 못하거나 손상돼 있으면 덮어쓰지 않고 거부한다.
     pub fn save_profiles(&self, p: &[Profile]) -> io::Result<()> {
-        atomic_write(&self.profiles_path(), &serde_json::to_string_pretty(p)?)
+        let _g = self.lock();
+        self.try_profiles()?;
+        self.write_profiles(p)
     }
     pub fn get(&self, id: &str) -> Option<Profile> {
         self.profiles().into_iter().find(|p| p.id == id)
     }
-    /// 같은 id 가 있으면 교체, 없으면 추가.
+    /// 같은 id 가 있으면 교체, 없으면 추가. 읽기-수정-쓰기를 파일 잠금으로 직렬화한다.
     pub fn upsert(&self, prof: Profile) -> io::Result<()> {
-        let mut all = self.profiles();
+        let _g = self.lock();
+        let mut all = self.try_profiles()?;
         match all.iter_mut().find(|p| p.id == prof.id) {
             Some(slot) => *slot = prof,
             None => all.push(prof),
         }
-        self.save_profiles(&all)
+        self.write_profiles(&all)
     }
     pub fn delete(&self, id: &str) -> io::Result<bool> {
-        let mut all = self.profiles();
+        let _g = self.lock();
+        let mut all = self.try_profiles()?;
         let n = all.len();
         all.retain(|p| p.id != id);
         let removed = all.len() != n;
         if removed {
-            self.save_profiles(&all)?;
+            self.write_profiles(&all)?;
         }
         Ok(removed)
     }
@@ -268,6 +423,87 @@ mod tests {
         fs::write(st.settings_path(), "{broken").unwrap();
         assert_eq!(st.settings(), Settings::default());
         assert!(d.path().join("app_settings.json.bak").exists());
+    }
+
+    #[test]
+    fn corrupt_or_unreadable_profiles_refuse_to_save_and_keep_the_file() {
+        let d = tempfile::tempdir().unwrap();
+        let st = ConfigStore::new(d.path());
+        st.upsert(Profile::new("a", "A")).unwrap();
+        // 손상: 저장을 거부하고 원본·사본을 남긴다
+        fs::write(st.profiles_path(), b"[{\"id\":\"a\",broken").unwrap();
+        assert!(st.try_profiles().is_err());
+        assert!(st.profiles().is_empty(), "표시용 읽기는 빈 목록");
+        let e = st.upsert(Profile::new("b", "B")).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::InvalidData);
+        assert!(st.delete("a").is_err());
+        assert!(st.save_profiles(&[]).is_err());
+        assert_eq!(
+            fs::read(st.profiles_path()).unwrap(),
+            b"[{\"id\":\"a\",broken"
+        );
+        assert!(d.path().join("profiles.json.bak").exists());
+        // 읽기 실패(파일 자리에 폴더)는 '없음'과 구분돼 오류다
+        fs::remove_file(st.profiles_path()).unwrap();
+        fs::create_dir(st.profiles_path()).unwrap();
+        assert!(st.try_profiles().is_err());
+        assert!(st.upsert(Profile::new("c", "C")).is_err());
+        // 파일이 아예 없으면 빈 목록에서 시작한다
+        fs::remove_dir(st.profiles_path()).unwrap();
+        assert!(st.try_profiles().unwrap().is_empty());
+        st.upsert(Profile::new("c", "C")).unwrap();
+        // 손상된 설정도 저장 거부
+        fs::write(st.settings_path(), "{broken").unwrap();
+        assert!(st.save_settings(&Settings::default()).is_err());
+        assert_eq!(fs::read(st.settings_path()).unwrap(), b"{broken");
+    }
+
+    #[test]
+    fn concurrent_upserts_from_threads_keep_every_profile() {
+        let d = tempfile::tempdir().unwrap();
+        let dir = d.path().to_path_buf();
+        let hs: Vec<_> = (0..8)
+            .map(|t| {
+                let dir = dir.clone();
+                std::thread::spawn(move || {
+                    let st = ConfigStore::new(&dir);
+                    for i in 0..5 {
+                        st.upsert(Profile::new(&format!("p{t}_{i}"), "x")).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
+        assert_eq!(ConfigStore::new(&dir).try_profiles().unwrap().len(), 40);
+        assert!(!fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().ends_with(".tmp")));
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn rewritten_config_keeps_users_modify_permission() {
+        use std::os::windows::process::CommandExt;
+        let d = tempfile::tempdir().unwrap();
+        let st = ConfigStore::new(d.path());
+        st.upsert(Profile::new("a", "A")).unwrap();
+        // 두 번째 저장(교체)에서도 Users 수정 권한이 유지돼야 한다
+        st.upsert(Profile::new("b", "B")).unwrap();
+        let o = std::process::Command::new("icacls")
+            .arg(st.profiles_path())
+            .creation_flags(0x0800_0000)
+            .output()
+            .unwrap();
+        let out = String::from_utf8_lossy(&o.stdout).to_string();
+        assert!(
+            out.lines()
+                .any(|l| l.contains("Users") && l.contains("(M)")),
+            "{out}"
+        );
+        assert_eq!(st.try_profiles().unwrap().len(), 2);
     }
 
     #[test]

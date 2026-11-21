@@ -21,20 +21,40 @@ impl std::fmt::Display for FetchError {
     }
 }
 
+/// 연결·읽기 시간 제한을 따로 둔다(전체 제한 하나면 큰 패키지는 느린 회선에서 반드시 끊긴다).
+/// 읽기 제한은 "응답이 멈춘 시간" 기준이라 천천히라도 받는 중이면 끊지 않는다.
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(30))
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(60))
+        .timeout_write(Duration::from_secs(60))
         .user_agent("Kova-Updater")
         .build()
 }
 
+const RETRIES: u32 = 3;
+
+/// 전송 오류·5xx·429 는 짧게 기다렸다가 다시 시도한다(4xx 는 바로 실패).
+fn get_with_retry(url: &str, wait: Duration) -> Result<ureq::Response, FetchError> {
+    let mut tries = 0;
+    loop {
+        match agent().get(url).call() {
+            Ok(r) => return Ok(r),
+            Err(ureq::Error::Status(c, _)) if (c == 429 || c >= 500) && tries + 1 < RETRIES => {}
+            Err(ureq::Error::Transport(_)) if tries + 1 < RETRIES => {}
+            Err(e) => return Err(FetchError::Http(e.to_string())),
+        }
+        tries += 1;
+        std::thread::sleep(wait * tries);
+    }
+}
+
+const RETRY_WAIT: Duration = Duration::from_secs(2);
+
 /// `{base}/{repo}/releases/latest` 의 최종 주소에서 태그를 뽑는다. 예: base="https://github.com", repo="owner/Kova".
 pub fn latest_tag(base: &str, repo: &str) -> Result<String, FetchError> {
     let url = format!("{}/{}/releases/latest", base.trim_end_matches('/'), repo);
-    let resp = agent()
-        .get(&url)
-        .call()
-        .map_err(|e| FetchError::Http(e.to_string()))?;
+    let resp = get_with_retry(&url, RETRY_WAIT)?;
     let final_url = resp.get_url().to_string();
     final_url
         .split("/releases/tag/")
@@ -57,10 +77,11 @@ pub fn package_url(base: &str, repo: &str, tag: &str) -> String {
 
 /// 최대 max_bytes 까지만 받는다(초과하면 중단·오류).
 pub fn download(url: &str, max_bytes: u64) -> Result<Vec<u8>, FetchError> {
-    let resp = agent()
-        .get(url)
-        .call()
-        .map_err(|e| FetchError::Http(e.to_string()))?;
+    download_with_wait(url, max_bytes, RETRY_WAIT)
+}
+
+fn download_with_wait(url: &str, max_bytes: u64, wait: Duration) -> Result<Vec<u8>, FetchError> {
+    let resp = get_with_retry(url, wait)?;
     let mut buf = Vec::new();
     resp.into_reader()
         .take(max_bytes + 1)
@@ -85,6 +106,8 @@ pub enum UpdateError {
     Verify(crate::update::VerifyError),
     /// 서명 파일이 hex 문자열이 아님
     BadSignatureFile,
+    /// 패키지 안 프로그램 버전이 현재보다 높지 않음(또는 읽을 수 없음) — 옛 서명 패키지로 되돌리기 방지
+    NotNewer(String),
 }
 impl std::fmt::Display for UpdateError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -92,6 +115,7 @@ impl std::fmt::Display for UpdateError {
             Self::Fetch(e) => write!(f, "{e}"),
             Self::Verify(e) => write!(f, "{e}"),
             Self::BadSignatureFile => write!(f, "서명 파일 형식 오류"),
+            Self::NotNewer(e) => write!(f, "설치하지 않음: {e}"),
         }
     }
 }
@@ -119,6 +143,46 @@ pub fn fetch_verified(
     }
     crate::update::verify_package(&pkg, "", sig, trusted).map_err(UpdateError::Verify)?;
     Ok(pkg)
+}
+
+/// 패키지(ZIP) 안 `exe` 의 파일 버전(VS_FIXEDFILEINFO)을 "a.b.c.d" 로 읽는다. 없거나 못 읽으면 None.
+pub fn package_exe_version(zip_bytes: &[u8], exe: &str) -> Option<String> {
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
+    let mut f = z.by_name(exe).ok()?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    let sig = 0xFEEF_04BDu32.to_le_bytes();
+    let rd =
+        |o: usize| -> Option<u32> { Some(u32::from_le_bytes(buf.get(o..o + 4)?.try_into().ok()?)) };
+    // 서명 뒤 구조 버전(1.0)까지 맞는 첫 위치를 쓴다
+    let pos = (0..buf.len().saturating_sub(16))
+        .find(|&i| buf[i..i + 4] == sig && rd(i + 4) == Some(0x0001_0000))?;
+    let (ms, ls) = (rd(pos + 8)?, rd(pos + 12)?);
+    Some(format!(
+        "{}.{}.{}.{}",
+        ms >> 16,
+        ms & 0xffff,
+        ls >> 16,
+        ls & 0xffff
+    ))
+}
+
+/// 설치 직전 확인: 서명 검증을 마친 패키지 안 `exe` 의 버전이 `current` 보다 높아야 한다.
+/// 서명이 버전에 묶여 있지 않아, 새 태그 이름으로 옛 서명 패키지를 내려보내는 되돌리기를 여기서 막는다.
+/// 버전을 읽지 못하면 설치하지 않는다(fail-closed). 통과하면 패키지 버전을 돌려준다.
+pub fn ensure_package_newer(
+    zip_bytes: &[u8],
+    exe: &str,
+    current: &str,
+) -> Result<String, UpdateError> {
+    let v = package_exe_version(zip_bytes, exe)
+        .ok_or_else(|| UpdateError::NotNewer(format!("패키지의 {exe} 버전을 읽을 수 없습니다")))?;
+    if !crate::update::is_newer(&v, current) {
+        return Err(UpdateError::NotNewer(format!(
+            "패키지 버전 {v} 이 현재 {current} 보다 높지 않습니다"
+        )));
+    }
+    Ok(v)
 }
 
 #[cfg(test)]
@@ -173,6 +237,86 @@ mod tests {
             Err(FetchError::Http(_))
         ));
         let _ = base;
+    }
+
+    #[test]
+    fn transient_5xx_is_retried_then_succeeds_and_4xx_is_not() {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let h2 = hits.clone();
+        std::thread::spawn(move || {
+            for conn in l.incoming() {
+                let Ok(mut s) = conn else { continue };
+                let mut line = String::new();
+                BufReader::new(s.try_clone().unwrap())
+                    .read_line(&mut line)
+                    .unwrap();
+                let n = h2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let resp = if line.contains("/flaky") && n == 0 {
+                    "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                } else if line.contains("/flaky") {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 3\r\nConnection: close\r\n\r\nabc"
+                } else {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                };
+                let _ = s.write_all(resp.as_bytes());
+            }
+        });
+        let base = format!("http://{addr}");
+        let w = Duration::from_millis(10);
+        assert_eq!(
+            download_with_wait(&format!("{base}/flaky"), 10, w).unwrap(),
+            b"abc"
+        );
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(download_with_wait(&format!("{base}/missing"), 10, w).is_err());
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            3,
+            "404 는 재시도 안 함"
+        );
+    }
+
+    fn zip_with(name: &str, data: &[u8]) -> Vec<u8> {
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        w.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        w.write_all(data).unwrap();
+        w.finish().unwrap().into_inner()
+    }
+
+    fn fake_exe(a: u32, b: u32, c: u32) -> Vec<u8> {
+        let mut v = b"MZ....VS_VERSION_INFO".to_vec();
+        v.extend(0xFEEF_04BDu32.to_le_bytes());
+        v.extend(0x0001_0000u32.to_le_bytes());
+        v.extend((a << 16 | b).to_le_bytes());
+        v.extend((c << 16).to_le_bytes());
+        v.extend([0u8; 40]);
+        v
+    }
+
+    #[test]
+    fn package_version_must_be_newer_than_current() {
+        let pkg = zip_with("kova-app.exe", &fake_exe(3, 15, 5));
+        assert_eq!(
+            package_exe_version(&pkg, "kova-app.exe").as_deref(),
+            Some("3.15.5.0")
+        );
+        assert_eq!(
+            ensure_package_newer(&pkg, "kova-app.exe", "3.15.4").unwrap(),
+            "3.15.5.0"
+        );
+        // 같은 버전·옛 버전(되돌리기)·버전 정보 없음은 거부
+        assert!(matches!(
+            ensure_package_newer(&pkg, "kova-app.exe", "3.15.5"),
+            Err(UpdateError::NotNewer(_))
+        ));
+        let old = zip_with("kova-app.exe", &fake_exe(3, 14, 0));
+        assert!(ensure_package_newer(&old, "kova-app.exe", "3.15.4").is_err());
+        let none = zip_with("kova-app.exe", b"MZ no resource");
+        assert!(ensure_package_newer(&none, "kova-app.exe", "3.15.4").is_err());
+        assert!(ensure_package_newer(&pkg, "other.exe", "1.0").is_err());
     }
 
     #[test]
