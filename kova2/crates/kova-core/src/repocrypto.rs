@@ -224,6 +224,15 @@ pub fn export_recovery_code(repo: &Path) -> Result<String, String> {
 /// 복구 키트(Recovery Kit) 문서를 인쇄·보관하기 쉬운 텍스트로 만든다.
 /// `entries`: `(프로파일 이름, 저장소 경로, 복구 코드)`
 pub fn format_recovery_kit(entries: &[(String, String, String)]) -> String {
+    let bitlocker_key = crate::health::bitlocker_recovery_key_c().ok();
+    format_recovery_kit_with_bitlocker(entries, bitlocker_key.as_deref())
+}
+
+/// BitLocker 복구 키를 명시적으로 주입받아 복구 키트 문서를 생성한다.
+pub fn format_recovery_kit_with_bitlocker(
+    entries: &[(String, String, String)],
+    bitlocker_key: Option<&str>,
+) -> String {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let host = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "UNKNOWN".into());
     let mut out = String::new();
@@ -242,6 +251,23 @@ pub fn format_recovery_kit(entries: &[(String, String, String)]) -> String {
     );
     out.push_str("- 복원 방법: Kova2 > 보호 및 시스템 관리 > 상세 엔지니어링 설정 > '복구 코드로 마스터 키 복원'\r\n");
     out.push_str("\r\n");
+    out.push_str("------------------------------------------------------------\r\n");
+    out.push_str("  [Windows OS C: 드라이브 BitLocker 비상 복구 키]\r\n");
+    out.push_str("------------------------------------------------------------\r\n");
+    if let Some(key) = bitlocker_key {
+        out.push_str(&format!("복구 암호: {key}\r\n"));
+        out.push_str("사용 방법:\r\n");
+        out.push_str("  - Windows 복구 환경(WinRE) 또는 WinPE 비상 부팅 명령 프롬프트에서:\r\n");
+        out.push_str(&format!(
+            "    manage-bde -unlock C: -RecoveryPassword {key}\r\n"
+        ));
+    } else {
+        out.push_str("상태: BitLocker 미사용 또는 숫자 복구 암호 없음\r\n");
+    }
+    out.push_str("\r\n");
+    out.push_str("------------------------------------------------------------\r\n");
+    out.push_str("  [Kova2 백업 저장소 암호화 복구 코드]\r\n");
+    out.push_str("------------------------------------------------------------\r\n");
     for (i, (name, repo, code)) in entries.iter().enumerate() {
         out.push_str(&format!(
             "--- [{}/{}] {} ---\r\n",
@@ -398,5 +424,19 @@ mod tests {
         assert!(body.contains("Recovery Kit"));
         assert!(body.contains("문서 백업"));
         assert!(body.contains("01234567-89abcdef"));
+        assert!(body.contains("BitLocker"));
+    }
+
+    #[test]
+    fn recovery_kit_includes_bitlocker_key_when_provided() {
+        let entries = vec![(
+            "시스템 백업".into(),
+            "D:\\Repo".into(),
+            "11223344-55667788".into(),
+        )];
+        let fake_bl = "123456-234567-345678-456789-567890-678901-789012-890123";
+        let body = format_recovery_kit_with_bitlocker(&entries, Some(fake_bl));
+        assert!(body.contains(fake_bl));
+        assert!(body.contains("manage-bde -unlock C: -RecoveryPassword"));
     }
 }

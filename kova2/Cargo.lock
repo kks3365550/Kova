@@ -2898,12 +2898,13 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "kova-app"
-version = "3.14.1"
+version = "3.15.0"
 dependencies = [
  "kova-core",
  "kova-engine",
  "kova-image",
  "kova-ipc",
+ "kova-pe",
  "kova-service",
  "slint",
  "slint-build",
@@ -2978,6 +2979,7 @@ name = "kova-pe"
 version = "0.0.1"
 dependencies = [
  "kova-image",
+ "tempfile",
 ]
 
 [[package]]

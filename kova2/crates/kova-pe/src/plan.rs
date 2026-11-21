@@ -172,6 +172,111 @@ pub fn parse_auto(text: &str) -> std::collections::HashMap<String, String> {
         .collect()
 }
 
+/// dism.exe 명령 인자 목록 생성
+#[allow(dead_code)]
+pub fn dism_export_driver_args(dest: &std::path::Path) -> Vec<String> {
+    vec![
+        "/online".into(),
+        "/export-driver".into(),
+        format!("/destination:{}", dest.display()),
+    ]
+}
+
+/// 기본 드라이버 자동 수집 대상 폴더 (%ProgramData%\Kova2\drivers)
+#[allow(dead_code)]
+pub fn default_driver_export_dir() -> std::path::PathBuf {
+    let base = std::env::var_os("ProgramData")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("C:\\ProgramData"));
+    base.join("Kova2").join("drivers")
+}
+
+/// 수집된 드라이버 폴더에 .inf 파일이 존재하는지 검사하여 유효한 드라이버 경로를 반환한다.
+#[allow(dead_code)]
+pub fn find_collected_drivers(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    if !dir.is_dir() {
+        return None;
+    }
+    // 폴더 내 직접 또는 1단계 하위 폴더에 .inf 파일이 있는지 확인
+    let has_inf = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .any(|entry| {
+            let p = entry.path();
+            if p.extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("inf"))
+            {
+                return true;
+            }
+            if p.is_dir() {
+                if let Ok(sub) = std::fs::read_dir(&p) {
+                    return sub.filter_map(|e| e.ok()).any(|se| {
+                        se.path()
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("inf"))
+                    });
+                }
+            }
+            false
+        });
+
+    if has_inf {
+        Some(dir.to_path_buf())
+    } else {
+        None
+    }
+}
+
+/// dism.exe /online /export-driver /destination:<폴더> 명령으로
+/// 현재 PC의 서드파티(NVMe, 네트워크 등) 드라이버를 자동 덤프한다.
+#[allow(dead_code)]
+#[cfg(windows)]
+pub fn export_drivers(dest_dir: &std::path::Path) -> Result<String, String> {
+    use std::os::windows::process::CommandExt;
+    std::fs::create_dir_all(dest_dir).map_err(|e| format!("폴더 생성 실패: {e}"))?;
+
+    let dest_str = dest_dir.to_string_lossy();
+    let out = std::process::Command::new("dism.exe")
+        .args([
+            "/online",
+            "/export-driver",
+            &format!("/destination:{dest_str}"),
+        ])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output()
+        .map_err(|e| format!("dism.exe 실행 실패: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+
+    if !out.status.success() {
+        let msg = if stderr.trim().is_empty() {
+            stdout.trim().to_string()
+        } else {
+            stderr.trim().to_string()
+        };
+        if msg.contains("740") || msg.contains("권한") || msg.contains("administrative") {
+            return Err("드라이버 수집 실패: 관리자 권한으로 실행해야 합니다".into());
+        }
+        return Err(format!(
+            "dism 드라이버 수집 실패 (종료 코드 {:?}): {}",
+            out.status.code(),
+            msg
+        ));
+    }
+
+    Ok(format!("드라이버 자동 수집 완료: {}", dest_dir.display()))
+}
+
+#[cfg(not(windows))]
+pub fn export_drivers(dest_dir: &std::path::Path) -> Result<String, String> {
+    std::fs::create_dir_all(dest_dir).map_err(|e| format!("폴더 생성 실패: {e}"))?;
+    Ok(format!(
+        "(모의) 드라이버 자동 수집 완료: {}",
+        dest_dir.display()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +372,37 @@ Type   : NVMe
         assert_eq!(m["image"], "a.qblk");
         assert_eq!(m["disk"], "1");
         assert_eq!(m["confirm"], "ERASE DISK 1");
+    }
+
+    #[test]
+    fn test_dism_export_driver_args() {
+        let p = std::path::Path::new("C:\\TestDrivers");
+        let args = dism_export_driver_args(p);
+        assert_eq!(args[0], "/online");
+        assert_eq!(args[1], "/export-driver");
+        assert!(args[2].contains("C:\\TestDrivers"));
+    }
+
+    #[test]
+    fn test_default_driver_export_dir() {
+        let d = default_driver_export_dir();
+        assert!(d.ends_with("Kova2\\drivers") || d.ends_with("Kova2/drivers"));
+    }
+
+    #[test]
+    fn test_find_collected_drivers() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 비어있는 폴더 -> None
+        assert_eq!(find_collected_drivers(tmp.path()), None);
+
+        // 하위 폴더에 inf 파일 생성 -> Some
+        let sub = tmp.path().join("nvme_driver");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("nvme.inf"), "mock inf").unwrap();
+
+        assert_eq!(
+            find_collected_drivers(tmp.path()),
+            Some(tmp.path().to_path_buf())
+        );
     }
 }

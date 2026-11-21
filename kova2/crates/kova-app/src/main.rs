@@ -706,10 +706,20 @@ fn run_build_pe_iso(iso_out: &str, drivers_dir: &str) -> String {
     } else {
         std::path::PathBuf::from(iso_out)
     };
-    if !drivers_dir.is_empty() && !std::path::Path::new(drivers_dir).is_dir() {
-        return format!("추가 드라이버 폴더를 찾을 수 없습니다: {drivers_dir}");
+    let effective_drivers_dir = if drivers_dir.trim().is_empty() {
+        let def = kova_pe::plan::default_driver_export_dir();
+        if let Some(valid) = kova_pe::plan::find_collected_drivers(&def) {
+            valid.to_string_lossy().to_string()
+        } else {
+            String::new()
+        }
+    } else {
+        drivers_dir.trim().to_string()
+    };
+    if !effective_drivers_dir.is_empty() && !std::path::Path::new(&effective_drivers_dir).is_dir() {
+        return format!("추가 드라이버 폴더를 찾을 수 없습니다: {effective_drivers_dir}");
     }
-    let inner_args = build_pe_ps_args(&script, &out_iso, &pe_exe, drivers_dir);
+    let inner_args = build_pe_ps_args(&script, &out_iso, &pe_exe, &effective_drivers_dir);
     let q = |s: &str| s.replace('\'', "''");
     let cmd = format!(
         "Start-Process -FilePath 'powershell.exe' -ArgumentList '{}' -Verb RunAs -Wait",
@@ -735,6 +745,17 @@ fn run_build_pe_iso(iso_out: &str, drivers_dir: &str) -> String {
         }
         Ok(_) => "ISO 파일이 생성되지 않았습니다. ADK WinPE 애드온 설치 상태를 확인하세요.".into(),
         Err(e) => format!("제작 실행 실패: {e}"),
+    }
+}
+
+/// 현재 PC의 서드파티(NVMe, 네트워크) 드라이버를 자동 수집(덤프)한다.
+fn run_export_drivers(dest_override: Option<&std::path::Path>) -> String {
+    let dest = dest_override
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(kova_pe::plan::default_driver_export_dir);
+    match kova_pe::plan::export_drivers(&dest) {
+        Ok(msg) => msg,
+        Err(e) => format!("드라이버 수집 실패: {e}"),
     }
 }
 
@@ -2393,6 +2414,22 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     w.on_run_backup(|id| send("backup", id.to_string()));
     w.on_run_verify(|id| send("verify", id.to_string()));
+    w.on_open_repo_dir(|dir| {
+        let dir_str = dir.to_string();
+        std::thread::spawn(move || {
+            let target = if dir_str.is_empty() {
+                ".".to_string()
+            } else {
+                dir_str
+            };
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("explorer.exe")
+                    .arg(&target)
+                    .spawn();
+            }
+        });
+    });
     w.on_save_offsite(|id, dir| save_offsite(&id, &dir));
     w.set_gdrive_connected(kova_core::gdrive::is_connected(
         &kova_service::default_config_dir(),
@@ -2641,6 +2678,25 @@ fn main() -> Result<(), slint::PlatformError> {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(w) = weak.upgrade() {
                         w.set_pe_text(text.into());
+                    }
+                });
+            });
+        });
+        let weak = w.as_weak();
+        w.on_export_drivers(move || {
+            let weak = weak.clone();
+            if let Some(w) = weak.upgrade() {
+                w.set_pe_text("현재 PC 드라이버 자동 수집(덤프) 중… (DISM)".into());
+            }
+            std::thread::spawn(move || {
+                let text = run_export_drivers(None);
+                let def = kova_pe::plan::default_driver_export_dir();
+                let def_str = def.to_string_lossy().to_string();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = weak.upgrade() {
+                        w.set_pe_text(text.clone().into());
+                        w.set_diag_text(text.into());
+                        w.set_pe_drivers_dir(def_str.into());
                     }
                 });
             });
@@ -3329,6 +3385,15 @@ mod tests {
             "C:\\Drivers\\NVMe",
         );
         assert!(b.contains("-DriversDir 'C:\\Drivers\\NVMe'"));
+    }
+
+    #[test]
+    fn run_export_drivers_handles_custom_destination() {
+        let tmp = std::env::temp_dir().join(format!("kova_drv_test_{}", std::process::id()));
+        let res = run_export_drivers(Some(&tmp));
+        // 관리자 권한이 없으면 "실패", 있으면 "완료", 비-Windows면 "모의 완료" -> 크래시 없이 결과 메시지 반환
+        assert!(!res.is_empty());
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

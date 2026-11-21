@@ -1,6 +1,6 @@
 ﻿[package]
 name = "kova-app"
-version = "3.14.1"
+version = "3.15.0"
 edition = "2021"
 
 [dependencies]
@@ -12,6 +12,7 @@ kova-core = { path = "../kova-core" }
 kova-image = { path = "../kova-image" }
 kova-engine = { path = "../kova-engine" }
 kova-service = { path = "../kova-service" }
+kova-pe = { path = "../kova-pe" }
 tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 
 [build-dependencies]

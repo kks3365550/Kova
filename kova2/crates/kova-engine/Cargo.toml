@@ -18,7 +18,7 @@ path = "src/main.rs"
 blake3 = { version = "1.5", features = ["rayon", "mmap"] }
 
 # ── 압축 (Zstandard 멀티스레드 스트리밍) ──
-zstd = "0.13"
+zstd = { version = "0.13", features = ["zstdmt"] }
 
 # ── 가변 블록 청킹 (Fast Content-Defined Chunking) ──
 fastcdc = "1.0"

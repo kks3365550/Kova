@@ -461,6 +461,9 @@ export component MainWindow inherits Window {
     callback run-backup(string);
     callback run-verify(string);
     callback run-gc(string);
+    callback open-repo-dir(string);
+    callback export-drivers();
+    in-out property <int> settings-tab: 0;
     callback ack-alerts();
     callback check-update();
     in property <[RunRow]> running;
@@ -710,15 +713,15 @@ export component MainWindow inherits Window {
                 
                 Rectangle { vertical-stretch: 1; }
                 
-                // Bottom: Repository Status Mini Card
+                // Bottom: Repository Status Mini Card (클릭 시 윈도우 탐색기로 백업 저장소 폴더 즉시 열기)
                 Card {
                     vertical-stretch: 0;
-                    height: 86px;
+                    height: 94px;
                     background: Theme.card;
                     border-color: Theme.line;
                     VerticalLayout {
-                        padding: 12px;
-                        spacing: 8px;
+                        padding: 10px;
+                        spacing: 6px;
                         alignment: center;
                         HorizontalLayout {
                             Text {
@@ -735,12 +738,24 @@ export component MainWindow inherits Window {
                                 font-weight: 700;
                             }
                         }
-                        Text {
-                            text: root.form-repo != "" ? root.form-repo : (root.eff-drive != "" ? root.eff-drive + "\\Kova백업" : "D:\\MyBackup");
-                            color: Theme.text;
-                            font-size: 12px;
-                            font-weight: 600;
-                            overflow: elide;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text {
+                                text: root.form-repo != "" ? root.form-repo : (root.eff-drive != "" ? root.eff-drive + "\\Kova백업" : "D:\\MyBackup");
+                                color: Theme.text;
+                                font-size: 12px;
+                                font-weight: 600;
+                                overflow: elide;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Btn {
+                                text: "📂 열기";
+                                height: 24px;
+                                clicked => {
+                                    root.open-repo-dir(root.form-repo != "" ? root.form-repo : (root.eff-drive != "" ? root.eff-drive + "\\Kova백업" : "D:\\MyBackup"));
+                                }
+                            }
                         }
                         Meter {
                             pct: root.drives.length > 0 ? root.drives[0].pct : 35;
@@ -1155,6 +1170,28 @@ export component MainWindow inherits Window {
                             }
 
                             Field { text <=> root.form-exclude; placeholder: "제외할 패턴 (예: *.tmp;*.log;node_modules;.git)"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Btn {
+                                    text: "+ 임시파일 제외";
+                                    clicked => {
+                                        root.form-exclude = root.form-exclude + (root.form-exclude == "" ? "" : ";") + "*.tmp;*.temp;*.swp;~$*";
+                                    }
+                                }
+                                Btn {
+                                    text: "+ 빌드/git 제외";
+                                    clicked => {
+                                        root.form-exclude = root.form-exclude + (root.form-exclude == "" ? "" : ";") + "node_modules;.git;target;*.obj;*.pdb";
+                                    }
+                                }
+                                Btn {
+                                    text: "+ 휴지통/가상머신 제외";
+                                    clicked => {
+                                        root.form-exclude = root.form-exclude + (root.form-exclude == "" ? "" : ";") + "$RECYCLE.BIN;*.vmdk;*.vdi;*.vhdx";
+                                    }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                            }
 
                             // Retention Rules
                             Card {
@@ -1263,7 +1300,17 @@ export component MainWindow inherits Window {
                     VerticalLayout {
                         padding: 16px;
                         spacing: 10px;
-                        Heading { text: "파일 되돌리기 (복원 모드)"; }
+                        HorizontalLayout {
+                            Heading { text: "파일 되돌리기 (복원 모드)"; }
+                            Rectangle { horizontal-stretch: 1; }
+                            Btn {
+                                text: "🧹 저장소 정리 (GC / 조각 모음)";
+                                height: 32px;
+                                clicked => {
+                                    root.run-gc(root.form-repo != "" ? root.form-repo : (root.eff-drive != "" ? root.eff-drive + "\\Kova백업" : "default"));
+                                }
+                            }
+                        }
                         HorizontalLayout {
                             spacing: 8px;
                             alignment: start;
@@ -1457,6 +1504,15 @@ export component MainWindow inherits Window {
                                     Badge { 
                                         text: s.verified == "미검증" || s.verified == "" ? "미검증" : "무결성 검증"; 
                                         tone: s.verified == "미검증" || s.verified == "" ? Theme.muted : Theme.ok; 
+                                    }
+                                }
+                                
+                                if s.verified == "미검증" || s.verified == "": VerticalLayout {
+                                    alignment: center;
+                                    Btn { 
+                                        text: "🔍 무결성 검사"; 
+                                        height: 32px; 
+                                        clicked => { root.run-verify(s.id); } 
                                     }
                                 }
                                 
@@ -1712,7 +1768,14 @@ export component MainWindow inherits Window {
                             Heading { text: "5. 비상 부팅 복구 미디어(WinPE ISO) 제작"; }
                             Hint { text: "Windows가 부팅되지 않을 때 USB로 부팅해 C: 드라이브를 통째 복원하는 WinPE 복구 ISO를 생성합니다. (Windows ADK 필요, 관리자 권한)"; }
                             Field { text <=> root.pe-iso-out; placeholder: "출력 ISO 경로 (비우면 바탕화면 Kova2_WinPE_Recovery.iso)"; }
-                            Field { text <=> root.pe-drivers-dir; placeholder: "추가 드라이버 폴더 (선택: NVMe/RAID/네트워크 드라이버 주입)"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Field { text <=> root.pe-drivers-dir; placeholder: "추가 드라이버 폴더 (비우면 자동 수집된 폴더 자동 연결)"; horizontal-stretch: 1; }
+                                Btn {
+                                    text: "⚡ 드라이버 자동 수집 (DISM)";
+                                    clicked => { root.export-drivers(); }
+                                }
+                            }
                             HorizontalLayout {
                                 spacing: 8px;
                                 alignment: end;
@@ -1771,8 +1834,43 @@ export component MainWindow inherits Window {
                             }
                         }
                         
-                        // 1. 기본 백업 일정 및 보관 주기 (전면 배치)
+                        // 4대 탭 네비게이션 헤더
                         Card {
+                            background: Theme.card;
+                            border-color: Theme.line;
+                            height: 48px;
+                            HorizontalLayout {
+                                padding: 4px;
+                                spacing: 6px;
+                                Btn {
+                                    text: "⚙ 일반 & 스케줄";
+                                    kind: root.settings-tab == 0 ? 1 : 0;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.settings-tab = 0; }
+                                }
+                                Btn {
+                                    text: "🔒 보안 & 보호";
+                                    kind: root.settings-tab == 1 ? 1 : 0;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.settings-tab = 1; }
+                                }
+                                Btn {
+                                    text: "☁ 클라우드 & 알림";
+                                    kind: root.settings-tab == 2 ? 1 : 0;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.settings-tab = 2; }
+                                }
+                                Btn {
+                                    text: "🚨 비상복구 & 도구";
+                                    kind: root.settings-tab == 3 ? 1 : 0;
+                                    horizontal-stretch: 1;
+                                    clicked => { root.settings-tab = 3; }
+                                }
+                            }
+                        }
+
+                        // ── TAB 0: 일반 & 스케줄 ──────────────────────────
+                        if root.settings-tab == 0: Card {
                             vertical-stretch: 0;
                             VerticalLayout {
                                 padding: 18px;
@@ -1833,16 +1931,59 @@ export component MainWindow inherits Window {
                                 }
                             }
                         }
-                        
-                        // 2. 고급 엔지니어링 설정 아코디언 토글 버튼
-                        Btn {
-                            text: root.more-settings ? "고급 엔지니어링 설정 ▲ (접기)" : "고급 엔지니어링 설정 ▾ (펼치기)";
-                            height: 38px;
-                            clicked => { root.more-settings = !root.more-settings; }
+
+                        if root.settings-tab == 0: Card {
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 12px;
+                                Heading { text: "운영 성능 및 리소스 설정"; }
+                                
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text { text: "최소 잔여 공간 임계치(GB)"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                    Field { text <=> root.form-min-free; width: 80px; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Hint { text: "저장소 디스크 여유 공간이 이 값 이하로 떨어지면 자동으로 백업 작업을 중단하여 시스템을 보호합니다."; }
+                                
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text { text: "소용량 청크 패킹(Pack)"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                    Btn { text: root.form-pack ? "켜짐" : "꺼짐"; kind: root.form-pack ? 1 : 0; clicked => { root.form-pack = !root.form-pack; } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Hint { text: "수만 개의 작은 파일들을 고속 팩 블록으로 묶어 IOPS 병목을 획기적으로 줄입니다."; }
+
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text { text: "CPU 스레드 / 전송 속도(MB/s)"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                    Field { text <=> root.form-max-threads; width: 70px; placeholder: "0"; }
+                                    Field { text <=> root.form-bw-limit; width: 70px; placeholder: "0"; }
+                                    Btn { text: root.form-pause-battery ? "배터리 일시정지: 켜짐" : "배터리 일시정지: 꺼짐"; kind: root.form-pause-battery ? 1 : 0; clicked => { root.form-pause-battery = !root.form-pause-battery; } }
+                                    Btn { text: "운영 설정 저장"; kind: 1; clicked => { root.save-ops-settings(root.form-webhook, root.form-max-threads, root.form-bw-limit, root.form-pause-battery); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Hint { text: "0은 자동/무제한. CPU 스레드(1~64)와 오프사이트 전송 속도(MB/s)를 제한해 작업 중 PC 부하를 줄입니다."; }
+                            }
                         }
-                        
-                        // 3. 고급 설정 아코디언 내용부 (root.more-settings 시 표출)
-                        if root.more-settings: Card {
+
+                        if root.settings-tab == 0: Card {
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 10px;
+                                Heading { text: "환경 구성 진단 요약"; }
+                                for l in root.setting-lines: Text { 
+                                    text: l; 
+                                    color: l == "프로파일" ? Theme.text : Theme.muted; 
+                                    font-size: 12px; 
+                                    font-weight: l == "프로파일" ? 700 : 400; 
+                                    wrap: word-wrap; 
+                                }
+                            }
+                        }
+
+                        // ── TAB 1: 보안 & 보호 ──────────────────────────
+                        if root.settings-tab == 1: Card {
                             vertical-stretch: 0;
                             VerticalLayout {
                                 padding: 18px;
@@ -1850,161 +1991,144 @@ export component MainWindow inherits Window {
                                 alignment: start;
                                 Heading { text: "보안 및 핵심 무결성 보호"; }
                             
-                            HorizontalLayout {
-                                spacing: 10px;
-                                Text { text: "랜섬웨어 변조 방지 잠금"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
-                                Btn { text: root.form-ransom ? "켜짐" : "꺼짐"; kind: root.form-ransom ? 1 : 0; clicked => { root.form-ransom = !root.form-ransom; } }
-                                Rectangle { horizontal-stretch: 1; }
-                            }
-                            Hint { text: "악성코드나 비인가 프로세스가 백업 보관소를 변조하거나 삭제할 수 없도록 ACL을 잠급니다."; }
-                            
-                            HorizontalLayout {
-                                spacing: 10px;
-                                Text { text: "사용 중인 파일 VSS 복제"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
-                                Btn { text: root.form-vss ? "켜짐" : "꺼짐"; kind: root.form-vss ? 1 : 0; clicked => { root.form-vss = !root.form-vss; } }
-                                Rectangle { horizontal-stretch: 1; }
-                            }
-                            Hint { text: "오피스/DB 등 타 프로그램이 점유 중인 파일도 Windows VSS 스냅샷으로 누락 없이 백업합니다."; }
-                            
-                            HorizontalLayout {
-                                spacing: 10px;
-                                Text { text: "AES-256 저장소 암호화"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
-                                Btn { text: root.form-encrypt ? "켜짐" : "꺼짐"; kind: root.form-encrypt ? 1 : 0; clicked => { root.form-encrypt = !root.form-encrypt; } }
-                                Btn { text: "복구 키트 저장"; clicked => { root.export-recovery-kit(); } }
-                                Rectangle { horizontal-stretch: 1; }
-                            }
-                            Hint { text: "백업 저장소를 군사급 암호화로 보호합니다. 활성화 후 '복구 키트 저장'으로 복구 코드를 안전한 곳에 보관하세요."; }
-                            
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Btn { text: "보안 설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt, root.form-vss, root.form-pack); } }
-                                if root.settings-text != "": Text { text: root.settings-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
-                            }
-                        }
-                    }
-
-                        if root.more-settings:                     Card {
-                        VerticalLayout {
-                            padding: 18px;
-                            spacing: 10px;
-                            Heading { text: "오프사이트 2차 보존 복제소"; }
-                            Hint { text: "외장 드라이브 또는 네트워크 NAS 폴더를 지정하면 백업 완료 시점에 자동으로 2차 복사본을 생성합니다."; }
-                            for o in root.offsite-rows: HorizontalLayout {
-                                spacing: 8px;
-                                Text { text: o.name; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; wrap: word-wrap; }
-                                le := PathField { text: o.dir; placeholder: "예: E:\\백업복사본"; horizontal-stretch: 1; pick(k) => { root.browse(k) } }
-                                Btn { text: "저장"; kind: 1; clicked => { root.save-offsite(o.id, le.text); } }
-                            }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Btn { text: root.gdrive-connected ? "구글 드라이브 연결 해제" : "구글 드라이브 연결"; kind: 1; clicked => { if (root.gdrive-connected) { root.disconnect-gdrive(); } else { root.connect-gdrive(); } } }
-                                Text { text: root.gdrive-connected ? "연결됨: 백업이 끝나면 구글 드라이브의 'Kova2 Backup' 폴더에 자동 복사합니다. " + root.gdrive-text : root.gdrive-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text { text: "랜섬웨어 변조 방지 잠금"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                    Btn { text: root.form-ransom ? "켜짐" : "꺼짐"; kind: root.form-ransom ? 1 : 0; clicked => { root.form-ransom = !root.form-ransom; } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Hint { text: "악성코드나 비인가 프로세스가 백업 보관소를 변조하거나 삭제할 수 없도록 ACL을 잠급니다."; }
+                                
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text { text: "사용 중인 파일 VSS 복제"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                    Btn { text: root.form-vss ? "켜짐" : "꺼짐"; kind: root.form-vss ? 1 : 0; clicked => { root.form-vss = !root.form-vss; } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Hint { text: "오피스/DB 등 타 프로그램이 점유 중인 파일도 Windows VSS 스냅샷으로 누락 없이 백업합니다."; }
+                                
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Text { text: "AES-256 저장소 암호화"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                    Btn { text: root.form-encrypt ? "켜짐" : "꺼짐"; kind: root.form-encrypt ? 1 : 0; clicked => { root.form-encrypt = !root.form-encrypt; } }
+                                    Btn { text: "복구 키트 저장"; clicked => { root.export-recovery-kit(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                Hint { text: "백업 저장소를 군사급 암호화로 보호합니다. 활성화 후 '복구 키트 저장'으로 복구 코드를 안전한 곳에 보관하세요."; }
+                                
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Btn { text: "보안 설정 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt, root.form-vss, root.form-pack); } }
+                                    if root.settings-text != "": Text { text: root.settings-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                                }
                             }
                         }
-                    }
 
-                        if root.more-settings:                     Card {
-                        VerticalLayout {
-                            padding: 18px;
-                            spacing: 10px;
-                            Heading { text: "소프트웨어 자동 갱신"; }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Btn { text: "최신 버전 확인"; clicked => { root.check-update(); } }
-                                Btn { text: "새 버전 즉시 설치"; kind: 1; clicked => { root.install-update(); } }
-                                Rectangle { horizontal-stretch: 1; }
-                            }
-                            if root.update-text != "": Text { text: root.update-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
-                        }
-                    }
-
-                                            if root.more-settings: Card {
-                        VerticalLayout {
-                            padding: 18px;
-                            spacing: 12px;
-                            Heading { text: "상세 엔지니어링 설정"; }
-                            
-                            HorizontalLayout {
-                                spacing: 10px;
-                                Text { text: "최소 잔여 공간 임계치(GB)"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
-                                Field { text <=> root.form-min-free; width: 80px; }
-                                Rectangle { horizontal-stretch: 1; }
-                            }
-                            Hint { text: "저장소 디스크 여유 공간이 이 값 이하로 떨어지면 자동으로 백업 작업을 중단하여 시스템을 보호합니다."; }
-                            
-                            HorizontalLayout {
-                                spacing: 10px;
-                                Text { text: "소용량 청크 패킹(Pack)"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
-                                Btn { text: root.form-pack ? "켜짐" : "꺼짐"; kind: root.form-pack ? 1 : 0; clicked => { root.form-pack = !root.form-pack; } }
-                                Rectangle { horizontal-stretch: 1; }
-                            }
-                            Hint { text: "수만 개의 작은 파일들을 고속 팩 블록으로 묶어 IOPS 병목을 획기적으로 줄입니다."; }
-
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Text { text: "원격 웹훅 알림 URL"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
-                                Field { text <=> root.form-webhook; placeholder: "https://hooks.slack.com/... 또는 Discord 웹훅"; horizontal-stretch: 1; }
-                                Btn { text: "테스트 발송"; clicked => { root.test-webhook(root.form-webhook); } }
-                            }
-                            Hint { text: "백업 실패·경고 시 Slack/Discord/HTTP 웹훅으로 즉시 알림을 보냅니다. 비워두면 끕니다."; }
-
-                            HorizontalLayout {
-                                spacing: 10px;
-                                Text { text: "CPU 스레드 / 전송 속도(MB/s)"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
-                                Field { text <=> root.form-max-threads; width: 70px; placeholder: "0"; }
-                                Field { text <=> root.form-bw-limit; width: 70px; placeholder: "0"; }
-                                Btn { text: root.form-pause-battery ? "배터리 일시정지: 켜짐" : "배터리 일시정지: 꺼짐"; kind: root.form-pause-battery ? 1 : 0; clicked => { root.form-pause-battery = !root.form-pause-battery; } }
-                                Btn { text: "운영 설정 저장"; kind: 1; clicked => { root.save-ops-settings(root.form-webhook, root.form-max-threads, root.form-bw-limit, root.form-pause-battery); } }
-                                Rectangle { horizontal-stretch: 1; }
-                            }
-                            Hint { text: "0은 자동/무제한. CPU 스레드(1~64)와 오프사이트 전송 속도(MB/s)를 제한해 작업 중 PC 부하를 줄입니다."; }
-                            
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Text { text: "복구 코드로 마스터 키 복원"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
-                                Field { text <=> root.form-recovery; horizontal-stretch: 1; }
-                                Btn { text: "키 복원"; clicked => { root.restore-key(root.form-recovery); } }
-                            }
-                            
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Text { text: "마스터 관리자 암호"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
-                                Field { text <=> root.form-lock-cur; placeholder: "현재 암호"; secret: true; horizontal-stretch: 1; }
-                                Btn { text: "잠금 해제"; clicked => { root.unlock-app(root.form-lock-cur); } }
-                            }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Rectangle { width: 190px; }
-                                Field { text <=> root.form-lock-new; placeholder: "새 관리자 암호 (공백 입력 시 암호 해제)"; secret: true; horizontal-stretch: 1; }
-                                Btn { text: "암호 설정/변경"; clicked => { root.set-master(root.form-lock-cur, root.form-lock-new); } }
-                            }
-                            if root.lock-text != "": Hint { text: root.lock-text; }
-                            
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Btn { text: "🔄 복구 훈련 시뮬레이션"; clicked => { root.run-drill(); } }
-                                Btn { text: "📋 시스템 정보 내보내기"; clicked => { root.export-sysinfo(); } }
-                                Btn { text: "🩺 진단 로그 덤프 생성"; clicked => { root.make-diag(); } }
-                                Rectangle { horizontal-stretch: 1; }
-                            }
-                            if root.diag-text != "": Text { text: root.diag-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
-                            
-                            Heading { text: "환경 구성 진단 요약"; }
-                            for l in root.setting-lines: Text { 
-                                text: l; 
-                                color: l == "프로파일" ? Theme.text : Theme.muted; 
-                                font-size: 12px; 
-                                font-weight: l == "프로파일" ? 700 : 400; 
-                                wrap: word-wrap; 
-                            }
-                            
-                            HorizontalLayout {
-                                spacing: 8px;
-                                Btn { text: "설정 최종 저장"; kind: 1; clicked => { root.save-settings(root.form-min-free, root.form-ransom, root.form-encrypt, root.form-vss, root.form-pack); } }
-                                Rectangle { horizontal-stretch: 1; }
+                        if root.settings-tab == 1: Card {
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 12px;
+                                Heading { text: "마스터 관리자 암호 및 앱 보안"; }
+                                
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: "마스터 관리자 암호"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                    Field { text <=> root.form-lock-cur; placeholder: "현재 암호"; secret: true; horizontal-stretch: 1; }
+                                    Btn { text: "잠금 해제"; clicked => { root.unlock-app(root.form-lock-cur); } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Rectangle { width: 190px; }
+                                    Field { text <=> root.form-lock-new; placeholder: "새 관리자 암호 (공백 입력 시 암호 해제)"; secret: true; horizontal-stretch: 1; }
+                                    Btn { text: "암호 설정/변경"; clicked => { root.set-master(root.form-lock-cur, root.form-lock-new); } }
+                                }
+                                if root.lock-text != "": Hint { text: root.lock-text; }
                             }
                         }
-                    }
+
+                        // ── TAB 2: 클라우드 & 알림 ──────────────────────
+                        if root.settings-tab == 2: Card {
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 10px;
+                                Heading { text: "오프사이트 2차 보존 복제소"; }
+                                Hint { text: "외장 드라이브 또는 네트워크 NAS 폴더를 지정하면 백업 완료 시점에 자동으로 2차 복사본을 생성합니다."; }
+                                for o in root.offsite-rows: HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: o.name; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; wrap: word-wrap; }
+                                    le := PathField { text: o.dir; placeholder: "예: E:\\백업복사본"; horizontal-stretch: 1; pick(k) => { root.browse(k) } }
+                                    Btn { text: "저장"; kind: 1; clicked => { root.save-offsite(o.id, le.text); } }
+                                }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Btn { text: root.gdrive-connected ? "구글 드라이브 연결 해제" : "구글 드라이브 연결"; kind: 1; clicked => { if (root.gdrive-connected) { root.disconnect-gdrive(); } else { root.connect-gdrive(); } } }
+                                    Text { text: root.gdrive-connected ? "연결됨: 백업이 끝나면 구글 드라이브의 'Kova2 Backup' 폴더에 자동 복사합니다. " + root.gdrive-text : root.gdrive-text; color: Theme.muted; font-size: 13px; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                                }
+                            }
+                        }
+
+                        if root.settings-tab == 2: Card {
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 12px;
+                                Heading { text: "원격 웹훅 알림 연동"; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: "원격 웹훅 알림 URL"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                    Field { text <=> root.form-webhook; placeholder: "https://hooks.slack.com/... 또는 Discord 웹훅"; horizontal-stretch: 1; }
+                                    Btn { text: "테스트 발송"; clicked => { root.test-webhook(root.form-webhook); } }
+                                }
+                                Hint { text: "백업 실패·경고 시 Slack/Discord/HTTP 웹훅으로 즉시 알림을 보냅니다. 비워두면 끕니다."; }
+                            }
+                        }
+
+                        if root.settings-tab == 2: Card {
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 10px;
+                                Heading { text: "소프트웨어 자동 갱신"; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Btn { text: "최신 버전 확인"; clicked => { root.check-update(); } }
+                                    Btn { text: "새 버전 즉시 설치"; kind: 1; clicked => { root.install-update(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                if root.update-text != "": Text { text: root.update-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
+                            }
+                        }
+
+                        // ── TAB 3: 비상복구 & 도구 ──────────────────────
+                        if root.settings-tab == 3: Card {
+                            VerticalLayout {
+                                padding: 18px;
+                                spacing: 12px;
+                                Heading { text: "비상 복구 및 시스템 진단 도구"; }
+                                
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Text { text: "복구 코드로 마스터 키 복원"; color: Theme.text; font-size: 13px; width: 190px; vertical-alignment: center; }
+                                    Field { text <=> root.form-recovery; horizontal-stretch: 1; }
+                                    Btn { text: "키 복원"; clicked => { root.restore-key(root.form-recovery); } }
+                                }
+                                Hint { text: "암호화 키 분실 시 내보내 둔 복구 코드를 입력하여 복구 마스터 키를 복원합니다."; }
+                                
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Btn { text: "🔄 복구 훈련 시뮬레이션"; clicked => { root.run-drill(); } }
+                                    Btn { text: "📋 시스템 정보 내보내기"; clicked => { root.export-sysinfo(); } }
+                                    Btn { text: "⚡ 드라이버 자동 수집 (DISM)"; clicked => { root.export-drivers(); } }
+                                    Btn { text: "🩺 진단 로그 덤프 생성"; clicked => { root.make-diag(); } }
+                                    Btn { 
+                                        text: "📂 백업 저장소 탐색기로 열기"; 
+                                        clicked => { 
+                                            root.open-repo-dir(root.form-repo != "" ? root.form-repo : (root.eff-drive != "" ? root.eff-drive + "\\Kova백업" : "D:\\MyBackup")); 
+                                        } 
+                                    }
+                                    Rectangle { horizontal-stretch: 1; }
+                                }
+                                if root.diag-text != "": Text { text: root.diag-text; color: Theme.muted; font-size: 13px; wrap: word-wrap; }
+                            }
+                        }
 
                         Rectangle { vertical-stretch: 1; }
                     }

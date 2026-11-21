@@ -3,7 +3,7 @@
 ; =========================================================================
 
 #define MyAppName "Kova2"
-#define MyAppVersion "3.14.1"
+#define MyAppVersion "3.15.0"
 #define MyAppPublisher "kks3365550"
 
 [Setup]
@@ -49,10 +49,28 @@ Filename: "{sys}\sc.exe"; Parameters: "start KovaSvc"; Flags: runhidden waitunti
 Filename: "{app}\kova-app.exe"; Description: "Kova2 앱 실행"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM kova-app.exe /IM kova-pe.exe"; Flags: runhidden waituntilterminated
 Filename: "{sys}\sc.exe"; Parameters: "stop KovaSvc"; Flags: runhidden waituntilterminated
 Filename: "{app}\kova-service.exe"; Parameters: "--uninstall"; Flags: runhidden waituntilterminated
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM kova-service.exe"; Flags: runhidden waituntilterminated
 
 [Code]
+procedure KillKovaProcesses();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM kova-app.exe /IM kova-service.exe /IM kova-pe.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM kova-app.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM kova-pe.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /T /IM kova-service.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function InitializeSetup(): Boolean;
+begin
+  KillKovaProcesses();
+  Result := True;
+end;
+
 function IsKovaSvcInstalled(): Boolean;
 var
   ResultCode: Integer;
@@ -73,6 +91,7 @@ var
   I: Integer;
 begin
   Result := '';
+  KillKovaProcesses();
   if IsKovaSvcInstalled() then
   begin
     Exec(ExpandConstant('{sys}\sc.exe'), 'stop KovaSvc', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
@@ -82,5 +101,14 @@ begin
         Break;
       Sleep(1000);
     end;
+  end;
+  KillKovaProcesses();
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+  begin
+    KillKovaProcesses();
   end;
 end;
