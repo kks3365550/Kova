@@ -20,7 +20,7 @@ const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
 const CHUNK: usize = 8 * 1024 * 1024;
 /// 동시에 올리는 파일 수 기본값(구글 드라이브 레이트 리밋을 고려해 보수적으로).
-pub const DEFAULT_UPLOAD_WORKERS: usize = 4;
+pub const DEFAULT_UPLOAD_WORKERS: usize = 8;
 const TOKEN_FILE: &str = "gdrive_token.bin";
 const CLIENT_FILE: &str = "gdrive_client.json";
 
