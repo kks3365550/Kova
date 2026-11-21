@@ -28,6 +28,14 @@ const STOP_WAIT: Duration = Duration::from_secs(25);
 fn start_core(rt: &tokio::runtime::Runtime) -> (Supervisor, Arc<AtomicBool>) {
     let sup = Supervisor::new(default_config_dir(), 2);
     sup.report_leftover_vss();
+    // 이전 버전이 남긴 구글 토큰·저장소 키 파일을 SYSTEM·Administrators 전용으로 잠근다(내용은 그대로 읽힌다)
+    for r in kova_core::secrets::migrate(&default_config_dir()) {
+        let (level, text) = match r {
+            Ok(m) => ("INFO", m),
+            Err(e) => ("WARN", format!("비밀 파일 접근 제한 실패: {e}")),
+        };
+        kova_core::applog::write(&default_config_dir(), level, &text);
+    }
     let stop = Arc::new(AtomicBool::new(false));
     spawn_scheduler(sup.clone(), stop.clone());
     let handler: Arc<dyn kova_ipc::Handler> = Arc::new(IpcHandler(sup.clone()));

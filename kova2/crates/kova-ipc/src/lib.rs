@@ -14,6 +14,17 @@ pub const PIPE_NAME: &str = r"\\.\pipe\kova";
 /// 클라이언트가 읽지 않아 쓰기가 막히면 이 시간 뒤 연결을 끊는다(구독이 서비스 쪽에 쌓이지 않게).
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// 토큰·복구 코드 같은 비밀 문자열. 전송(JSON)은 그대로 하고 Debug 출력은 가린다(로그에 남지 않게).
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(transparent)]
+pub struct Secret(pub String);
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(***)")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "cmd")]
 pub enum Request {
@@ -29,6 +40,44 @@ pub enum Request {
     },
     /// 연결을 유지한 채 이후 모든 작업 이벤트를 받는다.
     Subscribe,
+    /// 구글 드라이브 연결 여부(토큰 파일은 SYSTEM·관리자만 열 수 있어 서비스가 확인한다). 답: `GdriveStatus`.
+    GdriveStatus,
+    /// 앱이 구글 로그인으로 받은 토큰(JSON)을 서비스가 보호해 저장한다. 답: `Done` / `Error`.
+    /// 토큰 내용을 돌려주는 요청은 만들지 않는다.
+    GdriveStoreToken {
+        token: Secret,
+    },
+    /// 구글에 토큰 폐기를 요청하고 저장된 토큰을 지운다. 답: `Done`.
+    GdriveDisconnect,
+    /// 프로파일 저장소마다 암호화를 켠다(키는 서비스가 만들고 보관). 답: `Encrypted`(새로 켠 곳의 복구 코드, 이때 한 번만).
+    EnableEncryption,
+    /// 복구 코드로 이 PC의 저장소 키를 다시 만든다. 답: `Done` / `Error`.
+    RestoreKey {
+        code: Secret,
+    },
+    /// 복구 코드 내보내기(관리자/SYSTEM 호출자만). 답: `RecoveryCodes`.
+    ExportRecoveryCodes,
+    /// 암호화 저장소 복원(키가 필요해 서비스가 한다). 파일 쓰기는 요청한 사용자 권한(가장)으로 하므로
+    /// `stream_as_caller` 로 보내야 한다. 답: `RestoreProgress`… 뒤 `Done` / `Error`.
+    Restore {
+        repo: String,
+        session_id: String,
+        /// None 이면 원래 위치
+        target: Option<String>,
+        only: Option<Vec<String>>,
+    },
+    /// 프로파일의 최근 스냅샷을 서비스 임시 폴더에 복원해 보고 지운다(복구 훈련). 답: `Done` / `Error`.
+    Drill {
+        profile_id: String,
+    },
+}
+
+/// 복구 키트 한 줄.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecoveryEntry {
+    pub name: String,
+    pub repo: String,
+    pub code: Secret,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -69,6 +118,24 @@ pub enum Event {
     Error {
         message: String,
     },
+    GdriveStatus {
+        connected: bool,
+    },
+    /// 요청을 처리했다(사람이 읽을 결과 문구).
+    Done {
+        message: String,
+    },
+    /// 새로 암호화를 켠 저장소의 "이름 복구 코드: …" 줄(없으면 빈 목록)
+    Encrypted {
+        codes: Vec<Secret>,
+    },
+    RecoveryCodes {
+        entries: Vec<RecoveryEntry>,
+    },
+    RestoreProgress {
+        done: u64,
+        total: u64,
+    },
 }
 
 pub enum Reply {
@@ -85,8 +152,33 @@ pub struct Caller {
     pub privileged: bool,
 }
 
+/// 클라이언트가 가장(impersonation) 수준으로 접속했을 때(`stream_as_caller`) 잡아 둔 그 사용자의 토큰.
+/// 서비스는 이것으로 작업 스레드를 그 사용자 권한으로 돌려, SYSTEM 권한으로 사용자 대신 파일을 쓰지 않는다.
+#[derive(Debug)]
+pub struct ClientToken(usize);
+
+impl ClientToken {
+    /// 지금 스레드를 이 사용자로 가장한다. 성공하면 true(스레드가 끝나거나 되돌릴 때까지 유지).
+    pub fn impersonate_current_thread(&self) -> bool {
+        // SAFETY: self.0 은 TOKEN_IMPERSONATE 권한으로 연 가장 토큰 핸들이다. null 스레드 = 현재 스레드.
+        unsafe { SetThreadToken(std::ptr::null_mut(), self.0 as *mut _) != 0 }
+    }
+}
+
+impl Drop for ClientToken {
+    fn drop(&mut self) {
+        // SAFETY: caller_of 가 연 핸들을 한 번만 닫는다.
+        unsafe { CloseHandle(self.0 as *mut _) };
+    }
+}
+
 pub trait Handler: Send + Sync + 'static {
     fn handle(&self, req: Request, caller: Caller) -> Reply;
+    /// 서버가 실제로 부르는 입구. 클라이언트가 가장을 허용했으면 `token` 이 있다. 기본은 토큰을 버리고 `handle`.
+    fn handle_with_token(&self, req: Request, caller: Caller, token: Option<ClientToken>) -> Reply {
+        drop(token);
+        self.handle(req, caller)
+    }
     /// 서버 자체 오류(연결 수락·파이프 생성 실패 등). 서버는 이 오류로 멈추지 않고 계속 돈다.
     fn on_error(&self, _message: &str) {}
 }
@@ -130,6 +222,14 @@ extern "system" {
         sid: *mut core::ffi::c_void,
         is_member: *mut i32,
     ) -> i32;
+    fn GetTokenInformation(
+        token: *mut core::ffi::c_void,
+        class: i32,
+        info: *mut core::ffi::c_void,
+        len: u32,
+        ret: *mut u32,
+    ) -> i32;
+    fn SetThreadToken(thread: *mut *mut core::ffi::c_void, token: *mut core::ffi::c_void) -> i32;
 }
 #[link(name = "kernel32")]
 extern "system" {
@@ -137,6 +237,14 @@ extern "system" {
     fn CloseHandle(h: *mut core::ffi::c_void) -> i32;
 }
 const TOKEN_QUERY: u32 = 0x0008;
+const TOKEN_DUPLICATE: u32 = 0x0002;
+const TOKEN_IMPERSONATE: u32 = 0x0004;
+/// TOKEN_INFORMATION_CLASS::TokenImpersonationLevel
+const TOKEN_IMPERSONATION_LEVEL_CLASS: i32 = 9;
+/// SECURITY_IMPERSONATION_LEVEL::SecurityImpersonation
+const SECURITY_IMPERSONATION_LEVEL: u32 = 2;
+/// 클라이언트 쪽 QoS: 서버가 이 연결 동안 클라이언트로 가장할 수 있게 한다(SECURITY_IMPERSONATION)
+const SQOS_IMPERSONATION: u32 = 0x0002_0000;
 const WIN_LOCAL_SYSTEM_SID: i32 = 22;
 const WIN_BUILTIN_ADMINISTRATORS_SID: i32 = 26;
 
@@ -158,25 +266,48 @@ unsafe fn token_has(token: *mut core::ffi::c_void, kind: i32) -> bool {
 }
 
 /// 첫 요청 줄을 읽은 뒤(가장은 데이터를 받은 뒤에만 된다) 클라이언트 토큰을 확인한다.
-fn caller_of(pipe: *mut core::ffi::c_void) -> Caller {
+/// 클라이언트가 가장 수준(SECURITY_IMPERSONATION 이상)으로 접속했으면 그 토큰을 넘겨 준다(아니면 닫는다).
+fn caller_of(pipe: *mut core::ffi::c_void) -> (Caller, Option<ClientToken>) {
     // SAFETY: pipe 는 살아 있는 서버 파이프 핸들이다. 가장 → 토큰 열기 → 되돌리기 사이에 await 가 없어
     // 같은 스레드에서 끝난다. 되돌리기에 실패하면 다른 작업이 클라이언트 권한으로 돌 수 있으므로 즉시 끝낸다.
     unsafe {
         if ImpersonateNamedPipeClient(pipe) == 0 {
-            return Caller::default();
+            return (Caller::default(), None);
         }
         let mut tok: *mut core::ffi::c_void = std::ptr::null_mut();
-        let opened = OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut tok) != 0;
+        let full = OpenThreadToken(
+            GetCurrentThread(),
+            TOKEN_QUERY | TOKEN_IMPERSONATE | TOKEN_DUPLICATE,
+            1,
+            &mut tok,
+        ) != 0;
+        let opened = full || OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut tok) != 0;
         if RevertToSelf() == 0 {
             std::process::abort();
         }
         if !opened {
-            return Caller::default();
+            return (Caller::default(), None);
         }
         let privileged =
             token_has(tok, WIN_LOCAL_SYSTEM_SID) || token_has(tok, WIN_BUILTIN_ADMINISTRATORS_SID);
-        CloseHandle(tok);
-        Caller { privileged }
+        let mut level = 0u32;
+        let mut ret = 0u32;
+        let can_impersonate = full
+            && GetTokenInformation(
+                tok,
+                TOKEN_IMPERSONATION_LEVEL_CLASS,
+                &mut level as *mut u32 as *mut _,
+                4,
+                &mut ret,
+            ) != 0
+            && level >= SECURITY_IMPERSONATION_LEVEL;
+        let token = if can_impersonate {
+            Some(ClientToken(tok as usize))
+        } else {
+            CloseHandle(tok);
+            None
+        };
+        (Caller { privileged }, token)
     }
 }
 
@@ -287,9 +418,9 @@ async fn handle(
     let Some(line) = lines.next_line().await? else {
         return Ok(());
     };
-    let caller = caller_of(raw as *mut core::ffi::c_void);
+    let (caller, token) = caller_of(raw as *mut core::ffi::c_void);
     let reply = match serde_json::from_str::<Request>(&line) {
-        Ok(req) => h.handle(req, caller),
+        Ok(req) => h.handle_with_token(req, caller, token),
         Err(e) => Reply::Once(vec![Event::Error {
             message: format!("잘못된 요청: {e}"),
         }]),
@@ -366,9 +497,29 @@ pub async fn request_until(
 pub async fn stream(
     name: &str,
     req: &Request,
+    on_event: impl FnMut(Event) -> bool,
+) -> std::io::Result<()> {
+    stream_with(ClientOptions::new().open(name)?, req, on_event).await
+}
+
+/// `stream` 과 같되, 서비스가 이 연결 동안 호출한 사용자로 가장할 수 있게 접속한다(`Request::Restore` 용:
+/// 서비스가 SYSTEM 이 아니라 이 사용자 권한으로 파일을 쓴다). 서비스 파이프에만 쓴다.
+pub async fn stream_as_caller(
+    name: &str,
+    req: &Request,
+    on_event: impl FnMut(Event) -> bool,
+) -> std::io::Result<()> {
+    let client = ClientOptions::new()
+        .security_qos_flags(SQOS_IMPERSONATION)
+        .open(name)?;
+    stream_with(client, req, on_event).await
+}
+
+async fn stream_with(
+    client: tokio::net::windows::named_pipe::NamedPipeClient,
+    req: &Request,
     mut on_event: impl FnMut(Event) -> bool,
 ) -> std::io::Result<()> {
-    let client = ClientOptions::new().open(name)?;
     let (r, mut w) = tokio::io::split(client);
     let mut line = serde_json::to_string(req).unwrap();
     line.push('\n');
@@ -521,6 +672,69 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
         assert!(ok, "끊김이 반복된 뒤에도 Ping 에 응답해야 함");
+    }
+
+    /// 가장을 허용한 접속(stream_as_caller)에서만 서버가 클라이언트 토큰을 받고, 그 토큰으로 스레드를 가장할 수 있다.
+    struct TokenProbe;
+    impl Handler for TokenProbe {
+        fn handle(&self, _: Request, _: Caller) -> Reply {
+            Reply::Once(vec![Event::Done {
+                message: "no-token-path".into(),
+            }])
+        }
+        fn handle_with_token(&self, _: Request, _: Caller, token: Option<ClientToken>) -> Reply {
+            let msg = match token {
+                None => "none".to_string(),
+                Some(t) => std::thread::spawn(move || {
+                    if !t.impersonate_current_thread() {
+                        return "impersonate-failed".to_string();
+                    }
+                    // 가장한 스레드에서도 이 사용자(같은 계정)로 파일을 쓸 수 있다
+                    let d = std::env::temp_dir().join(format!("kova_imp_{}", std::process::id()));
+                    let ok = std::fs::write(&d, b"x").is_ok();
+                    let _ = std::fs::remove_file(&d);
+                    format!("impersonated:{ok}")
+                })
+                .join()
+                .unwrap(),
+            };
+            Reply::Once(vec![Event::Done { message: msg }])
+        }
+    }
+
+    #[tokio::test]
+    async fn client_token_is_given_only_when_caller_allows_impersonation() {
+        let name = format!(r"\\.\pipe\kova-test-imp-{}", std::process::id());
+        let h: Arc<dyn Handler> = Arc::new(TokenProbe);
+        let n2 = name.clone();
+        tokio::spawn(async move {
+            let _ = serve(&n2, h).await;
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let got = |v: Vec<Event>| match v.first() {
+            Some(Event::Done { message }) => message.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(got(request(&name, &Request::Ping).await.unwrap()), "none");
+        let mut seen = Vec::new();
+        stream_as_caller(&name, &Request::Ping, |e| {
+            seen.push(e);
+            true
+        })
+        .await
+        .unwrap();
+        assert_eq!(got(seen), "impersonated:true");
+    }
+
+    #[test]
+    fn secret_is_sent_as_plain_string_but_hidden_in_debug() {
+        let r = Request::GdriveStoreToken {
+            token: Secret("tok-123".into()),
+        };
+        let line = serde_json::to_string(&r).unwrap();
+        assert_eq!(line, r#"{"cmd":"GdriveStoreToken","token":"tok-123"}"#);
+        assert_eq!(serde_json::from_str::<Request>(&line).unwrap(), r);
+        assert!(!format!("{r:?}").contains("tok-123"));
     }
 
     #[test]

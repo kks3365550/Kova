@@ -1,6 +1,8 @@
 //! Google 드라이브 오프사이트 백엔드("구글로 로그인" 방식).
 //! - 로그인: 루프백(127.0.0.1) + PKCE. 범위는 `drive.file` 하나뿐(Kova2가 만든 파일만 접근).
 //! - 토큰: DPAPI(머신 범위)로 보호해 설정 폴더에 저장 → 서비스(SYSTEM)가 사용자 로그인 없이 쓴다.
+//!   파일은 SYSTEM·Administrators 만 열 수 있게 잠근다(`secrets`). 일반 권한 앱은 `login_token` 결과를
+//!   IPC 로 서비스에 넘기고, 연결 상태·해제도 서비스에 요청한다(토큰 내용을 돌려주는 요청은 없다).
 //! - 업로드: 이어올리기(resumable) 세션, 폴더별 목록 캐시로 이름·크기가 같으면 건너뛴다.
 #![allow(clippy::result_large_err)] // ureq::Error 가 커서 클로저 반환형에서 경고
 use crate::repocrypto::dpapi;
@@ -21,7 +23,7 @@ const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
 const CHUNK: usize = 8 * 1024 * 1024;
 /// 동시에 올리는 파일 수 기본값(구글 드라이브 레이트 리밋을 고려해 보수적으로).
 pub const DEFAULT_UPLOAD_WORKERS: usize = 8;
-const TOKEN_FILE: &str = "gdrive_token.bin";
+pub(crate) const TOKEN_FILE: &str = "gdrive_token.bin";
 const CLIENT_FILE: &str = "gdrive_client.json";
 
 #[derive(Debug, Clone)]
@@ -86,7 +88,19 @@ fn now_secs() -> i64 {
 fn save_token(dir: &Path, t: &Token) -> Result<(), String> {
     let enc = dpapi::protect(&serde_json::to_vec(t).map_err(|e| e.to_string())?)?;
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    fs::write(dir.join(TOKEN_FILE), enc).map_err(|e| format!("토큰 저장 실패: {e}"))
+    // SYSTEM·Administrators 만 열 수 있게 잠가 쓴다(서비스에서. 일반 권한 시험에서는 그대로 쓴다)
+    crate::secrets::write_private(&dir.join(TOKEN_FILE), &enc)
+        .map_err(|e| format!("토큰 저장 실패: {e}"))
+}
+
+/// 앱이 구글 로그인으로 받은 토큰(`login_token` 결과)을 서비스가 저장한다. 형식만 확인하고 내용은 기록하지 않는다.
+pub fn store_token(dir: &Path, token_json: &str) -> Result<(), String> {
+    let t: Token = serde_json::from_str(token_json)
+        .map_err(|_| "토큰 형식이 올바르지 않습니다".to_string())?;
+    if t.refresh.trim().is_empty() || t.access.trim().is_empty() {
+        return Err("토큰 형식이 올바르지 않습니다".into());
+    }
+    save_token(dir, &t)
 }
 
 fn load_token(dir: &Path) -> Result<Token, String> {
@@ -196,6 +210,12 @@ fn q_escape(s: &str) -> String {
 // ---------- 로그인(루프백 + PKCE) ----------
 
 fn token_response(dir: &Path, body: &str, old_refresh: Option<&str>) -> Result<Token, String> {
+    let t = parse_token(body, old_refresh)?;
+    save_token(dir, &t)?;
+    Ok(t)
+}
+
+fn parse_token(body: &str, old_refresh: Option<&str>) -> Result<Token, String> {
     let v: serde_json::Value =
         serde_json::from_str(body).map_err(|e| format!("토큰 응답 오류: {e}"))?;
     if let Some(sc) = v.get("scope").and_then(|x| x.as_str()) {
@@ -210,13 +230,11 @@ fn token_response(dir: &Path, body: &str, old_refresh: Option<&str>) -> Result<T
         .as_str()
         .or(old_refresh)
         .ok_or("토큰 응답에 refresh_token 이 없습니다")?;
-    let t = Token {
+    Ok(Token {
         refresh: refresh.into(),
         access: access.into(),
         expires_at: now_secs() + v["expires_in"].as_i64().unwrap_or(3600),
-    };
-    save_token(dir, &t)?;
-    Ok(t)
+    })
 }
 
 fn page(msg: &str) -> String {
@@ -238,6 +256,30 @@ pub fn login(
     cancel: &AtomicBool,
     timeout: Duration,
 ) -> Result<(), String> {
+    let t = login_inner(ep, creds, open, cancel, timeout)?;
+    save_token(dir, &t)
+}
+
+/// 브라우저 로그인만 하고 토큰을 저장하지 않고 돌려준다(일반 권한 앱용: 결과를 IPC 로 서비스에 넘겨
+/// 서비스가 `store_token` 으로 보호해 저장한다). 돌려준 문자열은 화면·로그에 남기지 않는다.
+pub fn login_token(
+    ep: &Endpoints,
+    creds: &ClientCreds,
+    open: impl FnOnce(&str),
+    cancel: &AtomicBool,
+    timeout: Duration,
+) -> Result<String, String> {
+    let t = login_inner(ep, creds, open, cancel, timeout)?;
+    serde_json::to_string(&t).map_err(|e| e.to_string())
+}
+
+fn login_inner(
+    ep: &Endpoints,
+    creds: &ClientCreds,
+    open: impl FnOnce(&str),
+    cancel: &AtomicBool,
+    timeout: Duration,
+) -> Result<Token, String> {
     let listener =
         TcpListener::bind("127.0.0.1:0").map_err(|e| format!("로그인 대기 포트 열기 실패: {e}"))?;
     listener.set_nonblocking(true).map_err(|e| e.to_string())?;
@@ -317,7 +359,7 @@ pub fn login(
         ])
         .map_err(|e| format!("토큰 교환 실패: {e}"))?;
     let body = resp.into_string().map_err(|e| e.to_string())?;
-    token_response(dir, &body, None).map(|_| ())
+    parse_token(&body, None)
 }
 
 // ---------- 드라이브 클라이언트 ----------
@@ -1330,6 +1372,46 @@ mod tests {
         assert_eq!((t.refresh.as_str(), t.access.as_str()), ("RT1", "AT1"));
         disconnect(dir.path(), &ep);
         assert!(!is_connected(dir.path()));
+    }
+
+    /// 앱용 로그인은 토큰을 파일로 쓰지 않고 돌려주며, 서비스가 store_token 으로 저장한다.
+    #[test]
+    fn login_token_returns_token_without_saving_and_store_token_saves_it() {
+        let st = Arc::new(Mutex::new(Mock::default()));
+        let (_b, ep) = start_mock(st.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let cancel = AtomicBool::new(false);
+        let st2 = st.clone();
+        let tok = login_token(
+            &ep,
+            &creds(),
+            move |url| {
+                let q = query_map(url.split_once('?').unwrap().1);
+                st2.lock().unwrap().expect_challenge = Some(q["code_challenge"].clone());
+                let cb = format!(
+                    "{}?code=the-code&state={}",
+                    q["redirect_uri"],
+                    pct_encode(&q["state"])
+                );
+                std::thread::spawn(move || {
+                    let _ = agent().get(&cb).call();
+                });
+            },
+            &cancel,
+            Duration::from_secs(10),
+        )
+        .unwrap();
+        assert!(
+            !is_connected(dir.path()),
+            "앱 로그인은 토큰 파일을 쓰지 않는다"
+        );
+        assert!(store_token(dir.path(), "{\"bad\":1}").is_err());
+        assert!(store_token(dir.path(), "not json").is_err());
+        assert!(!is_connected(dir.path()));
+        store_token(dir.path(), &tok).unwrap();
+        assert!(is_connected(dir.path()));
+        let t = load_token(dir.path()).unwrap();
+        assert_eq!((t.refresh.as_str(), t.access.as_str()), ("RT1", "AT1"));
     }
 
     #[test]

@@ -1247,7 +1247,7 @@ fn to_wire(e: SvcEvent, base: u64) -> kova_ipc::Event {
     }
 }
 
-const PRIVILEGE_REQUIRED: &str = "관리자 권한이 필요한 요청입니다(스냅샷 삭제·저장소 정리·볼륨 이미지·작업 취소). Kova2 앱을 관리자 권한으로 실행한 뒤 다시 시도하세요";
+const PRIVILEGE_REQUIRED: &str = "관리자 권한이 필요한 요청입니다(스냅샷 삭제·저장소 정리·볼륨 이미지·작업 취소·복구 코드 내보내기). Kova2 앱을 관리자 권한으로 실행한 뒤 다시 시도하세요";
 
 impl IpcHandler {
     fn refuse(&self, what: &str) -> kova_ipc::Reply {
@@ -1355,7 +1355,252 @@ impl kova_ipc::Handler for IpcHandler {
                 });
                 Reply::Stream(out)
             }
+            // 구글 드라이브 토큰: 파일은 SYSTEM·관리자만 열 수 있으므로 일반 권한 앱의 연결·상태·해제를 대신한다.
+            // 토큰 내용을 돌려주는 요청은 없고, 토큰은 기록하지 않는다.
+            Request::GdriveStatus => Reply::Once(vec![Event::GdriveStatus {
+                connected: kova_core::gdrive::is_connected(&self.0 .0.config_dir),
+            }]),
+            Request::GdriveStoreToken { token } => {
+                let cfg = &self.0 .0.config_dir;
+                Reply::Once(vec![match kova_core::gdrive::store_token(cfg, &token.0) {
+                    Ok(()) => {
+                        kova_core::applog::write(cfg, "INFO", "구글 드라이브 연결: 토큰 저장");
+                        Event::Done {
+                            message: "구글 드라이브를 연결했습니다".into(),
+                        }
+                    }
+                    Err(e) => Event::Error { message: e },
+                }])
+            }
+            Request::GdriveDisconnect => {
+                // 토큰 폐기는 네트워크 요청이라 IPC 작업 스레드를 막지 않게 따로 돌린다
+                let cfg = self.0 .0.config_dir.clone();
+                let (tx, rx) = sync_channel(1);
+                std::thread::spawn(move || {
+                    kova_core::gdrive::disconnect(&cfg, &kova_core::gdrive::Endpoints::default());
+                    kova_core::applog::write(&cfg, "INFO", "구글 드라이브 연결 해제");
+                    let _ = tx.send(Event::Done {
+                        message: "연결을 해제했습니다.".into(),
+                    });
+                });
+                Reply::Stream(rx)
+            }
+            // 저장소 키: 키 폴더는 SYSTEM·관리자만 열 수 있으므로 켜기·복원·내보내기를 서비스가 한다(코드는 기록하지 않는다)
+            Request::EnableEncryption => {
+                let cfg = &self.0 .0.config_dir;
+                Reply::Once(vec![
+                    match kova_core::repocrypto::enable_all(&self.0 .0.store) {
+                        Ok(codes) => {
+                            kova_core::applog::write(
+                                cfg,
+                                "INFO",
+                                &format!("저장소 암호화 켜기: 새로 켠 저장소 {}곳", codes.len()),
+                            );
+                            Event::Encrypted {
+                                codes: codes.into_iter().map(kova_ipc::Secret).collect(),
+                            }
+                        }
+                        Err(e) => Event::Error { message: e },
+                    },
+                ])
+            }
+            Request::RestoreKey { code } => {
+                Reply::Once(vec![match kova_core::repocrypto::restore_keys(
+                    &self.0 .0.store,
+                    &code.0,
+                ) {
+                    Ok(m) => {
+                        kova_core::applog::write(&self.0 .0.config_dir, "INFO", &m);
+                        Event::Done { message: m }
+                    }
+                    Err(e) => Event::Error { message: e },
+                }])
+            }
+            Request::ExportRecoveryCodes => {
+                if !caller.privileged {
+                    return self.refuse("ExportRecoveryCodes");
+                }
+                Reply::Once(vec![
+                    match kova_core::repocrypto::recovery_entries(&self.0 .0.store) {
+                        Ok(v) => {
+                            kova_core::applog::write(
+                                &self.0 .0.config_dir,
+                                "INFO",
+                                &format!("복구 코드 내보내기(관리자): 저장소 {}곳", v.len()),
+                            );
+                            Event::RecoveryCodes {
+                                entries: v
+                                    .into_iter()
+                                    .map(|(name, repo, code)| kova_ipc::RecoveryEntry {
+                                        name,
+                                        repo,
+                                        code: kova_ipc::Secret(code),
+                                    })
+                                    .collect(),
+                            }
+                        }
+                        Err(e) => Event::Error { message: e },
+                    },
+                ])
+            }
+            // 가장 토큰이 없는 경로(handle 직접 호출·예전 앱)로 온 복원은 SYSTEM 권한으로 쓰지 않도록 거부한다
+            Request::Restore { .. } => Reply::Once(vec![Event::Error {
+                message: RESTORE_NEEDS_CALLER.into(),
+            }]),
+            Request::Drill { profile_id } => {
+                let Some(p) = self.0 .0.store.get(&profile_id) else {
+                    return Reply::Once(vec![Event::Error {
+                        message: format!("프로파일 없음: {profile_id}"),
+                    }]);
+                };
+                // 서비스 임시 폴더(SYSTEM 전용)에 복원해 보고 지운다. 오래 걸리므로 따로 돌린다
+                let (tx, rx) = sync_channel(1);
+                std::thread::spawn(move || {
+                    let text = kova_core::drill::run(&p, &std::env::temp_dir());
+                    let _ = tx.send(Event::Done { message: text });
+                });
+                Reply::Stream(rx)
+            }
         }
+    }
+
+    fn handle_with_token(
+        &self,
+        req: kova_ipc::Request,
+        caller: kova_ipc::Caller,
+        token: Option<kova_ipc::ClientToken>,
+    ) -> kova_ipc::Reply {
+        match req {
+            kova_ipc::Request::Restore {
+                repo,
+                session_id,
+                target,
+                only,
+            } => self.start_restore(repo, session_id, target, only, token),
+            other => self.handle(other, caller),
+        }
+    }
+}
+
+const RESTORE_NEEDS_CALLER: &str =
+    "복원을 요청한 사용자 권한을 확인하지 못했습니다. Kova2 앱을 최신 버전으로 업데이트하세요";
+
+fn same_path(a: &str, b: &str) -> bool {
+    let n = |s: &str| s.trim().trim_end_matches(['\\', '/']).replace('/', "\\");
+    n(a).eq_ignore_ascii_case(&n(b))
+}
+
+impl IpcHandler {
+    /// 암호화 저장소 복원(서비스 대행): 키는 SYSTEM 으로 미리 잡아 두고, 실제 읽기·쓰기는 요청한 사용자로 가장한
+    /// 스레드에서만 한다(일반 사용자가 SYSTEM 권한으로 아무 곳에나 쓰게 되지 않도록). 진행률을 흘리고 Done/Error 로 끝난다.
+    fn start_restore(
+        &self,
+        repo: String,
+        session_id: String,
+        target: Option<String>,
+        only: Option<Vec<String>>,
+        token: Option<kova_ipc::ClientToken>,
+    ) -> kova_ipc::Reply {
+        use kova_ipc::{Event, Reply};
+        let err = |m: String| Reply::Once(vec![Event::Error { message: m }]);
+        let Some(token) = token else {
+            return err(RESTORE_NEEDS_CALLER.into());
+        };
+        if !self
+            .0
+             .0
+            .store
+            .profiles()
+            .iter()
+            .any(|p| !p.repo_dir.is_empty() && same_path(&p.repo_dir, &repo))
+        {
+            return err("등록된 프로파일의 저장소만 서비스가 복원합니다".into());
+        }
+        let repo_path = PathBuf::from(&repo);
+        let target = match target {
+            Some(t) => match kova_core::restore_target::check(&t, &repo_path) {
+                Ok(p) => Some(p),
+                Err(e) => return err(format!("복원하지 않음: {e}")),
+            },
+            None => None,
+        };
+        let cfg = self.0 .0.config_dir.clone();
+        let (tx, rx) = sync_channel(64);
+        std::thread::spawn(move || {
+            let cancel = AtomicBool::new(false);
+            let run = || -> Result<String, String> {
+                let _lock = match kova_core::lock::RepoLock::acquire_wait(
+                    &repo_path,
+                    Duration::from_secs(5),
+                ) {
+                    Ok(l) => l,
+                    Err(kova_core::lock::LockError::Busy) => {
+                        return Err(
+                            "다른 작업이 저장소를 사용 중입니다. 잠시 후 다시 시도하세요".into(),
+                        )
+                    }
+                    Err(e) => return Err(format!("저장소 잠금 오류({e})")),
+                };
+                // 가장한 스레드는 키 파일을 열 수 없으므로 SYSTEM 으로 미리 읽어 둔다(작업이 끝나면 놓는다)
+                let _key = kova_core::repocrypto::hold_key(&repo_path)?;
+                let opts = kova_engine::ops::RestoreOptions {
+                    repo: repo_path.clone(),
+                    session_id: session_id.clone(),
+                    only,
+                    target: target.clone(),
+                };
+                let on_event = |ev: EngineEvent| {
+                    if let EngineEvent::RestoreProgress { done, total } = ev {
+                        if let Err(std::sync::mpsc::TrySendError::Disconnected(_)) =
+                            tx.try_send(Event::RestoreProgress {
+                                done: done as u64,
+                                total: total as u64,
+                            })
+                        {
+                            cancel.store(true, Ordering::Relaxed); // 앱이 연결을 끊음
+                        }
+                    }
+                };
+                let token = Arc::new(token);
+                let s = kova_core::secrets::run_in_setup_pool(
+                    move || token.impersonate_current_thread(),
+                    || kova_engine::ops::run_restore(&opts, &on_event, &cancel),
+                )?
+                .map_err(|e| e.to_string())?;
+                Ok(match &target {
+                    Some(t) => format!(
+                        "복원 완료: {} (항목 {}개, {:.0}초)",
+                        t.display(),
+                        s.total_files,
+                        s.elapsed_seconds
+                    ),
+                    None => format!(
+                        "원래 위치로 복원 완료 (항목 {}개, {:.0}초)",
+                        s.total_files, s.elapsed_seconds
+                    ),
+                })
+            };
+            let r = run();
+            kova_core::applog::write(
+                &cfg,
+                if r.is_ok() { "INFO" } else { "WARN" },
+                &format!(
+                    "복원(서비스 대행, 요청 사용자 권한) {} {session_id}: {}",
+                    repo_path.display(),
+                    match &r {
+                        Ok(m) => m.as_str(),
+                        Err(e) => e.as_str(),
+                    }
+                ),
+            );
+            let _ = tx.send(match r {
+                Ok(message) => Event::Done { message },
+                Err(e) => Event::Error {
+                    message: format!("복원 실패: {e}"),
+                },
+            });
+        });
+        Reply::Stream(rx)
     }
 }
 
@@ -1551,6 +1796,7 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn encryption_refuses_plain_backup_then_writes_only_ciphertext() {
+        let _g = KEY_ENV.lock().unwrap_or_else(|e| e.into_inner());
         let keys = tempfile::tempdir().unwrap();
         std::env::set_var("KOVA2_KEY_DIR", keys.path());
         let (d, s) = setup(true);
@@ -2111,6 +2357,117 @@ mod tests {
         // 모르는 종류는 권한과 무관하게 "알 수 없는 작업"
         assert!(first_error(h.handle(run_now("format", "p1"), admin))
             .is_some_and(|m| m.contains("알 수 없는")));
+    }
+
+    /// 일반 사용자 앱이 받은 구글 토큰을 서비스가 저장하고, 상태는 연결 여부만 돌려준다.
+    #[test]
+    fn gdrive_token_is_stored_by_service_and_status_reveals_only_connected() {
+        use kova_ipc::{Caller, Event, Handler, Request, Secret};
+        let (d, s) = setup(true);
+        let h = IpcHandler(s.clone());
+        let user = Caller { privileged: false };
+        let status = |h: &IpcHandler| match h.handle(Request::GdriveStatus, user) {
+            kova_ipc::Reply::Once(v) => v,
+            kova_ipc::Reply::Stream(_) => panic!("Once 여야 함"),
+        };
+        assert_eq!(status(&h), vec![Event::GdriveStatus { connected: false }]);
+        let bad = Request::GdriveStoreToken {
+            token: Secret("garbage".into()),
+        };
+        assert!(first_error(h.handle(bad, user)).is_some());
+        assert_eq!(status(&h), vec![Event::GdriveStatus { connected: false }]);
+        let tok = r#"{"refresh":"RT-secret","access":"AT-secret","expires_at":0}"#;
+        let ok = h.handle(
+            Request::GdriveStoreToken {
+                token: Secret(tok.into()),
+            },
+            user,
+        );
+        assert!(
+            matches!(ok, kova_ipc::Reply::Once(ref v) if matches!(v[..], [Event::Done { .. }]))
+        );
+        assert_eq!(status(&h), vec![Event::GdriveStatus { connected: true }]);
+        // 토큰은 로그에 남지 않는다
+        let log = fs::read_to_string(kova_core::applog::log_path(&d.path().join("cfg")))
+            .unwrap_or_default();
+        assert!(log.contains("토큰 저장"), "{log}");
+        assert!(!log.contains("RT-secret") && !log.contains("AT-secret"));
+    }
+
+    /// KOVA2_KEY_DIR 를 바꾸는 시험끼리 겹치지 않게 한다.
+    static KEY_ENV: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// 암호화 켜기·키 복원·복구 코드 내보내기는 서비스가 하고, 내보내기는 관리자만, 복구 코드는 로그에 없다.
+    #[test]
+    #[cfg(windows)]
+    fn encryption_keys_are_managed_by_service_and_export_needs_admin() {
+        use kova_ipc::{Caller, Event, Handler, Reply, Request, Secret};
+        let _g = KEY_ENV.lock().unwrap_or_else(|e| e.into_inner());
+        let keys = tempfile::tempdir().unwrap();
+        std::env::set_var("KOVA2_KEY_DIR", keys.path());
+        let (d, s) = setup(true);
+        let h = IpcHandler(s.clone());
+        let user = Caller { privileged: false };
+        let admin = Caller { privileged: true };
+        let once = |r: Reply| match r {
+            Reply::Once(v) => v,
+            Reply::Stream(_) => panic!("Once 여야 함"),
+        };
+        // 내보내기는 일반 사용자에게 거부
+        assert!(first_error(h.handle(Request::ExportRecoveryCodes, user))
+            .is_some_and(|m| m.contains("관리자 권한")));
+        // 켜기: 새로 켠 저장소의 복구 코드를 이때 한 번 돌려준다
+        let codes = match &once(h.handle(Request::EnableEncryption, user))[..] {
+            [Event::Encrypted { codes }] => codes.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(codes.len(), 1);
+        let line = codes[0].0.clone();
+        let code = line.rsplit(": ").next().unwrap().to_string();
+        assert!(kova_core::repocrypto::is_enabled(&d.path().join("repo")));
+        // 다시 켜면 이미 켠 저장소는 건너뛴다
+        assert!(matches!(
+            &once(h.handle(Request::EnableEncryption, user))[..],
+            [Event::Encrypted { codes }] if codes.is_empty()
+        ));
+        // 키 파일을 잃은 뒤 복구 코드로 되살린다(틀린 코드는 실패)
+        for f in fs::read_dir(keys.path()).unwrap() {
+            fs::remove_file(f.unwrap().path()).unwrap();
+        }
+        let restore = |c: &str| {
+            once(h.handle(
+                Request::RestoreKey {
+                    code: Secret(c.into()),
+                },
+                user,
+            ))
+        };
+        assert!(matches!(restore("00000000")[..], [Event::Error { .. }]));
+        assert!(matches!(restore(&code)[..], [Event::Done { .. }]));
+        assert_eq!(fs::read_dir(keys.path()).unwrap().count(), 1);
+        // 관리자는 내보낼 수 있다
+        match &once(h.handle(Request::ExportRecoveryCodes, admin))[..] {
+            [Event::RecoveryCodes { entries }] => {
+                assert_eq!(entries.len(), 1);
+                assert_eq!(entries[0].code.0, code);
+                assert_eq!(entries[0].name, "시험");
+            }
+            other => panic!("{other:?}"),
+        }
+        // 가장 토큰 없는 복원 요청은 거부(SYSTEM 권한으로 쓰지 않는다)
+        let req = Request::Restore {
+            repo: d.path().join("repo").to_string_lossy().into(),
+            session_id: "x".into(),
+            target: None,
+            only: None,
+        };
+        assert!(first_error(h.handle(req.clone(), admin)).is_some());
+        assert!(first_error(h.handle_with_token(req, admin, None)).is_some());
+        // 복구 코드는 로그에 남지 않는다
+        let log = fs::read_to_string(kova_core::applog::log_path(&d.path().join("cfg")))
+            .unwrap_or_default();
+        assert!(!log.contains(&code), "{log}");
+        std::env::remove_var("KOVA2_KEY_DIR");
     }
 
     #[test]

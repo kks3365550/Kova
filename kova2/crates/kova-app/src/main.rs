@@ -698,20 +698,29 @@ fn apply_settings(
     if gb > 100_000 {
         return Err("최소 여유 공간이 너무 큽니다 (최대 100000GB)".into());
     }
-    // 암호화를 켜면 프로파일별 저장소에 키를 만든다. 하나라도 실패하면 설정을 저장하지 않는다(다시 눌러도 안전: 이미 켠 저장소는 건너뜀)
+    // 암호화를 켜면 서비스가 프로파일별 저장소에 키를 만든다(키 폴더는 SYSTEM·관리자 전용). 하나라도 실패하면
+    // 설정을 저장하지 않는다(다시 눌러도 안전: 이미 켠 저장소는 건너뜀). 복구 코드는 새로 켠 이때 한 번만 받는다
     let mut codes = Vec::new();
-    if encrypt {
-        let mut done = std::collections::HashSet::new();
-        for p in store.profiles() {
-            if p.repo_dir.is_empty() || !done.insert(p.repo_dir.clone()) {
-                continue;
-            }
-            match kova_core::repocrypto::enable(std::path::Path::new(&p.repo_dir)) {
-                Ok(Some(code)) => codes.push(format!("{} 복구 코드: {}", p.name, code)),
-                Ok(None) => {}
-                Err(e) => return Err(format!("{} 저장소 암호화 실패: {}", p.name, e)),
-            }
+    let pending = store.profiles().iter().any(|p| {
+        !p.repo_dir.is_empty()
+            && !kova_core::repocrypto::is_enabled(std::path::Path::new(&p.repo_dir))
+    });
+    if encrypt && pending {
+        let res = ipc_once(&kova_ipc::Request::EnableEncryption);
+        if let Some(why) = send_failure(&res) {
+            return Err(format!("저장소 암호화 실패: {why}"));
         }
+        codes = res
+            .ok()
+            .into_iter()
+            .flatten()
+            .find_map(|e| match e {
+                kova_ipc::Event::Encrypted { codes } => {
+                    Some(codes.into_iter().map(|c| c.0).collect::<Vec<_>>())
+                }
+                _ => None,
+            })
+            .ok_or("저장소 암호화 실패: 서비스가 응답하지 않았습니다(서비스를 최신 버전으로 업데이트하세요)")?;
     }
     let mut s = store.settings();
     s.min_free_disk_gb = gb;
@@ -732,28 +741,26 @@ fn apply_settings(
     }
 }
 
-/// 이 PC에 키가 있는 암호화 저장소들의 복구 코드를 모아 복구 키트 파일로 저장한다.
-fn export_recovery_kit_to(
-    store: &kova_core::config::ConfigStore,
-    out_path: &std::path::Path,
-) -> Result<String, String> {
-    let mut entries = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    for p in store.profiles() {
-        if p.repo_dir.is_empty() || !seen.insert(p.repo_dir.clone()) {
-            continue;
-        }
-        let repo = std::path::Path::new(&p.repo_dir);
-        if !kova_core::repocrypto::is_enabled(repo) {
-            continue;
-        }
-        let code = kova_core::repocrypto::export_recovery_code(repo)
-            .map_err(|e| format!("{} 키 읽기 실패: {e}", p.name))?;
-        entries.push((p.name, p.repo_dir, code));
+/// 이 PC에 키가 있는 암호화 저장소들의 복구 코드를 서비스에서 받아(관리자 권한 앱만) 복구 키트 파일로 저장한다.
+fn export_recovery_kit_to(out_path: &std::path::Path) -> Result<String, String> {
+    let res = ipc_once(&kova_ipc::Request::ExportRecoveryCodes);
+    if let Some(why) = send_failure(&res) {
+        return Err(why);
     }
-    if entries.is_empty() {
-        return Err("암호화된 저장소가 없습니다. 먼저 저장소 암호화를 켜고 저장하세요".into());
-    }
+    let entries: Vec<(String, String, String)> = res
+        .ok()
+        .into_iter()
+        .flatten()
+        .find_map(|e| match e {
+            kova_ipc::Event::RecoveryCodes { entries } => Some(
+                entries
+                    .into_iter()
+                    .map(|x| (x.name, x.repo, x.code.0))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .ok_or("서비스가 응답하지 않았습니다(서비스를 최신 버전으로 업데이트하세요)")?;
     kova_core::repocrypto::write_recovery_kit(out_path, &entries)?;
     Ok(format!(
         "복구 키트 저장 완료 (암호화 저장소 {}곳): {}",
@@ -950,26 +957,76 @@ fn search_all_repos(
     out
 }
 
-/// 복구 코드로 이 PC의 키 파일을 다시 만든다. 암호화된 프로파일 저장소 중 코드가 맞는 곳마다 복원한다.
-fn restore_keys(store: &kova_core::config::ConfigStore, code: &str) -> Result<String, String> {
-    let mut ok = 0;
-    let mut seen = std::collections::HashSet::new();
-    for p in store.profiles() {
-        let repo = std::path::Path::new(&p.repo_dir);
-        if p.repo_dir.is_empty()
-            || !seen.insert(p.repo_dir.clone())
-            || !kova_core::repocrypto::is_enabled(repo)
-        {
-            continue;
-        }
-        if kova_core::repocrypto::restore_key(repo, code).is_ok() {
-            ok += 1;
-        }
+/// 복구 코드로 이 PC의 키 파일을 다시 만든다(키 폴더를 열 수 있는 서비스가 코드가 맞는 저장소마다 복원).
+fn restore_keys(code: &str) -> Result<String, String> {
+    ipc_done(&kova_ipc::Request::RestoreKey {
+        code: kova_ipc::Secret(code.to_string()),
+    })
+}
+
+/// 암호화 저장소 복원은 키를 가진 서비스가 한다(파일 쓰기는 이 사용자 권한으로). 진행률을 화면에 흘리고 결과 문구를 돌려준다.
+fn restore_via_service(
+    weak: &slint::Weak<MainWindow>,
+    repo: &str,
+    sid: &str,
+    target: Option<&std::path::Path>,
+    only: Option<Vec<String>>,
+) -> String {
+    let req = kova_ipc::Request::Restore {
+        repo: repo.to_string(),
+        session_id: sid.to_string(),
+        target: target.map(|t| t.to_string_lossy().into_owned()),
+        only,
+    };
+    let mut last = std::time::Instant::now() - std::time::Duration::from_secs(5);
+    let mut result: Option<Result<String, String>> = None;
+    let r = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| e.to_string())
+        .and_then(|rt| {
+            rt.block_on(kova_ipc::stream_as_caller(
+                kova_ipc::PIPE_NAME,
+                &req,
+                |e| match e {
+                    kova_ipc::Event::RestoreProgress { done, total } => {
+                        if last.elapsed() >= std::time::Duration::from_secs(1) {
+                            last = std::time::Instant::now();
+                            let _ = weak.upgrade_in_event_loop(move |w| {
+                                w.set_restore_text(format!("복원 중… {done}/{total}").into())
+                            });
+                        }
+                        true
+                    }
+                    kova_ipc::Event::Done { message } => {
+                        result = Some(Ok(message));
+                        false
+                    }
+                    kova_ipc::Event::Error { message } => {
+                        result = Some(Err(message));
+                        false
+                    }
+                    _ => true,
+                },
+            ))
+            .map_err(|e| e.to_string())
+        });
+    match (result, r) {
+        (Some(Ok(m)), _) => m,
+        (Some(Err(e)), _) if e.starts_with("복원") => e,
+        (Some(Err(e)), _) => format!("복원 실패: {e}"),
+        (None, Err(e)) => format!("복원 실패: Kova 서비스에 연결할 수 없습니다 ({e})"),
+        (None, Ok(())) => "복원 실패: 서비스 응답이 끊겼습니다".into(),
     }
-    if ok == 0 {
-        Err("맞는 암호화 저장소를 찾지 못했습니다. 코드를 다시 확인하고, 저장소 드라이브가 연결돼 있는지 보세요".into())
-    } else {
-        Ok(format!("키를 복원했습니다 (저장소 {ok}곳)"))
+}
+
+/// 암호화 저장소의 복구 훈련은 서비스가 서비스 임시 폴더에서 한다.
+fn drill_via_service(p: &kova_core::config::Profile) -> String {
+    match ipc_done(&kova_ipc::Request::Drill {
+        profile_id: p.id.clone(),
+    }) {
+        Ok(m) => m,
+        Err(e) => format!("{}: 복구 훈련 실패 — {e}", p.name),
     }
 }
 
@@ -1891,6 +1948,30 @@ fn send_failure(res: &std::io::Result<Vec<kova_ipc::Event>>) -> Option<String> {
     }
 }
 
+/// 서비스에 요청 하나를 보내고 응답을 모은다(화면 스레드가 아닌 곳에서 부른다).
+fn ipc_once(req: &kova_ipc::Request) -> std::io::Result<Vec<kova_ipc::Event>> {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(kova_ipc::request(kova_ipc::PIPE_NAME, req))
+}
+
+/// 결과 문구(`Done`)를 돌려주는 서비스 요청. 서비스에 닿지 못하거나 거절되면 Err(사유).
+fn ipc_done(req: &kova_ipc::Request) -> Result<String, String> {
+    let res = ipc_once(req);
+    if let Some(why) = send_failure(&res) {
+        return Err(why);
+    }
+    res.ok()
+        .into_iter()
+        .flatten()
+        .find_map(|e| match e {
+            kova_ipc::Event::Done { message } => Some(message),
+            _ => None,
+        })
+        .ok_or_else(|| "서비스가 응답하지 않았습니다(서비스를 최신 버전으로 업데이트하세요)".into())
+}
+
 /// 서비스에 작업을 요청한다. 요청이 거절되거나 서비스에 닿지 못하면 화면의 완료 카드에 실패를 띄운다.
 fn send(weak: slint::Weak<MainWindow>, kind: impl Into<String>, id: String) {
     let kind: String = kind.into();
@@ -2365,6 +2446,11 @@ fn restore_inplace_job(
     show(&weak, "원래 위치로 복원 중…".into());
     std::thread::spawn(move || {
         let repo_path = std::path::PathBuf::from(&repo);
+        if kova_core::repocrypto::is_enabled(&repo_path) {
+            let text = restore_via_service(&weak, &repo, &sid, None, only);
+            show(&weak, text);
+            return;
+        }
         let _lock = match kova_core::lock::RepoLock::acquire_wait(
             &repo_path,
             std::time::Duration::from_secs(5),
@@ -2425,6 +2511,11 @@ fn restore_snapshot_job(
     };
     show(&weak, "복원 시작…".into());
     std::thread::spawn(move || {
+        if kova_core::repocrypto::is_enabled(&repo_path) {
+            let text = restore_via_service(&weak, &repo, &sid, Some(&target), only);
+            show(&weak, text);
+            return;
+        }
         let _lock = match kova_core::lock::RepoLock::acquire_wait(
             &repo_path,
             std::time::Duration::from_secs(5),
@@ -2574,8 +2665,10 @@ fn restore_volume_job(weak: slint::Weak<MainWindow>, image: String, letter: Stri
 }
 
 fn main() -> Result<(), slint::PlatformError> {
-    kova_core::repocrypto::install_provider(); // 암호화된 저장소의 탐색·복원에 필요
-                                               // 관리자 권한으로 다시 실행된 업데이트 설치 도우미: 설치하고 결과를 파일에 적은 뒤 끝낸다
+    // 앱은 키를 읽지 않는다(키 폴더는 SYSTEM·관리자 전용): 암호화 저장소의 목록·찾아보기는 평문 매니페스트로,
+    // 내용(블롭)이 필요한 복원·복구 훈련은 서비스에 맡긴다
+    kova_core::repocrypto::install_service_only_provider();
+    // 관리자 권한으로 다시 실행된 업데이트 설치 도우미: 설치하고 결과를 파일에 적은 뒤 끝낸다
     let args: Vec<String> = std::env::args().collect();
     if let Some(i) = args.iter().position(|a| a == "--install-update") {
         let (text, installed) =
@@ -2848,9 +2941,23 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         });
     }
-    w.set_gdrive_connected(kova_core::gdrive::is_connected(
-        &kova_service::default_config_dir(),
-    ));
+    {
+        // 토큰 파일은 SYSTEM·관리자만 열 수 있으므로 연결 여부는 서비스에 묻는다(서비스가 없으면 파일 유무로 대신)
+        let weak = w.as_weak();
+        std::thread::spawn(move || {
+            let connected = match ipc_once(&kova_ipc::Request::GdriveStatus) {
+                Ok(evs) => evs.iter().find_map(|e| match e {
+                    kova_ipc::Event::GdriveStatus { connected } => Some(*connected),
+                    _ => None,
+                }),
+                Err(_) => None,
+            }
+            .unwrap_or_else(|| {
+                kova_core::gdrive::is_connected(&kova_service::default_config_dir())
+            });
+            let _ = weak.upgrade_in_event_loop(move |w| w.set_gdrive_connected(connected));
+        });
+    }
     {
         let weak = w.as_weak();
         w.on_connect_gdrive(move || {
@@ -2879,14 +2986,20 @@ fn main() -> Result<(), slint::PlatformError> {
             let weak = weak.clone();
             std::thread::spawn(move || {
                 let cancel = std::sync::atomic::AtomicBool::new(false);
-                let r = kova_core::gdrive::login(
+                // 로그인은 앱이 하고, 받은 토큰은 서비스가 SYSTEM·관리자 전용 파일로 저장한다
+                let r = kova_core::gdrive::login_token(
                     &kova_core::gdrive::Endpoints::default(),
                     &creds,
-                    &dir,
                     open_url,
                     &cancel,
                     std::time::Duration::from_secs(300),
-                );
+                )
+                .and_then(|token| {
+                    ipc_done(&kova_ipc::Request::GdriveStoreToken {
+                        token: kova_ipc::Secret(token),
+                    })
+                    .map(|_| ())
+                });
                 if r.is_ok() {
                     set_offsite_provider("gdrive");
                 }
@@ -2923,15 +3036,18 @@ fn main() -> Result<(), slint::PlatformError> {
             // 토큰 폐기는 네트워크 요청이라 화면이 멈추지 않게 별도 스레드에서 한다
             let weak = weak.clone();
             std::thread::spawn(move || {
-                kova_core::gdrive::disconnect(
-                    &kova_service::default_config_dir(),
-                    &kova_core::gdrive::Endpoints::default(),
-                );
-                set_offsite_provider("local");
+                // 토큰 폐기·삭제는 토큰 파일을 열 수 있는 서비스가 한다
+                let r = ipc_done(&kova_ipc::Request::GdriveDisconnect);
+                if r.is_ok() {
+                    set_offsite_provider("local");
+                }
                 GDRIVE_BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
-                let _ = weak.upgrade_in_event_loop(|w| {
-                    w.set_gdrive_connected(false);
-                    w.set_gdrive_text("연결을 해제했습니다.".into());
+                let _ = weak.upgrade_in_event_loop(move |w| match r {
+                    Ok(m) => {
+                        w.set_gdrive_connected(false);
+                        w.set_gdrive_text(m.into());
+                    }
+                    Err(e) => w.set_gdrive_text(format!("연결 해제 실패: {e}").into()),
                 });
             });
         });
@@ -3011,7 +3127,13 @@ fn main() -> Result<(), slint::PlatformError> {
                 let lines: Vec<String> = store
                     .profiles()
                     .iter()
-                    .map(|p| kova_core::drill::run(p, &scratch))
+                    .map(|p| {
+                        if kova_core::repocrypto::is_enabled(std::path::Path::new(&p.repo_dir)) {
+                            drill_via_service(p)
+                        } else {
+                            kova_core::drill::run(p, &scratch)
+                        }
+                    })
                     .collect();
                 let text = if lines.is_empty() {
                     "프로파일이 없습니다".to_string()
@@ -3029,11 +3151,10 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = w.as_weak();
         w.on_restore_key(move |code| {
-            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
             let msg = if app_locked() {
                 LOCKED_MSG.to_string()
             } else {
-                match restore_keys(&store, &code) {
+                match restore_keys(&code) {
                     Ok(m) | Err(m) => m,
                 }
             };
@@ -3044,7 +3165,6 @@ fn main() -> Result<(), slint::PlatformError> {
         });
         let weak = w.as_weak();
         w.on_export_recovery_kit(move || {
-            let store = kova_core::config::ConfigStore::new(kova_service::default_config_dir());
             let msg = if app_locked() {
                 LOCKED_MSG.to_string()
             } else {
@@ -3057,7 +3177,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
                 let out = base.join(format!("Kova2_Recovery_Kit_{secs}.txt"));
-                match export_recovery_kit_to(&store, &out) {
+                match export_recovery_kit_to(&out) {
                     Ok(m) | Err(m) => m,
                 }
             };
@@ -3893,33 +4013,6 @@ mod tests {
         assert_eq!(after.offsite_remote_path, "keep");
         assert_eq!(after.extra.get("unknown_key"), Some(&7.into()));
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn restore_keys_rebuilds_the_key_file_only_for_the_matching_repo() {
-        let base = std::env::temp_dir().join(format!("kova_rk_test_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&base);
-        let keys = base.join("keys");
-        std::fs::create_dir_all(&keys).unwrap();
-        std::env::set_var("KOVA2_KEY_DIR", &keys);
-        let repo = base.join("repo");
-        let store = kova_core::config::ConfigStore::new(base.join("cfg"));
-        let mut p = kova_core::config::Profile::new("p1", "시험");
-        p.repo_dir = repo.to_string_lossy().into();
-        store.upsert(p).unwrap();
-        let code = kova_core::repocrypto::enable(&repo).unwrap().unwrap();
-        for f in std::fs::read_dir(&keys).unwrap() {
-            std::fs::remove_file(f.unwrap().path()).unwrap();
-        }
-        assert!(restore_keys(&store, "00000000").is_err());
-        assert!(restore_keys(&store, &code).is_ok());
-        assert_eq!(std::fs::read_dir(&keys).unwrap().count(), 1);
-        let kit = base.join("kit.txt");
-        let msg = export_recovery_kit_to(&store, &kit).unwrap();
-        assert!(msg.contains("1곳"));
-        let kit_body = std::fs::read_to_string(&kit).unwrap();
-        assert!(kit_body.contains(&code) && kit_body.contains("시험"));
-        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
