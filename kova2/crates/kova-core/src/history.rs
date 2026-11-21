@@ -153,8 +153,15 @@ impl History {
         let mut seen: Vec<String> = vec![];
         let dir = self.repo.join("snapshots");
         let tx = self.conn.transaction()?;
+        // 폴더 목록을 끝까지 읽지 못했으면(드라이브 분리·권한·일시 오류) 사라진 행을 지우지 않는다
+        let mut listed_all = false;
         if let Ok(rd) = fs::read_dir(&dir) {
-            for e in rd.flatten() {
+            listed_all = true;
+            for e in rd {
+                let Ok(e) = e else {
+                    listed_all = false;
+                    continue;
+                };
                 let p = e.path();
                 if p.extension().is_none_or(|x| x != "json") {
                     continue;
@@ -201,7 +208,10 @@ impl History {
             let v = st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
             v
         };
-        for id in known.into_iter().filter(|k| !seen.contains(k)) {
+        for id in known
+            .into_iter()
+            .filter(|k| listed_all && !seen.contains(k))
+        {
             tx.execute("DELETE FROM snapshots_meta WHERE id=?1", [id])?;
             rep.removed += 1;
         }
@@ -360,6 +370,19 @@ mod tests {
         fs::remove_file(d.path().join("snapshots/s1.json")).unwrap();
         assert_eq!(h.sync_snapshots().unwrap().removed, 1);
         assert_eq!(h.list_snapshots().unwrap().len(), 1);
+    }
+
+    /// snapshots 폴더를 읽지 못하면(여기서는 폴더 자리에 파일) 기존 이력 행을 지우지 않는다.
+    #[test]
+    fn unreadable_snapshots_dir_keeps_rows() {
+        let d = tempfile::tempdir().unwrap();
+        manifest(d.path(), "s1", r#"{"total_files":1}"#);
+        let mut h = History::open(d.path()).unwrap();
+        h.sync_snapshots().unwrap();
+        fs::remove_dir_all(d.path().join("snapshots")).unwrap();
+        fs::write(d.path().join("snapshots"), b"not a dir").unwrap();
+        assert_eq!(h.sync_snapshots().unwrap().removed, 0);
+        assert!(h.get_snapshot("s1").unwrap().is_some());
     }
 
     #[test]

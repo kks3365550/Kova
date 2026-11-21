@@ -45,8 +45,8 @@ impl VerifyReport {
 pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
     let cas = CasStorage::new(repo)?;
     let mut rep = VerifyReport::default();
-    // 해시 -> 기대 길이(0 이면 미상). 같은 청크는 한 번만 검사한다.
-    let mut unique: BTreeMap<String, usize> = BTreeMap::new();
+    // 해시 -> (기대 길이(0 이면 미상), 구형 blob_id/sha256 여부). 같은 청크는 한 번만 검사한다.
+    let mut unique: BTreeMap<String, (usize, bool)> = BTreeMap::new();
     let dir = repo.join("snapshots");
     for e in fs::read_dir(&dir)? {
         let p = e?.path();
@@ -69,6 +69,26 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
         let sid = manifest.session_id();
         for fe in manifest.files() {
             rep.files += 1;
+            // 청크 정보가 없는 구형 항목은 blob_id/sha256 이 가리키는 블롭(파일 전체)을 검사한다
+            if fe.chunks.is_empty() && !fe.is_dir {
+                if let Some(id) = fe.blob_id.clone().or(fe.sha256.clone()) {
+                    let found = [fe.blob_id.as_ref(), fe.sha256.as_ref()]
+                        .into_iter()
+                        .flatten()
+                        .find(|h| cas.has_blob(h))
+                        .cloned();
+                    match found {
+                        Some(h) => {
+                            unique.entry(h).or_insert((fe.size as usize, true));
+                        }
+                        None => rep.problems.push(Problem::MissingBlob {
+                            snapshot: sid.clone(),
+                            path: fe.path.clone(),
+                            hash: id,
+                        }),
+                    }
+                }
+            }
             for c in fe.chunks {
                 if !cas.has_blob(&c.hash) {
                     rep.problems.push(Problem::MissingBlob {
@@ -77,7 +97,7 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
                         hash: c.hash.clone(),
                     });
                 }
-                unique.entry(c.hash).or_insert(c.length);
+                unique.entry(c.hash).or_insert((c.length, false));
             }
         }
     }
@@ -85,9 +105,16 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
     if deep {
         let bad: Vec<Problem> = unique
             .par_iter()
-            .filter_map(|(hash, len)| {
+            .filter_map(|(hash, (len, legacy))| {
                 let comp = match cas.read_blob(hash) {
                     Ok(c) => c,
+                    // 있다고 나오는데 읽지 못하면(팩 읽기 IO 오류·잘린 팩 등) 손상으로 보고한다
+                    Err(e) if cas.has_blob(hash) => {
+                        return Some(Problem::CorruptBlob {
+                            hash: hash.clone(),
+                            reason: format!("읽기 실패: {}", e),
+                        })
+                    }
                     Err(_) => return None, // 없는 청크는 위에서 이미 MissingBlob 으로 보고됨
                 };
                 let raw = match cas.decode_blob(&comp, hash) {
@@ -105,7 +132,16 @@ pub fn verify_repo(repo: &Path, deep: bool) -> io::Result<VerifyReport> {
                         reason: format!("길이 불일치: {} != {}", raw.len(), len),
                     });
                 }
-                if &hasher::hash_bytes(&raw) != hash {
+                // 구형 blob_id/sha256 은 해시 종류가 BLAKE3 또는 SHA-256 일 수 있다
+                let sha_ok = || {
+                    use sha2::Digest;
+                    sha2::Sha256::digest(&raw)
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>()
+                        .eq_ignore_ascii_case(hash)
+                };
+                if !hasher::hash_bytes(&raw).eq_ignore_ascii_case(hash) && !(*legacy && sha_ok()) {
                     return Some(Problem::CorruptBlob {
                         hash: hash.clone(),
                         reason: "해시 불일치".into(),
@@ -201,6 +237,58 @@ mod tests {
         .unwrap();
         let r = verify_repo(d.path(), true).unwrap();
         assert!(matches!(r.problems[0], Problem::CorruptBlob { .. }));
+    }
+
+    /// 청크 정보 없는 구형 항목은 blob_id/sha256 블롭을 검사한다(없으면 MissingBlob, SHA-256 해시도 인정).
+    #[test]
+    fn legacy_blob_id_and_sha256_entries_are_checked() {
+        use sha2::Digest;
+        let d = tempfile::tempdir().unwrap();
+        let cas = CasStorage::new(d.path()).unwrap();
+        let data = b"legacy whole-file blob";
+        let sha: String = sha2::Sha256::digest(data)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        cas.save_blob(&sha, &compressor::compress(data, 3).unwrap())
+            .unwrap();
+        let missing = "e".repeat(64);
+        fs::write(
+            d.path().join("snapshots").join("old.json"),
+            format!(
+                r#"{{"id":"old","files":[{{"path":"a","size":{},"sha256":"{sha}"}},{{"path":"b","size":5,"blob_id":"{missing}"}}]}}"#,
+                data.len()
+            ),
+        )
+        .unwrap();
+        let r = verify_repo(d.path(), true).unwrap();
+        assert_eq!(r.problems.len(), 1, "{:?}", r.problems);
+        assert!(
+            matches!(&r.problems[0], Problem::MissingBlob { hash, .. } if *hash == missing),
+            "{:?}",
+            r.problems
+        );
+    }
+
+    /// 있다고 나오는 블롭을 읽지 못하면(IO 오류) 깊은 검사에서 손상으로 보고한다.
+    #[test]
+    fn unreadable_blob_is_reported_as_corrupt() {
+        let (d, hash) = make_repo(b"data");
+        let p = d
+            .path()
+            .join("blobs")
+            .join(&hash[..2])
+            .join(format!("{}.blob", hash));
+        fs::remove_file(&p).unwrap();
+        fs::create_dir_all(&p).unwrap(); // 파일 자리에 폴더 → 열기 실패
+        let r = verify_repo(d.path(), true).unwrap();
+        assert!(
+            r.problems.iter().any(
+                |x| matches!(x, Problem::CorruptBlob { reason, .. } if reason.contains("읽기 실패"))
+            ),
+            "{:?}",
+            r.problems
+        );
     }
 
     #[test]

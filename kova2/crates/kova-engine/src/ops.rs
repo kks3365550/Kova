@@ -2,7 +2,10 @@
 //! - 진행 상황은 콜백(`on_event`)으로 전달하고, 취소는 `cancel` 플래그로 받는다.
 //! - 취소되면 매니페스트를 쓰지 않는다(반쪽짜리 스냅샷이 생기지 않는다).
 //! - 복원은 청크마다 BLAKE3 해시를 다시 확인한다(변조·손상된 데이터를 조용히 복원하지 않는다).
-use crate::storage::{CasStorage, FileChunkInfo, FileEntry, SnapshotManifest};
+use crate::storage::{
+    manifest_sources, norm_source, valid_session_id, CasStorage, FileChunkInfo, FileEntry,
+    SnapshotManifest,
+};
 use crate::{chunker, hasher, scanner};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -98,6 +101,8 @@ pub struct BackupSummary {
     pub unmodified_files: usize,
     /// 읽기·압축·저장에 실패해 스냅샷에서 빠진 파일(상대 경로)
     pub skipped_files: Vec<String>,
+    /// 기본 제외 규칙(temp/logs/cache 등 이름)으로 건너뛴 폴더(전체 경로)
+    pub excluded_dirs: Vec<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -127,6 +132,26 @@ fn now_progress(
         new_files: n,
         modified_files: m,
         unmodified_files: u,
+    }
+}
+
+/// 새 스냅샷 ID: 밀리초까지의 시각 + 난수 4자리(16진). 이미 있으면 다시 만든다.
+/// 공유 저장소에서 두 프로파일이 같은 초에 돌아도 앞 스냅샷이 덮어써지지 않는다.
+fn new_session_id(snapshots_dir: &Path) -> String {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let now = chrono::Local::now();
+        let nanos = now.timestamp_subsec_nanos() as u64;
+        let mix = nanos
+            ^ ((std::process::id() as u64) << 20)
+            ^ SEQ
+                .fetch_add(1, Ordering::Relaxed)
+                .wrapping_mul(0x9E37_79B9);
+        let mix = mix ^ (mix >> 16);
+        let id = format!("{}_{:04x}", now.format("%Y%m%d_%H%M%S_%3f"), mix & 0xFFFF);
+        if !snapshots_dir.join(format!("{id}.json")).exists() {
+            return id;
+        }
     }
 }
 
@@ -165,15 +190,22 @@ fn run_backup_inner(
     if sources.is_empty() {
         return Err(msg("no source paths given"));
     }
-    let sid = opts
-        .session_id
-        .clone()
-        .unwrap_or_else(|| chrono::Local::now().format("%Y%m%d_%H%M%S").to_string());
-    // 세션 ID 는 매니페스트 파일 이름이 되므로 경로 조각이어야 한다
-    if sid.is_empty() || sid.contains(['/', '\\', ':']) || sid == "." || sid == ".." {
-        return Err(msg(format!("invalid session id: {}", sid)));
+    // 세션 ID 는 매니페스트 파일 이름이 되므로 허용 문자만 쓴다
+    if let Some(s) = &opts.session_id {
+        if !valid_session_id(s) {
+            return Err(msg(format!("invalid session id: {}", s)));
+        }
     }
     let cas = CasStorage::new(&opts.repo)?;
+    let snapshots_dir = opts.repo.join("snapshots");
+    let mut sid = match &opts.session_id {
+        Some(s) => s.clone(),
+        None => new_session_id(&snapshots_dir),
+    };
+    // 이미 있는 스냅샷을 덮어쓰지 않는다(지정한 ID 가 겹치면 시작 전에 거부)
+    if snapshots_dir.join(format!("{sid}.json")).exists() {
+        return Err(msg(format!("snapshot id already exists: {sid}")));
+    }
 
     on_event(Event::Phase {
         phase: "scanning",
@@ -186,20 +218,54 @@ fn run_backup_inner(
         Some(_) => return Err(msg("scan_from 길이가 sources 와 다릅니다")),
         None => sources,
     };
-    let items: Vec<scanner::ScannedItem> = scan_roots
+    let scanned: Vec<io::Result<(Vec<scanner::ScannedItem>, scanner::ScanReport)>> = scan_roots
         .par_iter()
         .enumerate()
         .map(|(idx, src)| {
-            let mut v = scanner::scan_directory(src, &exclude_filter);
+            let (mut v, rep) = scanner::scan_directory_report(src, &exclude_filter)?;
             for it in v.iter_mut() {
                 it.src = idx as u32;
             }
-            v
+            Ok((v, rep))
         })
-        .collect::<Vec<_>>()
-        .into_iter()
-        .flatten()
         .collect();
+    let mut items: Vec<scanner::ScannedItem> = Vec::new();
+    let mut scan_errors: Vec<String> = Vec::new();
+    let mut excluded_dirs: Vec<String> = Vec::new();
+    for (i, r) in scanned.into_iter().enumerate() {
+        // 원본 자체를 읽지 못하면(접근 거부 등) 빈 스냅샷을 "성공"으로 남기지 않고 실패한다
+        let (v, rep) = r.map_err(|e| {
+            msg(format!(
+                "원본 경로를 읽을 수 없음: {} ({})",
+                sources[i].display(),
+                e
+            ))
+        })?;
+        items.extend(v);
+        let label = |p: String| {
+            sources[i]
+                .join(p.replace('/', std::path::MAIN_SEPARATOR_STR))
+                .display()
+                .to_string()
+        };
+        scan_errors.extend(rep.errors.into_iter().map(|e| format!("{e} (scan)")));
+        excluded_dirs.extend(rep.default_excluded.into_iter().map(label));
+    }
+    if !excluded_dirs.is_empty() {
+        on_event(Event::Phase {
+            phase: "scanning",
+            message: format!(
+                "기본 제외 폴더 {}개를 건너뜀(temp/logs/cache 등): {}",
+                excluded_dirs.len(),
+                excluded_dirs
+                    .iter()
+                    .take(5)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        });
+    }
     on_event(Event::Phase {
         phase: "indexing",
         message: format!(
@@ -219,7 +285,8 @@ fn run_backup_inner(
     let new_files = AtomicUsize::new(0);
     let modified_files = AtomicUsize::new(0);
     let unmodified_files = AtomicUsize::new(0);
-    let skipped: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    // 스캔 중 읽지 못한 항목(접근 거부 등)도 빠진 파일로 집계한다
+    let skipped: Mutex<Vec<String>> = Mutex::new(scan_errors);
 
     let blob_start = Instant::now();
     let existing_blobs = cas.get_all_blob_hashes();
@@ -232,29 +299,37 @@ fn run_backup_inner(
         ),
     });
 
-    // 가장 최근 스냅샷으로 증분 빠른 경로 지도를 만든다
+    // 증분 빠른 경로 지도: 원본 경로 집합이 같고 같은 프로파일(또는 프로파일 기록이 없는 구형)인
+    // 가장 최근 스냅샷만 기준으로 쓴다. 키는 (원본 경로, 상대 경로)라 원본 목록 순서가 바뀌어도
+    // 다른 원본의 청크를 재사용하지 않는다.
+    let src_strs: Vec<String> = sources
+        .iter()
+        .map(|s| s.to_string_lossy().to_string())
+        .collect();
+    let src_keys: Vec<String> = src_strs.iter().map(|s| norm_source(s)).collect();
+    let file_key =
+        |src: &str, rel: &str| format!("{}|{}", src, rel.replace('\\', "/").to_lowercase());
     let mut prev_files_map: HashMap<String, FileEntry> = HashMap::new();
-    for manifest in cas.get_recent_manifests_for_profile(1, opts.profile_id.as_deref()) {
-        for mut entry in manifest.files() {
-            if entry.is_dir {
+    if let Some(manifest) = cas.baseline_manifest(opts.profile_id.as_deref(), &src_strs) {
+        let prev_srcs: Vec<String> = manifest_sources(&manifest)
+            .iter()
+            .map(|s| norm_source(s))
+            .collect();
+        for entry in manifest.files() {
+            // 구형 매니페스트의 blob_id/sha256(청크 정보 없음)은 해시 종류를 알 수 없으므로 재사용하지 않고 다시 청킹한다
+            if entry.is_dir || (entry.chunks.is_empty() && entry.size > 0) {
                 continue;
             }
-            if entry.chunks.is_empty() {
-                if let Some(bid) = entry.blob_id.as_ref().or(entry.sha256.as_ref()) {
-                    entry.chunks.push(FileChunkInfo {
-                        hash: bid.clone(),
-                        offset: 0,
-                        length: entry.size as usize,
-                        compressed_length: 0,
-                    });
-                }
-            }
-            // 같은 상대경로가 서로 다른 원본에 있을 수 있으므로 (원본 번호, 경로)를 키로 쓴다
-            let key = format!(
-                "{}|{}",
-                entry.src.unwrap_or(0),
-                entry.path.replace('\\', "/").to_lowercase()
-            );
+            // 원본 번호가 없는 구형 항목은 원본이 하나일 때만 어느 원본인지 확정할 수 있다
+            let src = match entry.src {
+                Some(i) => prev_srcs.get(i as usize),
+                None if prev_srcs.len() == 1 => prev_srcs.first(),
+                None => None,
+            };
+            let Some(src) = src else {
+                continue;
+            };
+            let key = file_key(src, &entry.path);
             prev_files_map.entry(key).or_insert(entry);
         }
     }
@@ -290,11 +365,7 @@ fn run_backup_inner(
             if cancel.load(Ordering::Relaxed) {
                 return None;
             }
-            let key = format!(
-                "{}|{}",
-                item.src,
-                item.rel_path.replace('\\', "/").to_lowercase()
-            );
+            let key = file_key(&src_keys[item.src as usize], &item.rel_path);
             if let Some(prev) = prev_files_map.get(&key) {
                 let diff = prev.modified.abs_diff(item.modified);
                 let mtime_match = diff <= 5
@@ -341,44 +412,46 @@ fn run_backup_inner(
                 None
             };
 
-            let chunks_raw = match chunker::chunk_file(&item.path) {
-                Ok(c) => c,
-                Err(e) => return skip(format!("read: {}", e)),
-            };
-            let file_size: u64 = chunks_raw.iter().map(|c| c.length as u64).sum();
-            // 청크마다 압축·저장이 독립이라 병렬 처리(큰 파일 하나도 여러 코어 사용). 순서는 유지된다
-            let stored: Result<Vec<FileChunkInfo>, String> = chunks_raw
-                .into_par_iter()
-                .map(|c| {
-                    total_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
-                    if cas.has_blob(&c.hash) {
-                        dedup_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
-                        return Ok(FileChunkInfo {
+            // 큰 파일도 통째로 메모리에 올리지 않도록 청크 묶음 단위로 읽어 바로 압축·저장한다
+            let mut file_chunks: Vec<FileChunkInfo> = Vec::new();
+            let mut file_size: u64 = 0;
+            let streamed = chunker::chunk_file_batches(&item.path, |chunks_raw| {
+                file_size += chunks_raw.iter().map(|c| c.length as u64).sum::<u64>();
+                // 청크마다 압축·저장이 독립이라 병렬 처리(큰 파일 하나도 여러 코어 사용). 순서는 유지된다
+                let stored: Result<Vec<FileChunkInfo>, String> = chunks_raw
+                    .into_par_iter()
+                    .map(|c| {
+                        total_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
+                        if cas.has_blob(&c.hash) {
+                            dedup_bytes.fetch_add(c.length as u64, Ordering::Relaxed);
+                            return Ok(FileChunkInfo {
+                                hash: c.hash,
+                                offset: c.offset,
+                                length: c.length,
+                                compressed_length: 0,
+                            });
+                        }
+                        let compressed = cas
+                            .encode_blob(&c.data, &c.hash, opts.zstd_level)
+                            .map_err(|e| format!("compress: {}", e))?;
+                        let comp_len = compressed.len();
+                        compressed_bytes.fetch_add(comp_len as u64, Ordering::Relaxed);
+                        cas.stage_blob(&c.hash, compressed)
+                            .map_err(|e| format!("save blob: {}", e))?;
+                        Ok(FileChunkInfo {
                             hash: c.hash,
                             offset: c.offset,
                             length: c.length,
-                            compressed_length: 0,
-                        });
-                    }
-                    let compressed = cas
-                        .encode_blob(&c.data, &c.hash, opts.zstd_level)
-                        .map_err(|e| format!("compress: {}", e))?;
-                    let comp_len = compressed.len();
-                    compressed_bytes.fetch_add(comp_len as u64, Ordering::Relaxed);
-                    cas.stage_blob(&c.hash, compressed)
-                        .map_err(|e| format!("save blob: {}", e))?;
-                    Ok(FileChunkInfo {
-                        hash: c.hash,
-                        offset: c.offset,
-                        length: c.length,
-                        compressed_length: comp_len,
+                            compressed_length: comp_len,
+                        })
                     })
-                })
-                .collect();
-            let file_chunks = match stored {
-                Ok(v) => v,
-                Err(why) => return skip(why),
-            };
+                    .collect();
+                file_chunks.extend(stored?);
+                Ok(())
+            });
+            if let Err(why) = streamed {
+                return skip(why);
+            }
             report(
                 processed_files.fetch_add(1, Ordering::Relaxed) + 1,
                 &item.rel_path,
@@ -423,12 +496,8 @@ fn run_backup_inner(
     let ded_b = dedup_bytes.load(Ordering::Relaxed);
     let cmp_b = compressed_bytes.load(Ordering::Relaxed);
     let elapsed = start_time.elapsed().as_secs_f64();
-    let src_strs: Vec<String> = sources
-        .iter()
-        .map(|s| s.to_string_lossy().to_string())
-        .collect();
 
-    let manifest = SnapshotManifest {
+    let mut manifest = SnapshotManifest {
         id: Some(sid.clone()),
         session_id: Some(sid.clone()),
         profile_id: opts.profile_id.clone(),
@@ -461,7 +530,17 @@ fn run_backup_inner(
         files: Some(all_entries),
         entries: None,
     };
-    cas.save_manifest(&manifest)?;
+    // 같은 ID 가 그 사이에 생겼으면(동시 실행) 자동 ID 는 새로 만들어 다시 쓰고, 지정 ID 는 거부한다
+    loop {
+        match cas.save_manifest(&manifest) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && opts.session_id.is_none() => {
+                sid = new_session_id(&snapshots_dir);
+                manifest.id = Some(sid.clone());
+                manifest.session_id = Some(sid.clone());
+            }
+            r => break r?,
+        }
+    }
 
     Ok(BackupSummary {
         session_id: sid,
@@ -475,6 +554,7 @@ fn run_backup_inner(
         modified_files: modified_files.load(Ordering::Relaxed),
         unmodified_files: unmodified_files.load(Ordering::Relaxed),
         skipped_files: skipped.into_inner().unwrap(),
+        excluded_dirs,
     })
 }
 
@@ -543,7 +623,7 @@ pub fn browse_snapshot(
     query: &str,
     limit: usize,
 ) -> Result<Vec<BrowseItem>, EngineError> {
-    if session_id.is_empty() || session_id.contains(['/', '\\', ':']) {
+    if !valid_session_id(session_id) {
         return Err(msg(format!("invalid session id: {session_id}")));
     }
     let cas = CasStorage::new(repo)?;
@@ -691,7 +771,7 @@ pub fn run_restore(
 ) -> Result<RestoreSummary, EngineError> {
     let start = Instant::now();
     let cas = CasStorage::new(&opts.repo)?;
-    if opts.session_id.is_empty() || opts.session_id.contains(['/', '\\', ':']) {
+    if !valid_session_id(&opts.session_id) {
         return Err(msg(format!("invalid session id: {}", opts.session_id)));
     }
     let manifest = cas.load_manifest(&opts.session_id)?;
@@ -840,15 +920,45 @@ fn restore_one(cas: &CasStorage, base: &RestoreBase, entry: &FileEntry) -> Resul
             entry.size
         ));
     }
+    // 기존 파일(원위치 복원의 원본)을 먼저 비우지 않는다: 같은 폴더의 임시 파일에 쓰고 모든 청크를
+    // 검증한 뒤에만 이름 바꾸기로 바꿔 놓는다. 실패하면 임시 파일만 지우고 원본은 그대로 둔다.
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
+    let tmp_name = format!(
+        ".{}.kova-restore-{}-{}.tmp",
+        file_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default(),
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    );
+    let tmp_path = file_path.with_file_name(tmp_name);
+    let result = write_restored(cas, entry, &file_path, &tmp_path).and_then(|()| {
+        fs::rename(&tmp_path, &file_path)
+            .map_err(|e| format!("Cannot replace file {}: {}", file_path.display(), e))
+    });
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    result
+}
+
+/// 복원 내용을 `tmp_path` 에 쓰고 청크 해시·길이·전체 크기를 검증한다(성공하면 파일은 닫힌 상태).
+fn write_restored(
+    cas: &CasStorage,
+    entry: &FileEntry,
+    file_path: &Path,
+    tmp_path: &Path,
+) -> Result<(), String> {
     // 폴더는 복원 시작 때 이미 만들어 두었으니, 없을 때(일부만 복원 등)에만 만든다. 파일마다 폴더를 확인하면
     // 같은 폴더에 동시에 접근하는 스레드끼리 서로 기다려 크게 느려진다
-    let mut file = match File::create(&file_path) {
+    let mut file = match File::create(tmp_path) {
         Ok(f) => f,
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
-            if let Some(parent) = file_path.parent() {
+            if let Some(parent) = tmp_path.parent() {
                 let _ = fs::create_dir_all(parent);
             }
-            File::create(&file_path)
+            File::create(tmp_path)
                 .map_err(|e| format!("Cannot create file {}: {}", file_path.display(), e))?
         }
         Err(e) => return Err(format!("Cannot create file {}: {}", file_path.display(), e)),
@@ -876,10 +986,23 @@ fn restore_one(cas: &CasStorage, base: &RestoreBase, entry: &FileEntry) -> Resul
             })?;
         }
     } else {
+        let mut written = 0u64;
         for c in &entry.chunks {
             let raw = load_chunk(cas, c)?;
+            if c.length != 0 && raw.len() != c.length {
+                return Err(format!("Chunk length mismatch for blob {}", c.hash));
+            }
             file.write_all(&raw)
                 .map_err(|e| format!("Write failed for {}: {}", file_path.display(), e))?;
+            written += raw.len() as u64;
+        }
+        if written != entry.size {
+            return Err(format!(
+                "Size mismatch for {}: restored {} bytes, expected {}",
+                file_path.display(),
+                written,
+                entry.size
+            ));
         }
     }
     // 원래 수정 시각 복원 (실패해도 복원 자체는 성공)
@@ -1362,6 +1485,275 @@ mod tests {
                 exclude: vec![],
                 profile_id: None,
                 scan_from: None,
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        );
+        assert!(r.is_err());
+    }
+
+    fn opts(
+        sources: Vec<PathBuf>,
+        repo: &Path,
+        sid: Option<&str>,
+        pid: Option<&str>,
+    ) -> BackupOptions {
+        BackupOptions {
+            sources,
+            repo: repo.to_path_buf(),
+            session_id: sid.map(String::from),
+            zstd_level: 3,
+            exclude: vec![],
+            profile_id: pid.map(String::from),
+            scan_from: None,
+        }
+    }
+
+    fn run(o: &BackupOptions) -> BackupSummary {
+        run_backup(o, &no_events, &AtomicBool::new(false)).unwrap()
+    }
+
+    fn set_mtime(p: &Path, secs: u64) {
+        File::options()
+            .write(true)
+            .open(p)
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(secs))
+            .unwrap();
+    }
+
+    /// 원위치 복원이 실패하면(변조된 블롭) 현재 파일을 자르거나 바꾸지 않고, 임시 파일도 남기지 않는다.
+    #[test]
+    fn failed_in_place_restore_keeps_original_file() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        let f = src.join("doc.txt");
+        fs::write(&f, "backed up version").unwrap();
+        let repo = d.path().join("repo");
+        backup(&src, &repo, "t1");
+        fs::write(&f, "current precious version").unwrap();
+        let cas = CasStorage::new(&repo).unwrap();
+        let hash = cas.load_manifest("t1").unwrap().files()[0].chunks[0]
+            .hash
+            .clone();
+        fs::remove_dir_all(repo.join("packs")).unwrap();
+        fs::create_dir_all(cas.blob_path(&hash).parent().unwrap()).unwrap();
+        fs::write(
+            cas.blob_path(&hash),
+            compressor::compress(b"evil data", 3).unwrap(),
+        )
+        .unwrap();
+        let r = run_restore(
+            &RestoreOptions {
+                repo: repo.clone(),
+                session_id: "t1".into(),
+                only: None,
+                target: None,
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        );
+        assert!(r.is_err());
+        assert_eq!(fs::read_to_string(&f).unwrap(), "current precious version");
+        let names: Vec<String> = fs::read_dir(&src)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+            .collect();
+        assert_eq!(names, vec!["doc.txt"], "임시 파일이 남음");
+        // 블롭이 정상이면 원위치 복원이 기존 파일을 백업 내용으로 바꾼다
+        fs::remove_file(cas.blob_path(&hash)).unwrap();
+        let o = opts(vec![src.clone()], &repo, Some("t2"), None);
+        fs::write(&f, "backed up version").unwrap();
+        run(&o);
+        fs::write(&f, "changed again").unwrap();
+        run_restore(
+            &RestoreOptions {
+                repo,
+                session_id: "t2".into(),
+                only: None,
+                target: None,
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "backed up version");
+    }
+
+    /// 자동 ID 는 같은 초에 연달아 돌아도 겹치지 않고, 이미 있는 ID 를 지정하면 덮어쓰지 않고 거부한다.
+    #[test]
+    fn snapshot_ids_never_collide_or_overwrite() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        make_tree(&src);
+        let repo = d.path().join("repo");
+        let o = opts(vec![src.clone()], &repo, None, Some("p1"));
+        let ids: Vec<String> = (0..3).map(|_| run(&o).session_id).collect();
+        assert!(
+            ids[0] != ids[1] && ids[1] != ids[2] && ids[0] != ids[2],
+            "{ids:?}"
+        );
+        for id in &ids {
+            assert!(valid_session_id(id), "{id}");
+            assert!(repo.join("snapshots").join(format!("{id}.json")).is_file());
+        }
+        let before = fs::read(repo.join("snapshots").join(format!("{}.json", ids[0]))).unwrap();
+        let dup = opts(vec![src], &repo, Some(&ids[0]), Some("p2"));
+        assert!(run_backup(&dup, &no_events, &AtomicBool::new(false)).is_err());
+        let after = fs::read(repo.join("snapshots").join(format!("{}.json", ids[0]))).unwrap();
+        assert_eq!(before, after, "기존 스냅샷이 바뀜");
+        // 저장 계층도 같은 ID 덮어쓰기를 거부한다
+        let cas = CasStorage::new(&repo).unwrap();
+        let m = cas.load_manifest(&ids[0]).unwrap();
+        let e = cas.save_manifest(&m).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AlreadyExists);
+        assert!(!valid_session_id("a/b") && !valid_session_id("..") && !valid_session_id("x:y"));
+    }
+
+    /// 원본 순서를 바꿔도(같은 상대경로·크기·수정시각) 다른 원본의 청크를 재사용하지 않는다.
+    #[test]
+    fn incremental_key_uses_source_path_not_index() {
+        let d = tempfile::tempdir().unwrap();
+        let (a, b) = (d.path().join("A"), d.path().join("B"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        fs::write(a.join("same.txt"), "AAAA").unwrap();
+        fs::write(b.join("same.txt"), "BBBB").unwrap();
+        set_mtime(&a.join("same.txt"), 1_700_000_000);
+        set_mtime(&b.join("same.txt"), 1_700_000_000);
+        let repo = d.path().join("repo");
+        run(&opts(
+            vec![a.clone(), b.clone()],
+            &repo,
+            Some("t1"),
+            Some("p"),
+        ));
+        let s = run(&opts(vec![b, a], &repo, Some("t2"), Some("p")));
+        assert_eq!(s.unmodified_files, 2, "원본 경로가 같으면 재사용해야 함");
+        let out = d.path().join("out");
+        run_restore(
+            &RestoreOptions {
+                repo,
+                session_id: "t2".into(),
+                only: None,
+                target: Some(out.clone()),
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read_to_string(out.join("001_B/same.txt")).unwrap(),
+            "BBBB"
+        );
+        assert_eq!(
+            fs::read_to_string(out.join("002_A/same.txt")).unwrap(),
+            "AAAA"
+        );
+    }
+
+    /// 프로파일이 없으면 원본 경로가 같은 스냅샷만 기준으로 쓰고, 프로파일이 있으면
+    /// 업그레이드 전(프로파일 기록 없음) 스냅샷도 원본이 같으면 기준으로 인정한다.
+    #[test]
+    fn baseline_selection_by_sources_and_legacy_profile() {
+        let d = tempfile::tempdir().unwrap();
+        let (x, y) = (d.path().join("X"), d.path().join("Y"));
+        fs::create_dir_all(&x).unwrap();
+        fs::create_dir_all(&y).unwrap();
+        fs::write(x.join("f.txt"), "xxxx").unwrap();
+        fs::write(y.join("f.txt"), "yyyy").unwrap();
+        set_mtime(&x.join("f.txt"), 1_700_000_000);
+        set_mtime(&y.join("f.txt"), 1_700_000_000);
+        let repo = d.path().join("repo");
+        run(&opts(vec![x.clone()], &repo, Some("t1"), None));
+        // 원본이 다르면 기준 없음 → 새 파일로 다시 읽는다
+        let s = run(&opts(vec![y.clone()], &repo, Some("t2"), None));
+        assert_eq!((s.unmodified_files, s.new_files), (0, 1));
+        let out = d.path().join("out");
+        run_restore(
+            &RestoreOptions {
+                repo: repo.clone(),
+                session_id: "t2".into(),
+                only: None,
+                target: Some(out.clone()),
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(out.join("f.txt")).unwrap(), "yyyy");
+        // 업그레이드 후 첫 백업(프로파일 있음): 프로파일 없는 구형 스냅샷(t1, 같은 원본)을 기준으로 쓴다
+        let s = run(&opts(vec![x.clone()], &repo, Some("t3"), Some("p1")));
+        assert_eq!(s.unmodified_files, 1);
+        // 다른 프로파일의 스냅샷은 원본이 같아도 기준으로 쓰지 않는다
+        let s = run(&opts(vec![x], &repo, Some("t4"), Some("p2")));
+        assert_eq!(s.unmodified_files, 1, "구형 t1 은 여전히 인정");
+        let cas = CasStorage::new(&repo).unwrap();
+        let src_x = vec![d.path().join("X").to_string_lossy().to_string()];
+        let base = cas.baseline_manifest(Some("p1"), &src_x).unwrap();
+        assert!(matches!(base.profile_id.as_deref(), Some("p1") | None));
+        assert_ne!(base.session_id(), "t4");
+    }
+
+    /// 청크 정보 없이 blob_id/sha256 만 있는 구형 매니페스트는 빠른 경로로 재사용하지 않고 다시 청킹한다.
+    #[test]
+    fn legacy_blob_id_entries_are_rechunked() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("a.txt"), "legacy").unwrap();
+        set_mtime(&src.join("a.txt"), 1_700_000_000);
+        let repo = d.path().join("repo");
+        let cas = CasStorage::new(&repo).unwrap();
+        // 같은 이름의 블롭이 저장소에 있어도(해시 종류 미상) 쓰지 않는다
+        let fake = "ab".repeat(32);
+        cas.save_blob(&fake, &compressor::compress(b"wrong!", 3).unwrap())
+            .unwrap();
+        fs::write(
+            repo.join("snapshots").join("old.json"),
+            format!(
+                r#"{{"id":"old","sources":[{src:?}],"files":[{{"path":"a.txt","size":6,"mtime":1700000000,"blob_id":"{fake}"}}]}}"#,
+                src = src.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        let s = run(&opts(vec![src.clone()], &repo, Some("t1"), None));
+        assert_eq!((s.unmodified_files, s.new_files + s.modified_files), (0, 1));
+        let out = d.path().join("out");
+        run_restore(
+            &RestoreOptions {
+                repo,
+                session_id: "t1".into(),
+                only: None,
+                target: Some(out.clone()),
+            },
+            &no_events,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        assert_eq!(fs::read_to_string(out.join("a.txt")).unwrap(), "legacy");
+    }
+
+    /// 해시가 16진수가 아닌 손상 매니페스트는 패닉 없이 복원 실패로 끝난다.
+    #[test]
+    fn non_hex_hash_in_manifest_fails_without_panic() {
+        let d = tempfile::tempdir().unwrap();
+        let repo = d.path().join("repo");
+        let cas = CasStorage::new(&repo).unwrap();
+        assert!(cas.save_blob("한글해시", b"x").is_err());
+        assert!(!cas.has_blob("..\\..\\x"));
+        fs::write(
+            repo.join("snapshots").join("bad.json"),
+            r#"{"id":"bad","files":[{"path":"a.txt","size":3,"chunks":[{"hash":"한글","length":3}]}]}"#,
+        )
+        .unwrap();
+        let r = run_restore(
+            &RestoreOptions {
+                repo,
+                session_id: "bad".into(),
+                only: None,
+                target: Some(d.path().join("out")),
             },
             &no_events,
             &AtomicBool::new(false),

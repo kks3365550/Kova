@@ -30,6 +30,125 @@ where
     }
 }
 
+/// 블롭 해시 문자열이 16진수인지(경로 조각·`&hash[0..2]` 로 써도 안전한지) 확인한다.
+pub fn is_valid_hash(hash: &str) -> bool {
+    (2..=128).contains(&hash.len()) && hash.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// 세션(스냅샷) ID 는 매니페스트 파일 이름이 되므로 허용 문자(글자·숫자·`_`·`-`·`.`)만 쓴다.
+/// `.` 으로 시작하는 이름(`.`, `..` 포함)과 경로 구분자·`:` 등은 거부한다.
+pub fn valid_session_id(sid: &str) -> bool {
+    !sid.is_empty()
+        && sid.len() <= 128
+        && !sid.starts_with('.')
+        && sid
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+/// 매니페스트의 원본 경로 목록(sources 배열, 없으면 source_root 를 `;` 로 나눈 것).
+pub fn manifest_sources(m: &SnapshotManifest) -> Vec<String> {
+    match &m.sources {
+        Some(serde_json::Value::Array(arr)) => arr
+            .iter()
+            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+            .collect(),
+        Some(serde_json::Value::String(s)) => s
+            .split(';')
+            .filter(|x| !x.trim().is_empty())
+            .map(|x| x.to_string())
+            .collect(),
+        _ => m
+            .source_root
+            .as_deref()
+            .unwrap_or("")
+            .split(';')
+            .filter(|x| !x.trim().is_empty())
+            .map(|x| x.to_string())
+            .collect(),
+    }
+}
+
+/// 원본 경로 비교용 정규화(구분자 통일, 끝 구분자 제거, 대소문자 무시).
+pub fn norm_source(s: &str) -> String {
+    s.trim()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+/// 두 원본 목록이 (순서와 무관하게) 같은 경로 집합인지.
+pub fn same_sources(a: &[String], b: &[String]) -> bool {
+    let set = |v: &[String]| {
+        v.iter()
+            .map(|s| norm_source(s))
+            .collect::<std::collections::BTreeSet<_>>()
+    };
+    !a.is_empty() && set(a) == set(b)
+}
+
+/// 증분 기준으로 쓸 수 있는 매니페스트인지: 원본 경로 집합이 같아야 하고,
+/// 프로파일이 있으면 같은 프로파일이거나 프로파일 기록이 없는 구형(업그레이드 전) 매니페스트여야 한다.
+pub fn is_baseline_for(m: &SnapshotManifest, profile_id: Option<&str>, sources: &[String]) -> bool {
+    let pid_ok = match (
+        profile_id.filter(|p| !p.is_empty()),
+        m.profile_id.as_deref(),
+    ) {
+        (Some(want), Some(have)) => want == have,
+        _ => true,
+    };
+    pid_ok && same_sources(sources, &manifest_sources(m))
+}
+
+/// 매니페스트 파일 목록(최신 수정 시각 순).
+fn manifest_paths_newest_first(snapshots_dir: &Path) -> Vec<PathBuf> {
+    let mut entries: Vec<(std::time::SystemTime, PathBuf)> = Vec::new();
+    if let Ok(dir_entries) = fs::read_dir(snapshots_dir) {
+        for entry in dir_entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+                let mtime = entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                entries.push((mtime, path));
+            }
+        }
+    }
+    entries.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.cmp(&a.1)));
+    entries.into_iter().map(|(_, p)| p).collect()
+}
+
+/// `snapshots_dir` 에서 `pred` 를 만족하는 가장 최근 매니페스트(파일이 하나 이상 있는 것)를 찾는다.
+/// `exclude` 세션은 건너뛴다.
+pub fn find_recent_manifest(
+    snapshots_dir: &Path,
+    exclude: Option<&str>,
+    pred: &(dyn Fn(&SnapshotManifest) -> bool + Sync),
+) -> Option<SnapshotManifest> {
+    use rayon::prelude::*;
+    let paths: Vec<PathBuf> = manifest_paths_newest_first(snapshots_dir)
+        .into_iter()
+        .filter(|p| exclude.is_none_or(|x| p.file_stem().is_none_or(|s| s.to_string_lossy() != x)))
+        .collect();
+    for batch in paths.chunks(16) {
+        let parsed: Vec<Option<SnapshotManifest>> = batch
+            .par_iter()
+            .map(|path| {
+                let m: SnapshotManifest =
+                    serde_json::from_reader(BufReader::new(File::open(path).ok()?)).ok()?;
+                let count = m.files.as_ref().map_or(0, |f| f.len())
+                    + m.entries.as_ref().map_or(0, |e| e.len());
+                (count > 0 && pred(&m)).then_some(m)
+            })
+            .collect();
+        if let Some(m) = parsed.into_iter().flatten().next() {
+            return Some(m);
+        }
+    }
+    None
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct FileChunkInfo {
     #[serde(default)]
@@ -199,10 +318,18 @@ impl CasStorage {
     }
 
     pub fn blob_path(&self, hash: &str) -> PathBuf {
-        let prefix = if hash.len() >= 2 { &hash[0..2] } else { "misc" };
+        // 16진수가 아닌 해시(손상·변조된 매니페스트)는 슬라이싱 패닉이나 경로 탈출을 막기 위해
+        // 존재하지 않는 고정 자리를 가리키게 한다(읽으면 "없음", 저장은 save_blob 이 거부)
+        if !is_valid_hash(hash) {
+            return self
+                .repo_root
+                .join("blobs")
+                .join("misc")
+                .join("invalid.blob");
+        }
         self.repo_root
             .join("blobs")
-            .join(prefix)
+            .join(&hash[0..2])
             .join(format!("{}.blob", hash))
     }
 
@@ -219,6 +346,12 @@ impl CasStorage {
     /// 새 블롭을 모아 두었다가 `STAGE_LIMIT` 이 차면 팩 하나로 쓴다(블롭마다 파일을 만들지 않아 빠르다).
     /// 반드시 백업 끝에서 `flush_staged` 를 불러야 하고, 그 전에는 매니페스트를 쓰면 안 된다.
     pub fn stage_blob(&self, hash: &str, data: Vec<u8>) -> io::Result<()> {
+        if !is_valid_hash(hash) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid blob hash",
+            ));
+        }
         let fresh = self
             .staged
             .write()
@@ -316,6 +449,12 @@ impl CasStorage {
 
     /// Stores compressed blob data atomically. Returns true if newly written, false if deduplicated.
     pub fn save_blob(&self, hash: &str, compressed_data: &[u8]) -> io::Result<bool> {
+        if !is_valid_hash(hash) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "invalid blob hash",
+            ));
+        }
         let target_path = self.blob_path(hash);
         if target_path.exists() || self.pack_index().contains_key(hash) {
             return Ok(false);
@@ -417,15 +556,48 @@ impl CasStorage {
     pub fn save_manifest(&self, manifest: &SnapshotManifest) -> io::Result<()> {
         let snapshots_dir = self.repo_root.join("snapshots");
         fs::create_dir_all(&snapshots_dir)?;
-        let target_path = snapshots_dir.join(format!("{}.json", manifest.session_id()));
-        let tmp_path = target_path.with_extension("tmp");
+        let sid = manifest.session_id();
+        if !valid_session_id(&sid) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("invalid session id: {sid}"),
+            ));
+        }
+        let target_path = snapshots_dir.join(format!("{sid}.json"));
+        static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let tmp_path = snapshots_dir.join(format!(
+            "{sid}.json.{}.{}.tmp",
+            std::process::id(),
+            TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
 
         let json = serde_json::to_string(manifest)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-        fs::write(&tmp_path, json.as_bytes())?;
-        fs::rename(&tmp_path, &target_path)?;
-        Ok(())
+        // 내용을 디스크까지 내린 뒤에 이름을 놓는다(정전 시 빈/잘린 매니페스트 방지)
+        let written = File::create(&tmp_path).and_then(|mut f| {
+            f.write_all(json.as_bytes())?;
+            f.sync_all()
+        });
+        if let Err(e) = written {
+            let _ = fs::remove_file(&tmp_path);
+            return Err(e);
+        }
+        let exists = || {
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("snapshot id already exists: {sid}"),
+            )
+        };
+        // 같은 ID 의 기존 스냅샷은 절대 덮어쓰지 않는다. 하드 링크는 대상이 있으면 원자적으로 실패한다.
+        let placed = match fs::hard_link(&tmp_path, &target_path) {
+            Ok(()) => Ok(()),
+            Err(_) if target_path.exists() => Err(exists()),
+            // 하드 링크를 못 쓰는 파일 시스템(FAT 등): 확인 후 이름 바꾸기
+            Err(_) => fs::rename(&tmp_path, &target_path),
+        };
+        let _ = fs::remove_file(&tmp_path);
+        placed
     }
 
     pub fn load_manifest(&self, session_id: &str) -> io::Result<SnapshotManifest> {
@@ -438,6 +610,17 @@ impl CasStorage {
         let manifest: SnapshotManifest = serde_json::from_reader(reader)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         Ok(manifest)
+    }
+
+    /// 증분 기준 스냅샷: 원본 경로 집합이 같고 같은 프로파일(또는 프로파일 기록이 없는 구형)인 가장 최근 매니페스트.
+    pub fn baseline_manifest(
+        &self,
+        profile_id: Option<&str>,
+        sources: &[String],
+    ) -> Option<SnapshotManifest> {
+        find_recent_manifest(&self.repo_root.join("snapshots"), None, &|m| {
+            is_baseline_for(m, profile_id, sources)
+        })
     }
 
     pub fn get_recent_manifests(&self, limit: usize) -> Vec<SnapshotManifest> {
