@@ -12,12 +12,15 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 const SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
 const FOLDER_MIME: &str = "application/vnd.google-apps.folder";
 const CHUNK: usize = 8 * 1024 * 1024;
+/// 동시에 올리는 파일 수 기본값(구글 드라이브 레이트 리밋을 고려해 보수적으로).
+pub const DEFAULT_UPLOAD_WORKERS: usize = 4;
 const TOKEN_FILE: &str = "gdrive_token.bin";
 const CLIENT_FILE: &str = "gdrive_client.json";
 
@@ -337,11 +340,21 @@ pub struct DriveClient {
     ep: Endpoints,
     creds: ClientCreds,
     dir: PathBuf,
-    token: Token,
+    token: Mutex<Token>,
     agent: ureq::Agent,
     listings: HashMap<String, HashMap<String, Entry>>,
     folders: HashMap<String, String>,
     retry_base: Duration,
+    workers: usize,
+}
+
+/// 올릴 파일 하나(계획 단계에서 폴더·목록을 처리해 둔 결과).
+struct Job {
+    parent: String,
+    name: String,
+    local: PathBuf,
+    size: u64,
+    existing: Option<String>,
 }
 
 impl DriveClient {
@@ -350,25 +363,32 @@ impl DriveClient {
             ep,
             creds,
             dir: dir.to_path_buf(),
-            token: load_token(dir)?,
+            token: Mutex::new(load_token(dir)?),
             agent: agent(),
             listings: HashMap::new(),
             folders: HashMap::new(),
             retry_base: Duration::from_secs(2),
+            workers: DEFAULT_UPLOAD_WORKERS,
         })
     }
 
-    fn refresh(&mut self) -> Result<(), String> {
+    /// 동시 업로드 수(1이면 순차). 1~16 로 제한한다.
+    pub fn set_workers(&mut self, n: usize) {
+        self.workers = n.clamp(1, 16);
+    }
+
+    /// 토큰 잠금을 쥔 채로 갱신한다(여러 작업자가 동시에 갱신하거나 토큰 파일을 덮어쓰지 않게).
+    fn refresh_locked(&self, tok: &mut Token) -> Result<(), String> {
         let r = self.agent.post(&self.ep.token).send_form(&[
             ("client_id", self.creds.client_id.as_str()),
             ("client_secret", self.creds.client_secret.as_str()),
-            ("refresh_token", self.token.refresh.as_str()),
+            ("refresh_token", tok.refresh.as_str()),
             ("grant_type", "refresh_token"),
         ]);
         match r {
             Ok(resp) => {
                 let body = resp.into_string().map_err(|e| e.to_string())?;
-                self.token = token_response(&self.dir, &body, Some(&self.token.refresh.clone()))?;
+                *tok = token_response(&self.dir, &body, Some(&tok.refresh.clone()))?;
                 Ok(())
             }
             Err(ureq::Error::Status(400 | 401, _)) => {
@@ -378,30 +398,58 @@ impl DriveClient {
         }
     }
 
+    fn lock_token(&self) -> std::sync::MutexGuard<'_, Token> {
+        self.token.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 만료 60초 전이면 갱신하고 현재 접근 토큰을 돌려준다.
+    fn access_token(&self) -> Result<String, String> {
+        let mut g = self.lock_token();
+        if now_secs() + 60 >= g.expires_at {
+            self.refresh_locked(&mut g)?;
+        }
+        Ok(g.access.clone())
+    }
+
+    /// 401 을 받았을 때: 쓰던 토큰이 아직 그대로일 때만 갱신한다(다른 작업자가 이미 갱신했으면 재사용).
+    fn refresh_after_401(&self, used: &str) -> Result<(), String> {
+        let mut g = self.lock_token();
+        if g.access == used {
+            self.refresh_locked(&mut g)?;
+        }
+        Ok(())
+    }
+
+    /// 429/5xx/전송 오류 재시도 대기: 지수 백오프, 서버가 Retry-After(초)를 주면 더 큰 쪽(최대 60초).
+    fn backoff(&self, tries: u32, resp: Option<&ureq::Response>) -> Duration {
+        let base = self.retry_base * (1 << (tries - 1));
+        let ra = resp
+            .and_then(|r| r.header("Retry-After"))
+            .and_then(|v| v.trim().parse::<u64>().ok())
+            .map(|s| Duration::from_secs(s.min(60)));
+        ra.map_or(base, |d| d.max(base))
+    }
+
     fn call(
-        &mut self,
+        &self,
         mut f: impl FnMut(&ureq::Agent, &str) -> Result<ureq::Response, ureq::Error>,
     ) -> Result<ureq::Response, String> {
         let (mut tries, mut refreshed) = (0u32, false);
         loop {
-            if now_secs() + 60 >= self.token.expires_at {
-                self.refresh()?;
-            }
-            let tok = self.token.access.clone();
+            let tok = self.access_token()?;
             match f(&self.agent, &tok) {
                 Ok(r) => return Ok(r),
                 Err(ureq::Error::Status(401, _)) if !refreshed => {
                     refreshed = true;
-                    self.refresh()?;
+                    self.refresh_after_401(&tok)?;
                 }
                 Err(ureq::Error::Status(c, r)) if (c == 429 || c >= 500) && tries < 4 => {
-                    let _ = r;
                     tries += 1;
-                    std::thread::sleep(self.retry_base * (1 << (tries - 1)));
+                    std::thread::sleep(self.backoff(tries, Some(&r)));
                 }
                 Err(ureq::Error::Transport(_)) if tries < 4 => {
                     tries += 1;
-                    std::thread::sleep(self.retry_base * (1 << (tries - 1)));
+                    std::thread::sleep(self.backoff(tries, None));
                 }
                 Err(ureq::Error::Status(c, r)) => {
                     let b = r.into_string().unwrap_or_default();
@@ -513,35 +561,120 @@ impl DriveClient {
         Ok(parent)
     }
 
-    /// 폴더 `dir_path` 의 `name` 파일이 같은 크기로 이미 있으면 true(건너뜀), 아니면 올린다(크기가 다르면 덮어씀).
-    fn put_file(
+    /// 폴더 `dir_path` 의 `name` 파일이 같은 크기로 이미 있으면(또는 이번 계획에 이미 담았으면) None(건너뜀),
+    /// 아니면 올릴 작업을 돌려준다(크기가 다르면 덮어씀). 폴더 생성·목록 조회는 여기서 순차로 처리한다.
+    fn plan_file(
         &mut self,
         dir_path: &[&str],
         name: &str,
         local: &Path,
-    ) -> Result<Option<u64>, String> {
+        planned: &mut HashSet<(String, String)>,
+    ) -> Result<Option<Job>, String> {
         let parent = self.ensure_folder(dir_path)?;
         let size = fs::metadata(local).map_err(|e| e.to_string())?.len();
+        if !planned.insert((parent.clone(), name.to_string())) {
+            return Ok(None);
+        }
         let existing = self.list(&parent)?.get(name).cloned();
         if let Some(e) = &existing {
             if !e.folder && e.size == size {
                 return Ok(None);
             }
         }
-        let id = self.upload(existing.map(|e| e.id), name, &parent, local, size)?;
-        self.list(&parent)?.insert(
-            name.to_string(),
+        Ok(Some(Job {
+            parent,
+            name: name.to_string(),
+            local: local.to_path_buf(),
+            size,
+            existing: existing.map(|e| e.id),
+        }))
+    }
+
+    fn record_uploaded(&mut self, job: &Job, id: String) -> Result<(), String> {
+        self.list(&job.parent)?.insert(
+            job.name.clone(),
             Entry {
                 id,
-                size,
+                size: job.size,
                 folder: false,
             },
         );
-        Ok(Some(size))
+        Ok(())
+    }
+
+    /// 한 파일을 올린다(같은 크기면 건너뜀). 매니페스트처럼 마지막에 단독으로 올릴 때 쓴다.
+    fn put_file(
+        &mut self,
+        dir_path: &[&str],
+        name: &str,
+        local: &Path,
+    ) -> Result<Option<u64>, String> {
+        let mut planned = HashSet::new();
+        let Some(job) = self.plan_file(dir_path, name, local, &mut planned)? else {
+            return Ok(None);
+        };
+        let id = self.upload(
+            job.existing.clone(),
+            &job.name,
+            &job.parent,
+            &job.local,
+            job.size,
+        )?;
+        self.record_uploaded(&job, id)?;
+        Ok(Some(job.size))
+    }
+
+    /// 작업들을 `workers` 개의 스레드로 나눠 올린다. 하나라도 실패하면 새 작업을 멈추고 첫 오류를 돌려준다.
+    /// 성공하면 작업 순서대로 파일 id 를 돌려준다.
+    fn run_jobs(&self, jobs: &[Job], cancel: &AtomicBool) -> Result<Vec<String>, String> {
+        if jobs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let n = self.workers.clamp(1, jobs.len());
+        let next = AtomicUsize::new(0);
+        let stop = AtomicBool::new(false);
+        let results: Mutex<Vec<Option<Result<String, String>>>> =
+            Mutex::new((0..jobs.len()).map(|_| None).collect());
+        std::thread::scope(|s| {
+            for _ in 0..n {
+                s.spawn(|| loop {
+                    if stop.load(Ordering::Relaxed) || cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(j) = jobs.get(i) else { break };
+                    let r = self.upload(j.existing.clone(), &j.name, &j.parent, &j.local, j.size);
+                    if r.is_err() {
+                        stop.store(true, Ordering::Relaxed);
+                    }
+                    results.lock().unwrap_or_else(|e| e.into_inner())[i] = Some(r);
+                });
+            }
+        });
+        let results = results.into_inner().unwrap_or_else(|e| e.into_inner());
+        let mut ids = Vec::with_capacity(jobs.len());
+        let mut first_err: Option<String> = None;
+        let mut incomplete = false;
+        for r in results {
+            match r {
+                Some(Ok(id)) => ids.push(id),
+                Some(Err(e)) => {
+                    first_err.get_or_insert(e);
+                }
+                None => incomplete = true,
+            }
+        }
+        if let Some(e) = first_err {
+            return Err(e);
+        }
+        if incomplete {
+            return Err("취소됨".into());
+        }
+        Ok(ids)
     }
 
     fn upload(
-        &mut self,
+        &self,
         existing: Option<String>,
         name: &str,
         parent: &str,
@@ -675,6 +808,18 @@ pub fn replicate_to_drive(
         }
         let mut seen = HashSet::new();
         let mut snapshot_healthy = true;
+        // 1) 계획(순차): 폴더·목록을 처리하고 올릴 작업만 모은다. 누락 블롭이 있으면 아무것도 올리지 않는다.
+        let mut jobs: Vec<Job> = Vec::new();
+        let mut planned = HashSet::new();
+        let mut snap_packs: HashSet<String> = HashSet::new();
+        // 올림 단위(블롭 1개 또는 팩 .pack/.idx 쌍)별 작업 번호. None 이면 이미 있어 건너뜀.
+        let mut units: Vec<(Option<usize>, Option<usize>)> = Vec::new();
+        let add = |jobs: &mut Vec<Job>, j: Option<Job>| -> Option<usize> {
+            j.map(|j| {
+                jobs.push(j);
+                jobs.len() - 1
+            })
+        };
         for h in hashes {
             if h.is_empty() || !seen.insert(h.clone()) {
                 continue;
@@ -687,34 +832,26 @@ pub fn replicate_to_drive(
             if local_blob.is_file() {
                 let d = sub(&format!("blobs/{prefix}"));
                 let dr: Vec<&str> = d.iter().map(|s| s.as_str()).collect();
-                match client.put_file(&dr, &format!("{h}.blob"), &local_blob)? {
-                    Some(n) => {
-                        rep.bytes_uploaded += n;
-                        rep.blobs_uploaded += 1;
-                    }
-                    None => rep.blobs_skipped += 1,
-                }
+                let j = client.plan_file(&dr, &format!("{h}.blob"), &local_blob, &mut planned)?;
+                units.push((add(&mut jobs, j), None));
             } else if let Some(entry) = packs.get(&h) {
-                if done_packs.insert(entry.pack.clone()) {
+                if !done_packs.contains(&entry.pack) && snap_packs.insert(entry.pack.clone()) {
                     use kova_engine::pack::{idx_file, pack_file};
                     let d = sub("packs");
                     let dr: Vec<&str> = d.iter().map(|s| s.as_str()).collect();
-                    let a = client.put_file(
+                    let a = client.plan_file(
                         &dr,
                         &format!("{}.pack", entry.pack),
                         &pack_file(repo, &entry.pack),
+                        &mut planned,
                     )?;
-                    let b = client.put_file(
+                    let b = client.plan_file(
                         &dr,
                         &format!("{}.idx", entry.pack),
                         &idx_file(repo, &entry.pack),
+                        &mut planned,
                     )?;
-                    if a.is_none() && b.is_none() {
-                        rep.blobs_skipped += 1;
-                    } else {
-                        rep.bytes_uploaded += a.unwrap_or(0) + b.unwrap_or(0);
-                        rep.blobs_uploaded += 1;
-                    }
+                    units.push((add(&mut jobs, a), add(&mut jobs, b)));
                 }
             } else {
                 eprintln!("[KOVA-GDRIVE-WARN] 스냅샷 {name} 복제 중 블롭 누락 발견 ({h}) -> 스냅샷 업로드 건너뜀");
@@ -724,6 +861,20 @@ pub fn replicate_to_drive(
         }
         if !snapshot_healthy {
             continue;
+        }
+        // 2) 실행(병렬): 블롭·팩이 모두 올라간 뒤에만 매니페스트를 올린다.
+        let ids = client.run_jobs(&jobs, cancel)?;
+        for (job, id) in jobs.iter().zip(ids) {
+            client.record_uploaded(job, id)?;
+        }
+        done_packs.extend(snap_packs);
+        for (a, b) in units {
+            if a.is_none() && b.is_none() {
+                rep.blobs_skipped += 1;
+            } else {
+                rep.bytes_uploaded += [a, b].iter().flatten().map(|&i| jobs[i].size).sum::<u64>();
+                rep.blobs_uploaded += 1;
+            }
         }
         let n = client
             .put_file(&snap_dir_ref, &name, &mp)?
@@ -1236,8 +1387,7 @@ mod tests {
         let dir = PathBuf::from(std::env::var("ProgramData").unwrap())
             .join("Kova2")
             .join("config");
-        let mut c =
-            DriveClient::open(&dir, Endpoints::default(), load_client(&dir).unwrap()).unwrap();
+        let c = DriveClient::open(&dir, Endpoints::default(), load_client(&dir).unwrap()).unwrap();
         for id in std::env::var("KOVA_TRASH_IDS").unwrap().split(',') {
             let url = format!("{}/files/{id}", c.ep.api);
             c.call(|a, t| {
@@ -1249,5 +1399,104 @@ mod tests {
             .unwrap();
             println!("TRASHED {id}");
         }
+    }
+    #[test]
+    fn parallel_upload_sends_every_blob_once_and_refreshes_token_once() {
+        let st = Arc::new(Mutex::new(Mock::default()));
+        let (_b, ep) = start_mock(st.clone());
+        let dir = tempfile::tempdir().unwrap();
+        save_token(
+            dir.path(),
+            &Token {
+                refresh: "RT1".into(),
+                access: "OLD".into(),
+                expires_at: 0,
+            },
+        )
+        .unwrap();
+        // 저장소를 직접 만든다: 블롭 40개(접두 폴더 5종) + 이를 모두 참조하는 스냅샷 1개
+        let work = tempfile::tempdir().unwrap();
+        let repo = work.path().join("repo");
+        fs::create_dir_all(repo.join("snapshots")).unwrap();
+        let mut files = Vec::new();
+        let local_blobs = 40usize;
+        for i in 0..local_blobs {
+            let h = format!("{:02x}{:062x}", i % 5, i);
+            let dir_b = repo.join("blobs").join(&h[0..2]);
+            fs::create_dir_all(&dir_b).unwrap();
+            let data = format!("blob {i} {}", "x".repeat(i * 7));
+            fs::write(dir_b.join(format!("{h}.blob")), &data).unwrap();
+            files.push(format!(
+                r#"{{"path":"f{i}.txt","size":{n},"chunks":[{{"hash":"{h}","offset":0,"length":{n},"compressed_length":{n}}}]}}"#,
+                n = data.len()
+            ));
+        }
+        fs::write(
+            repo.join("snapshots").join("20261121_120000.json"),
+            format!(
+                r#"{{"id":"20261121_120000","files":[{}]}}"#,
+                files.join(",")
+            ),
+        )
+        .unwrap();
+
+        let mut c = DriveClient::open(dir.path(), ep.clone(), creds()).unwrap();
+        c.retry_base = Duration::ZERO;
+        c.set_workers(4);
+        let cancel = AtomicBool::new(false);
+        let r1 = replicate_to_drive(&repo, &mut c, &["Kova2 Backup", "p1"], &cancel).unwrap();
+        assert_eq!(r1.snapshots_uploaded, 1);
+        assert_eq!(r1.blobs_uploaded, local_blobs);
+        assert_eq!(st.lock().unwrap().refresh_calls, 1, "토큰은 한 번만 갱신");
+        {
+            let m = st.lock().unwrap();
+            let files: Vec<_> = m.files.iter().filter(|f| !f.2).collect();
+            let uniq: HashSet<_> = files.iter().map(|f| (f.0.clone(), f.1.clone())).collect();
+            assert_eq!(uniq.len(), files.len(), "같은 이름 파일이 중복 업로드됨");
+            assert_eq!(files.len(), local_blobs + 1, "블롭 전부 + 매니페스트 1개");
+            let folders: Vec<_> = m.files.iter().filter(|f| f.2).collect();
+            let fu: HashSet<_> = folders.iter().map(|f| (f.0.clone(), f.1.clone())).collect();
+            assert_eq!(fu.len(), folders.len(), "같은 폴더가 중복 생성됨");
+        }
+        // 두 번째 실행(새 클라이언트, 병렬)은 전부 건너뛴다
+        let mut c2 = DriveClient::open(dir.path(), ep, creds()).unwrap();
+        c2.set_workers(4);
+        let r2 = replicate_to_drive(&repo, &mut c2, &["Kova2 Backup", "p1"], &cancel).unwrap();
+        assert_eq!((r2.snapshots_uploaded, r2.snapshots_skipped), (0, 1));
+        assert_eq!(r2.bytes_uploaded, 0);
+    }
+
+    #[test]
+    fn parallel_upload_stops_and_reports_error_when_a_blob_fails() {
+        let st = Arc::new(Mutex::new(Mock::default()));
+        let (_b, ep) = start_mock(st);
+        let dir = tempfile::tempdir().unwrap();
+        save_token(
+            dir.path(),
+            &Token {
+                refresh: "RT1".into(),
+                access: "AT1".into(),
+                expires_at: i64::MAX,
+            },
+        )
+        .unwrap();
+        let work = tempfile::tempdir().unwrap();
+        let jobs: Vec<Job> = (0..6)
+            .map(|i| Job {
+                parent: "root".into(),
+                name: format!("n{i}"),
+                local: work.path().join(format!("missing{i}")), // 없는 파일 → 모두 실패
+                size: 3,
+                existing: None,
+            })
+            .collect();
+        let mut c = DriveClient::open(dir.path(), ep, creds()).unwrap();
+        c.retry_base = Duration::ZERO;
+        c.set_workers(3);
+        let err = c.run_jobs(&jobs, &AtomicBool::new(false)).unwrap_err();
+        assert!(err.contains("missing"), "첫 오류가 전달돼야 함: {err}");
+        // 취소 플래그가 서 있으면 작업을 시작하지 않고 '취소됨'
+        let err = c.run_jobs(&jobs, &AtomicBool::new(true)).unwrap_err();
+        assert_eq!(err, "취소됨");
     }
 }
