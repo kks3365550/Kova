@@ -22,45 +22,102 @@ const SERVICE_HARDENED_SDDL: &str =
 
 define_windows_service!(ffi_service_main, service_main);
 
-fn start_core(rt: &tokio::runtime::Runtime) -> Arc<AtomicBool> {
+/// 중지 요청 뒤 실행 중 작업(취소 신호를 받은)이 끝나기를 기다리는 최대 시간.
+const STOP_WAIT: Duration = Duration::from_secs(25);
+
+fn start_core(rt: &tokio::runtime::Runtime) -> (Supervisor, Arc<AtomicBool>) {
     let sup = Supervisor::new(default_config_dir(), 2);
+    sup.report_leftover_vss();
     let stop = Arc::new(AtomicBool::new(false));
     spawn_scheduler(sup.clone(), stop.clone());
-    let handler: Arc<dyn kova_ipc::Handler> = Arc::new(IpcHandler(sup));
+    let handler: Arc<dyn kova_ipc::Handler> = Arc::new(IpcHandler(sup.clone()));
     rt.spawn(async move {
-        let _ = kova_ipc::serve(kova_ipc::PIPE_NAME, handler).await;
+        if let Err(e) = kova_ipc::serve(kova_ipc::PIPE_NAME, handler).await {
+            kova_core::applog::write(
+                &default_config_dir(),
+                "ERROR",
+                &format!("IPC 파이프를 열 수 없음: {e}"),
+            );
+        }
     });
-    stop
+    (sup, stop)
 }
 
 fn service_main(_args: Vec<OsString>) {
-    let rt = tokio::runtime::Runtime::new().unwrap();
+    let cfg = default_config_dir();
+    let fail = |what: &str, e: &dyn std::fmt::Display| {
+        kova_core::applog::write(&cfg, "ERROR", &format!("서비스 시작 실패({what}): {e}"));
+    };
+    let rt = match tokio::runtime::Runtime::new() {
+        Ok(rt) => rt,
+        Err(e) => return fail("비동기 런타임", &e),
+    };
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     let handler = move |c| match c {
-        ServiceControl::Stop => {
+        ServiceControl::Stop | ServiceControl::Shutdown => {
             let _ = tx.send(());
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
         _ => ServiceControlHandlerResult::NotImplemented,
     };
-    let status = service_control_handler::register(SERVICE_NAME, handler).unwrap();
-    let set = |s: ServiceState, accept: ServiceControlAccept| {
+    let status = match service_control_handler::register(SERVICE_NAME, handler) {
+        Ok(s) => s,
+        Err(e) => return fail("제어 처리기 등록", &e),
+    };
+    let set = |s: ServiceState, accept: ServiceControlAccept, checkpoint: u32, wait: Duration| {
         let _ = status.set_service_status(ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: s,
             controls_accepted: accept,
             exit_code: ServiceExitCode::Win32(0),
-            checkpoint: 0,
-            wait_hint: Duration::default(),
+            checkpoint,
+            wait_hint: wait,
             process_id: None,
         });
     };
-    set(ServiceState::Running, ServiceControlAccept::STOP);
-    let stop = start_core(&rt);
+    set(
+        ServiceState::Running,
+        ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
+        0,
+        Duration::default(),
+    );
+    let (sup, stop) = start_core(&rt);
     let _ = rx.recv();
     stop.store(true, Ordering::Relaxed);
-    set(ServiceState::Stopped, ServiceControlAccept::empty());
+    // 중지 중임을 알리고, 실행 중 작업을 취소시킨 뒤(섀도 복사본·잠금 정리) 끝날 때까지 기다린다
+    let mut checkpoint = 1;
+    set(
+        ServiceState::StopPending,
+        ServiceControlAccept::empty(),
+        checkpoint,
+        STOP_WAIT + Duration::from_secs(5),
+    );
+    let done = sup.shutdown(STOP_WAIT, || {
+        checkpoint += 1;
+        set(
+            ServiceState::StopPending,
+            ServiceControlAccept::empty(),
+            checkpoint,
+            Duration::from_secs(5),
+        );
+    });
+    if !done {
+        kova_core::applog::write(
+            &cfg,
+            "WARN",
+            &format!(
+                "서비스 중지: {}초 안에 끝나지 않은 작업을 두고 종료합니다",
+                STOP_WAIT.as_secs()
+            ),
+        );
+    }
+    set(
+        ServiceState::Stopped,
+        ServiceControlAccept::empty(),
+        0,
+        Duration::default(),
+    );
 }
 
 fn install() -> Result<(), Box<dyn std::error::Error>> {
@@ -94,6 +151,14 @@ fn install() -> Result<(), Box<dyn std::error::Error>> {
 fn harden_service(name: &str) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    // 업그레이드로 설치 폴더가 바뀌어도 서비스가 새 실행 파일을 가리키게 한다(경로는 따옴표로 감싸 공백 경로 문제를 막는다)
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::process::Command::new("sc.exe")
+            .args(["config", name, "binPath="])
+            .arg(format!("\"{}\"", exe.display()))
+            .creation_flags(CREATE_NO_WINDOW)
+            .output();
+    }
     let _ = std::process::Command::new("sc.exe")
         .args([
             "failure",
@@ -144,7 +209,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             kova_ipc::PIPE_NAME,
             default_config_dir().display()
         );
-        let _stop = start_core(&rt);
+        let _core = start_core(&rt);
         rt.block_on(std::future::pending::<()>());
         return Ok(());
     }
